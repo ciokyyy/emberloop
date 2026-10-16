@@ -74,6 +74,8 @@ type Daemon struct {
 	// subscriber and cancels it when the last subscriber leaves.
 	quotaLiveMu          sync.Mutex
 	quotaLiveSubscribers int
+	profileReminderMu    sync.Mutex
+	memoryDigestMu       sync.Mutex
 	quotaLiveCancel      context.CancelFunc
 	quotaLiveWG          sync.WaitGroup
 	// hostClaudeDir and hostPigDir are the host's own harness dirs. Owner
@@ -190,29 +192,30 @@ type Daemon struct {
 	// Nightly job (nightly.go): distillOneShot and profileOneShot script the
 	// cheap-LLM calls in tests; nil runs the bare pig one-shot. nightlyFailStage
 	// forces one stage to fail (the test seam for abort and continue paths).
-	// nightlyMu serializes runs; nightlyLastDay is the last auto-run local day.
+	// nightlyMu serializes scheduled and on-demand runs; scheduling state is read from the ledger.
 	nightlyMu          sync.Mutex
 	distillOneShot     func(model, system, user string) (string, error)
 	profileOneShot     func(model, system, user string) (string, error)
 	consolidateOneShot func(model, system, user string) (string, error)
 	nightlyFailStage   string
+	foldOneShot        func(model, system, user string) (string, error)
 	// baseCheck scripts the spec-branch base-red gate in tests; nil runs
 	// .emberloop/check at the requested tip in a detached worktree.
 	baseCheck func(repo, specBranch, tip string) (bool, []string)
 	// tipCheck scripts the per-tip repo check before Reviewers in tests; nil
 	// runs .emberloop/check at the requested tip in a detached worktree.
-	tipCheck       func(repo, ticketBranch, tip string) (bool, []string)
-	nightlyLastDay string
-	// Turn-end ingestion (mine_live.go): liveMine turns it on, mineState
-	// holds one in-flight/again flag per Session, mineWG lets tests and
-	// Shutdown wait for running scans, mineActive counts them for the
-	// restart state, and mineWait bounds Shutdown's wait (0 takes 30s).
-	liveMine   bool
-	mineMu     sync.Mutex
-	mineState  map[string]*mineFlight
-	mineActive int
-	mineWG     sync.WaitGroup
-	mineWait   time.Duration
+	tipCheck func(repo, ticketBranch, tip string) (bool, []string)
+	// Turn-end ingestion (mine_live.go): liveMine enables the worker; mineState
+	// owns debounce and per-Session serialization, mineWG drains it on shutdown.
+	liveMine        bool
+	mineMu          sync.Mutex
+	mineState       map[string]*mineFlight
+	mineActive      int
+	mineWG          sync.WaitGroup
+	mineWait        time.Duration
+	ingestExtractor memory.Extractor
+	ingestModel     string
+	ingestEffort    string
 	// Disk hygiene (disk.go): last janitor result and last low-disk warn,
 	// guarded by diskMu so the janitor goroutine and /api/disk race no one.
 	diskMu       sync.Mutex
@@ -402,6 +405,11 @@ func (d *Daemon) Handler() http.Handler {
 	mux.HandleFunc("/api/memory/status", d.handleMemoryStatus)
 	mux.HandleFunc("/api/memory/purge", d.handleMemoryPurge)
 	mux.HandleFunc("/api/memory/nightly", d.handleNightly)
+	mux.HandleFunc("/api/memory/memories", d.handleMemories)
+	mux.HandleFunc("/api/memory/memories/count", d.handleMemoryCount)
+	mux.HandleFunc("/api/memory/memories/", d.handleMemoryAction)
+	mux.HandleFunc("/api/memory/observations/", d.handleObservationPromote)
+	mux.HandleFunc("/api/memory/episodes", d.handleEpisodes)
 	mux.HandleFunc("/api/promotions", d.handlePromotions)
 	mux.HandleFunc("/api/promotions/queue", d.handlePromotionsQueue)
 	mux.HandleFunc("/api/promotions/queue/", d.handlePromotionsQueueSub)

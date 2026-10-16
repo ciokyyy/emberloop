@@ -2,7 +2,11 @@ package memory
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"fmt"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -177,6 +181,68 @@ func TestDeleteOutsidePurgeAborts(t *testing.T) {
 			t.Errorf("%s lost its row to a refused DELETE", table)
 		}
 	}
+}
+
+func TestMemoriesUpdateGuardAndExistingBankMigration(t *testing.T) {
+	t.Run("guard refuses edits and delete", func(t *testing.T) {
+		b, _, _ := openTestBank(t)
+		id, err := b.AddMemory(context.Background(), MemoryItem{SessionID: "s", EventID: "e", Author: "author", Kind: KindFact, Text: "original memory text", Quote: "original quote"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, stmt := range []string{
+			`UPDATE memories SET text = 'changed' WHERE id = ?`,
+			`UPDATE memories SET author = 'changed' WHERE id = ?`,
+			`UPDATE memories SET quote = 'changed' WHERE id = ?`,
+			`UPDATE memories SET observed_commit = 'changed' WHERE id = ?`,
+		} {
+			if _, err := b.wdb.Exec(stmt, id); err == nil || !strings.Contains(err.Error(), "may change") {
+				t.Errorf("%s err = %v, want immutable-field rejection", stmt, err)
+			}
+		}
+		if _, err := b.wdb.Exec(`DELETE FROM memories WHERE id = ?`, id); err == nil || !strings.Contains(err.Error(), "use purge") {
+			t.Errorf("DELETE memory err = %v, want abort", err)
+		}
+	})
+
+	t.Run("user_version 2 bank migrates to 3", func(t *testing.T) {
+		dir := tempDir(t)
+		path := filepath.Join(dir, "users", testUser+".db")
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		db, err := sql.Open("sqlite", dsn(path, url.Values{}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 2; i++ {
+			if _, err := db.Exec(migrations[i]); err != nil {
+				t.Fatalf("apply migration %d: %v", i+1, err)
+			}
+			if _, err := db.Exec(fmt.Sprintf("PRAGMA user_version = %d", i+1)); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		eng, err := Open(dir, Options{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer eng.Close()
+		b, err := eng.Bank(testUser)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var version int
+		if err := b.wdb.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 3 {
+			t.Fatalf("user_version = %d, %v; want 3", version, err)
+		}
+		if _, err := b.wdb.Exec(`INSERT INTO memories (session_id,event_id,author,kind,text,quote,veracity,status,last_seen_at,created_at) VALUES ('s','e','a','fact','migrated','q','stated','active','now','now')`); err != nil {
+			t.Fatalf("migration did not create memories: %v", err)
+		}
+	})
 }
 
 func TestRulesUpdateChangesOnlyStatus(t *testing.T) {

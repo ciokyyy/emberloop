@@ -75,12 +75,12 @@ self.addEventListener('push', (event) => {
       // Unknown visibility counts as hidden: missing a sudo approval is
       // worse than a duplicate ping.
       if (visible) return undefined;
-      return self.registration.showNotification(data.title || 'Emberloop', {
-        body: data.body || '',
-        tag: data.tag,
-        icon: '/favicon.png',
-        data: { path },
-      });
+      const options = {
+        body: data.body || '', tag: data.tag, icon: '/favicon.png',
+        data: { path, profilePatchId: data.profilePatchId },
+      };
+      if (data.profilePatchId) options.actions = [{ action: 'approve', title: 'Approve' }, { action: 'reject', title: 'Reject' }];
+      return self.registration.showNotification(data.title || 'Emberloop', options);
     }),
   );
 });
@@ -89,19 +89,20 @@ self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const data = event.notification?.data ?? {};
   const path = data.path || (data.sessionId ? `/s/${data.sessionId}` : '/');
-  event.waitUntil(
-    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((all) => {
-      const client = all.find((c) => 'focus' in c);
-      if (client) {
-        // Focus the open app and let it route to the exact path.
-        try {
-          client.postMessage({ type: 'el-navigate', path });
-        } catch {
-          // Focusing still lands the user in the app.
-        }
-        return client.focus();
-      }
-      return self.clients.openWindow(path);
-    }),
-  );
+  event.waitUntil((async () => {
+    if (data.profilePatchId && ['approve', 'reject'].includes(event.action)) {
+      await fetch(`/api/profile/queue/${data.profilePatchId}/decide`, {
+        method: 'POST', credentials: 'include', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: event.action === 'approve' ? 'approved' : 'rejected' }),
+      });
+    }
+    const all = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
+    const client = all.find((c) => 'focus' in c);
+    if (client) {
+      try { client.postMessage({ type: 'el-navigate', path }); }
+      catch { /* Focusing still lands the user in the app. */ }
+      return client.focus();
+    }
+    return self.clients.openWindow(path);
+  })());
 });

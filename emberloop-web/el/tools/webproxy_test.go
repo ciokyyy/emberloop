@@ -12,14 +12,15 @@ import (
 // fakeDaemon is the Daemon HTTP contract the proxies call back: spawn,
 // session reads and list, steer/follow-up, queue, interrupt, end and submit.
 type fakeDaemon struct {
-	t            *testing.T
-	spawned      []map[string]any
-	spawnDeliver string
-	steered      []string
-	ended        []string
-	submits      []map[string]any
-	sessions     map[string]fakeSession
-	order        []string
+	t                 *testing.T
+	spawned           []map[string]any
+	spawnDeliver      string
+	steered           []string
+	ended             []string
+	submits           []map[string]any
+	sessions          map[string]fakeSession
+	order             []string
+	includeSuperseded bool
 }
 
 type fakeSession struct {
@@ -106,6 +107,9 @@ func (d *fakeDaemon) handler() http.Handler {
 			}
 			d.steered = append(d.steered, sub+":"+req.Text)
 			d.writeJSON(w, http.StatusAccepted, map[string]any{"seq": 7, "queued": false})
+		case sub == "recall" && r.Method == http.MethodGet:
+			d.includeSuperseded = r.URL.Query().Get("include_superseded") == "true"
+			d.writeJSON(w, http.StatusOK, map[string]any{"text": "recalled"})
 		case sub == "queue":
 			d.writeJSON(w, http.StatusOK, map[string]any{"queue": []any{}})
 		case sub == "interrupt" && r.Method == http.MethodPost:
@@ -379,6 +383,25 @@ func TestWebProxyNeedsBinding(t *testing.T) {
 	}
 	if _, _, ok := WebDaemonBinding(); ok {
 		t.Error("empty binding must not bind")
+	}
+}
+
+func TestWebProxyRecallOptsIntoSupersededMemories(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "parent")
+	if _, err := proxyCall(t, "recall", `{"query":"wrapped errors"}`); err != nil {
+		t.Fatal(err)
+	}
+	if d.includeSuperseded {
+		t.Fatal("default recall included superseded Memories")
+	}
+	if _, err := proxyCall(t, "recall", `{"query":"wrapped errors","include_superseded":true}`); err != nil {
+		t.Fatal(err)
+	}
+	if !d.includeSuperseded {
+		t.Fatal("recall did not forward include_superseded")
 	}
 }
 

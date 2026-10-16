@@ -1097,7 +1097,7 @@
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
       </header>
-      <MemoryPage onBack={() => navigate('/')} />
+      <MemoryPage userId={user?.id ?? 'default'} onBack={() => navigate('/')} />
     {:else if view === 'dashboard'}
       <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
         <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Project switcher"><Menu /></Button>

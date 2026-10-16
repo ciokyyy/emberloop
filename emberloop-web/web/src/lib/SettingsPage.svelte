@@ -23,7 +23,7 @@
     agents: 'Configure one ordered chain per Session and Run agent role.',
     runs: 'Set the global ticket concurrency cap for each Run.',
     context: 'Keep long Sessions small and readable.',
-    memory: 'Configure how remembered notes become Rules.',
+    memory: 'Configure automatic memory extraction, embeddings, and recall.',
     access: 'Manage who can sign in to this Daemon.',
     profile: 'Standing instructions agents can use about you.',
     notifications: 'Choose whether this device receives push notifications.',
@@ -82,6 +82,11 @@
   let jevKeySet = $state(false);
   let deciderNote = $state('');
   let signupOpen = $state('on');
+  let memoryExtractModel = $state('inclusionai/ling-3.0-flash');
+  let memoryExtractEffort = $state('low');
+  let memoryEmbeddingModel = $state('qwen/qwen3-embedding-4b');
+  let memoryAutoExtract = $state(true);
+  let memoryRecallWeights = $state({ vector: '0.5', fts: '0.3', importance: '0.2' });
   let titlesLocked = $state(false);
   let locked = $state(false);
   let saved = $state(null);
@@ -92,7 +97,7 @@
   let justSaved = $state(false);
   let error = $state('');
 
-  const snapshot = () => JSON.stringify({ roles, chains, maxTickets, diskCap, pigTitle, sessionTitles, compress, decider, jev, signupOpen });
+  const snapshot = () => JSON.stringify({ roles, chains, maxTickets, diskCap, pigTitle, sessionTitles, compress, decider, jev, signupOpen, memoryExtractModel, memoryExtractEffort, memoryEmbeddingModel, memoryAutoExtract, memoryRecallWeights });
   const dirty = $derived(saved !== null && DATA_SECTIONS.includes(section) && snapshot() !== saved);
 
   async function models(harness) {
@@ -170,6 +175,12 @@
       jev = { baseURL: j.base_url ?? '', apiKey: '', model: j.model || 'jev-latest' };
       jevOpen = !!j.base_url?.trim();
       jevKeySet = !!j.api_key_set;
+      memoryExtractModel = body.memory_extract_model ?? 'inclusionai/ling-3.0-flash';
+      memoryExtractEffort = body.memory_extract_effort ?? 'low';
+      memoryEmbeddingModel = body.memory_embedding_model ?? 'qwen/qwen3-embedding-4b';
+      memoryAutoExtract = body.memory_auto_extract !== false;
+      const weights = body.memory_recall_weights ?? { vector: 0.5, fts: 0.3, importance: 0.2 };
+      memoryRecallWeights = { vector: String(weights.vector ?? 0.5), fts: String(weights.fts ?? 0.3), importance: String(weights.importance ?? 0.2) };
       saved = snapshot();
     } catch (e) {
       error = e.message;
@@ -281,6 +292,11 @@
         };
         payload.jev = { base_url: jev.baseURL.trim(), model: jev.model.trim() };
         if (jev.apiKey) payload.jev.api_key = jev.apiKey;
+        payload.memory_extract_model = memoryExtractModel.trim();
+        payload.memory_extract_effort = memoryExtractEffort;
+        payload.memory_embedding_model = memoryEmbeddingModel.trim();
+        payload.memory_auto_extract = memoryAutoExtract;
+        payload.memory_recall_weights = { vector: Number(memoryRecallWeights.vector), fts: Number(memoryRecallWeights.fts), importance: Number(memoryRecallWeights.importance) };
       }
       const savedBody = await putSettings(payload);
       roles = savedBody.roles ?? payload.roles;
@@ -294,6 +310,11 @@
       jev = { baseURL: savedBaseURL, apiKey: '', model: savedBody.jev?.model || 'jev-latest' };
       jevOpen = !!savedBaseURL.trim();
       jevKeySet = !!savedBody.jev?.api_key_set;
+      memoryExtractModel = savedBody.memory_extract_model ?? memoryExtractModel;
+      memoryExtractEffort = savedBody.memory_extract_effort ?? memoryExtractEffort;
+      memoryEmbeddingModel = savedBody.memory_embedding_model ?? memoryEmbeddingModel;
+      memoryAutoExtract = savedBody.memory_auto_extract ?? memoryAutoExtract;
+      if (savedBody.memory_recall_weights) memoryRecallWeights = Object.fromEntries(Object.entries(savedBody.memory_recall_weights).map(([key, value]) => [key, String(value)]));
       saved = snapshot();
       justSaved = true;
       setTimeout(() => (justSaved = false), 1800);
@@ -316,6 +337,11 @@
     decider = prev.decider;
     jev = prev.jev;
     signupOpen = prev.signupOpen;
+    memoryExtractModel = prev.memoryExtractModel;
+    memoryExtractEffort = prev.memoryExtractEffort;
+    memoryEmbeddingModel = prev.memoryEmbeddingModel;
+    memoryAutoExtract = prev.memoryAutoExtract;
+    memoryRecallWeights = prev.memoryRecallWeights;
     chains = prev.chains;
   }
 </script>
@@ -515,6 +541,40 @@
             <h2 class="text-sm font-semibold">Memory deciders</h2>
             <p class="text-xs text-muted-foreground">The heuristic proposes mined notes; the confirming decider judges them. Ensemble confirms with the memory model, or with Jev when a custom endpoint is configured, against the thresholds.</p>
           </div>
+        <section class="animate-rise flex flex-col gap-2" data-testid="memory-retention-settings">
+          <div class="px-1">
+            <h2 class="text-sm font-semibold">Automatic memory</h2>
+            <p class="text-xs text-muted-foreground">Redacted user turns leave this host for the extractor and embedder when these features are enabled.</p>
+          </div>
+          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div><div class="text-sm font-medium">Automatic extraction</div><div class="text-xs text-muted-foreground">Extract durable memories after settled turns. Defaults on when an OpenRouter key is configured.</div></div>
+              <Switch aria-label="Automatic memory extraction" checked={memoryAutoExtract} onCheckedChange={(value) => (memoryAutoExtract = value)} />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div><div class="text-sm font-medium">Extractor model</div><div class="text-xs text-muted-foreground">Empty disables model extraction.</div></div>
+              <FloatingInput id="memory-extract-model" label="Model" bind:value={memoryExtractModel} placeholder="inclusionai/ling-3.0-flash" />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div><div class="text-sm font-medium">Extractor effort</div><div class="text-xs text-muted-foreground">Controls the reasoning effort for each extraction.</div></div>
+              <div role="group" aria-label="Memory extractor effort" class="flex gap-1">
+                {#each ['off', 'low', 'medium'] as effort}
+                  <Button size="sm" variant={memoryExtractEffort === effort ? 'secondary' : 'ghost'} aria-pressed={memoryExtractEffort === effort} onclick={() => (memoryExtractEffort = effort)}>{effort}</Button>
+                {/each}
+              </div>
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div><div class="text-sm font-medium">Embedding model</div><div class="text-xs text-muted-foreground">Used for Memory and Episode vectors; empty disables embeddings.</div></div>
+              <FloatingInput id="memory-embedding-model" label="Model" bind:value={memoryEmbeddingModel} placeholder="qwen/qwen3-embedding-4b" />
+            </div>
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_8rem_8rem_8rem]">
+              <div><div class="text-sm font-medium">Recall weights</div><div class="text-xs text-muted-foreground">Vector, full-text and importance scores; each weight is 0–1 and total must be positive.</div></div>
+              <FloatingInput id="memory-weight-vector" label="Vector" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.vector} />
+              <FloatingInput id="memory-weight-fts" label="Full text" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.fts} />
+              <FloatingInput id="memory-weight-importance" label="Importance" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.importance} />
+            </div>
+          </div>
+        </section>
           <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
             <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
               <div class="min-w-0">

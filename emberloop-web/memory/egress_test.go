@@ -15,7 +15,7 @@ import (
 // egressRoles name the memory egresses the redactor guards. A function that
 // names one (in an identifier or a string literal; comments never count) and
 // sends is a memory egress call site.
-var egressRoles = []string{"distill", "decider", "jev"}
+var egressRoles = []string{"distill", "decider", "jev", "embedder"}
 
 // egressPackages are package or directory names whose sends are memory
 // egress by location: a future deciders/ or jev/ package, and memory itself,
@@ -36,7 +36,7 @@ var egressEndpoints = []string{"/api/v1/decisions", "/v1/systemone"}
 
 // egressGuards are the only accepted paths to an egress: a call site must
 // call one of them in the same function as the send.
-var egressGuards = []string{"Redact", "RedactedFor", "ForDistill", "ForDecider", "ForJev"}
+var egressGuards = []string{"Redact", "RedactedFor", "ForDistill", "ForDecider", "ForJev", "ForEmbedder"}
 
 // checkEgressSource parses one Go source file and reports the unguarded
 // memory-egress sends in it: a function that names a memory egress role (or
@@ -146,7 +146,7 @@ func checkEgressSource(filename, src string) []string {
 			if what == "" {
 				what = "package " + f.Name.Name
 			}
-			out = append(out, fmt.Sprintf("%s:%d: func %s (%s) sends via %s without the redactor: call ForDistill, ForDecider or ForJev",
+			out = append(out, fmt.Sprintf("%s:%d: func %s (%s) sends via %s without the redactor: call an egress wrapper",
 				filename, pos.Line, fn.Name.Name, what, send))
 		}
 	}

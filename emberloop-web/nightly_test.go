@@ -18,14 +18,18 @@ import (
 // wantNightlyStageOrder is the canonical stage order RunNightly follows.
 // Snapshot aborts on failure; every later stage runs regardless.
 var wantNightlyStageOrder = []string{
-	nightlyStageSnapshot,
-	nightlyStageMine,
-	nightlyStageDistill,
-	nightlyStageConsolidate,
-	nightlyStagePair,
-	nightlyStageProfile,
-	nightlyStageAnchors,
-	nightlyStageSummary,
+	"nightly_snapshot",
+	"nightly_mine",
+	"nightly_distill",
+	"nightly_reembed",
+	"nightly_fold",
+	"nightly_memory_consolidate",
+	"nightly_consolidate",
+	"nightly_promote",
+	"nightly_pair",
+	"nightly_profile",
+	"nightly_anchors",
+	"nightly_summary",
 }
 
 // nightlyTestDaemon starts a Daemon with the fake clock and the nightly LLM
@@ -545,18 +549,22 @@ func TestNightlyHandlerSurvivesClientDisconnect(t *testing.T) {
 	}
 }
 
-// TestNightlyDue fires once per local day at 03:00.
+// TestNightlyDue catches up at any hour until the ledger has a summary after
+// the most recent local 03:00 boundary.
 func TestNightlyDue(t *testing.T) {
 	t.Parallel()
 	day := time.Date(2026, 10, 11, 3, 0, 0, 0, time.Local)
-	if due, _ := nightlyDue(day, ""); !due {
-		t.Fatal("03:00 with no run today is not due")
+	if due, _ := nightlyDue(day, time.Time{}); !due {
+		t.Fatal("03:00 with no summary is not due")
 	}
-	if due, _ := nightlyDue(day, day.Local().Format("2006-01-02")); due {
-		t.Fatal("03:00 after today's run is due again")
+	if due, _ := nightlyDue(day.Add(8*time.Hour), day.Add(time.Hour)); due {
+		t.Fatal("summary after today's cutoff is due again")
 	}
-	if due, _ := nightlyDue(time.Date(2026, 10, 11, 4, 0, 0, 0, time.Local), ""); due {
-		t.Fatal("04:00 is due")
+	if due, _ := nightlyDue(day.Add(8*time.Hour), time.Time{}); !due {
+		t.Fatal("missed run at 11:00 did not catch up")
+	}
+	if due, _ := nightlyDue(day.Add(-time.Hour), day.Add(-24*time.Hour)); due {
+		t.Fatal("before 03:00 must use the previous local cutoff")
 	}
 }
 
@@ -791,9 +799,8 @@ func TestNightlyInjectedFailureTable(t *testing.T) {
 	}
 }
 
-// TestNightlyMaybeRunMarksDayOnce pins the scheduler: one run per local day,
-// an aborted run still marks the day (no per-minute FAILED spam), and a busy
-// Daemon marks nothing.
+// TestNightlyMaybeRunUsesLedgerMarker pins catch-up, restart safety and the
+// once-per-day busy skip.
 func TestNightlyMaybeRunMarksDayOnce(t *testing.T) {
 	t.Parallel()
 	flush := "FLUSH_OK"
@@ -826,21 +833,50 @@ func TestNightlyMaybeRunMarksDayOnce(t *testing.T) {
 		t.Fatal("aborted scheduled run reports false, want attempted=true")
 	}
 	rows2 := nightlyLedgerLen(t, d2, "alice")
-	if d2.nightlyMaybeRun(at3.Add(5 * time.Minute)) {
-		t.Fatal("aborted run retried in the same hour, want one attempt per day")
+	d2.nightlyFailStage = ""
+	if !d2.nightlyMaybeRun(at3.Add(5 * time.Minute)) {
+		t.Fatal("unfinished snapshot-aborted run did not retry while still due")
+	}
+	rows2 = nightlyLedgerLen(t, d2, "alice")
+	if d2.nightlyMaybeRun(at3.Add(10 * time.Minute)) {
+		t.Fatal("finished day ran again")
 	}
 	if got := nightlyLedgerLen(t, d2, "alice"); got != rows2 {
-		t.Fatalf("ledger rows = %d, want %d: an abort must not spam rows every minute", got, rows2)
+		t.Fatalf("ledger rows = %d, want %d after finished day", got, rows2)
 	}
 
-	// A busy Daemon attempts nothing and marks nothing.
+	// Busy due run writes one skipped marker for the local day, then retries.
 	d3, _ := nightlyTestDaemon(t, &flush, &none)
-	d3.sessions["busy"] = &session{live: true, busy: true, notify: make(chan struct{}), last: time.Now().UTC()}
-	if d3.nightlyMaybeRun(at3) {
-		t.Fatal("busy nightlyMaybeRun = true, want no attempt")
+	if _, err := d3.profileBankFor("alice"); err != nil {
+		t.Fatal(err)
 	}
-	if d3.nightlyLastDay != "" {
-		t.Fatalf("busy run marked day %q, want unmarked", d3.nightlyLastDay)
+	d3.sessions["busy"] = &session{live: true, busy: true, meta: SessionMeta{Owner: "alice"}, notify: make(chan struct{}), last: time.Now().UTC()}
+	if d3.nightlyMaybeRun(at3) {
+		t.Fatal("busy nightlyMaybeRun = true, want no run")
+	}
+	if d3.nightlyMaybeRun(at3.Add(time.Minute)) {
+		t.Fatal("repeated busy check ran")
+	}
+	bank, _ := d3.profileBankFor("alice")
+	ledger, _ := bank.Ledger(context.Background())
+	skips := 0
+	for _, row := range ledger {
+		if row.Stage == "nightly_skipped_busy" {
+			skips++
+		}
+	}
+	if skips != 1 {
+		t.Fatalf("busy skipped rows = %d, want one", skips)
+	}
+	d3.mu.Lock()
+	d3.sessions["busy"].busy = false
+	d3.sessions["busy"].last = d3.now().Add(-11 * time.Minute)
+	d3.mu.Unlock()
+	if !d3.nightlyMaybeRun(at3.Add(8 * time.Hour)) {
+		t.Fatal("missed nightly did not run once idle at a later hour")
+	}
+	if d3.nightlyMaybeRun(at3.Add(9 * time.Hour)) {
+		t.Fatal("ledger-completed day repeated after restart-style check")
 	}
 }
 

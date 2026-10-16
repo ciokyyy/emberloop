@@ -74,23 +74,26 @@ type ReplaySession struct {
 	Events    []Event
 }
 
-// ReplayCase is one correction in Session N with the hits the replay found.
+// ReplayCase carries both recall-arm outcomes for the same correction case.
 type ReplayCase struct {
-	SessionID string
-	EventID   string
-	Query     string
-	FTSHits   []string
-	Covered   bool
+	SessionID     string
+	EventID       string
+	Query         string
+	FTSHits       []string
+	Covered       bool
+	MemoryCovered bool
 }
 
-// ReplayResult aggregates one replay pass.
+// ReplayResult aggregates Rules-only and recall-with-Memories arms.
 type ReplayResult struct {
-	Cases         int     `json:"cases"`
-	Covered       int     `json:"covered"`
-	RecallAt5     float64 `json:"recallAt5"`
-	RepeatTotal   int     `json:"repeatTotal"`
-	RepeatCovered int     `json:"repeatCovered"`
-	RepeatRate    float64 `json:"repeatRate"`
+	Cases           int     `json:"cases"`
+	Covered         int     `json:"covered"`
+	RecallAt5       float64 `json:"recallAt5"`
+	MemoryCovered   int     `json:"memoryCovered"`
+	MemoryRecallAt5 float64 `json:"memoryRecallAt5"`
+	RepeatTotal     int     `json:"repeatTotal"`
+	RepeatCovered   int     `json:"repeatCovered"`
+	RepeatRate      float64 `json:"repeatRate"`
 }
 
 // replayCorrection is one heuristic hit with its Event identity.
@@ -142,14 +145,11 @@ func truncateRuleText(s string) string {
 	return s
 }
 
-// ReplayEvaluate runs the offline replay over sessions in time order with
-// one bank built incrementally: for Session N the bank holds Rules from
-// Sessions before N (each prior correction as one Rule), then each
-// correction in N recalls the top 20, cuts to 5 and checks coverage with
-// memory.CoversRule. The repeat rate checks each correction against every
-// earlier correction (prior Sessions plus earlier in the same Session), the
-// capturable-Rule denominator. newBank supplies the bank (the Fake in tests,
-// a real FTS5 bank in the CLI).
+// ReplayEvaluate scores both recall arms on one ordered stream: each correction
+// is queried against the same chronological boundary in separate Rule and
+// Memory banks, and both outcomes are attached to the same ReplayCase. The
+// Run-time every-Nth-ticket recall-off A/B control is independent and remains
+// unchanged; it still assigns NoRecall per ticket through RecallOffForTicket.
 func ReplayEvaluate(sessions []ReplaySession, newBank func() memory.Memory) (ReplayResult, []ReplayCase, error) {
 	ordered := append([]ReplaySession(nil), sessions...)
 	sort.SliceStable(ordered, func(i, j int) bool {
@@ -162,6 +162,7 @@ func ReplayEvaluate(sessions []ReplaySession, newBank func() memory.Memory) (Rep
 		return ReplayResult{}, nil, fmt.Errorf("replay: no bank")
 	}
 	bank := newBank()
+	memoryBank := newBank()
 	ctx := context.Background()
 	var (
 		res       ReplayResult
@@ -197,10 +198,19 @@ func ReplayEvaluate(sessions []ReplaySession, newBank func() memory.Memory) (Rep
 			if covered {
 				res.Covered++
 			}
-			cases = append(cases, ReplayCase{
-				SessionID: c.sessionID, EventID: c.eventID, Query: c.text,
-				FTSHits: hits, Covered: covered,
-			})
+			memoryHits, err := memoryBank.RecallMemoryItems(ctx, memory.Redact(c.text), memory.MaxRecall, false)
+			if err != nil {
+				return res, cases, fmt.Errorf("replay: memory recall: %w", err)
+			}
+			memoryTexts := make([]string, 0, len(memoryHits))
+			for _, hit := range memoryHits {
+				memoryTexts = append(memoryTexts, hit.Text)
+			}
+			memoryCovered := memory.TopCovered(memoryTexts, c.text, 5)
+			if memoryCovered {
+				res.MemoryCovered++
+			}
+			cases = append(cases, ReplayCase{SessionID: c.sessionID, EventID: c.eventID, Query: c.text, FTSHits: hits, Covered: covered, MemoryCovered: memoryCovered})
 		}
 		// Session N becomes memory for N+1: each correction is one Rule.
 		for _, c := range corrections {
@@ -214,10 +224,16 @@ func ReplayEvaluate(sessions []ReplaySession, newBank func() memory.Memory) (Rep
 				Text:   text, Kind: memory.KindPreference,
 				Status: memory.StatusActive, ApprovedBy: "replay",
 			})
+			_, _ = memoryBank.AddMemory(ctx, memory.MemoryItem{
+				SessionID: c.sessionID, EventID: c.eventID, Author: "replay",
+				Kind: memory.KindPreference, Text: text, Quote: c.text,
+				Importance: .7, Veracity: memory.VeracityStated, Status: memory.StatusActive,
+			})
 			priorSeen = append(priorSeen, c.text)
 		}
 	}
 	res.RecallAt5 = memory.RecallAt5(res.Covered, res.Cases)
+	res.MemoryRecallAt5 = memory.RecallAt5(res.MemoryCovered, res.Cases)
 	res.RepeatRate = memory.RepeatRate(res.RepeatCovered, res.RepeatTotal)
 	return res, cases, nil
 }
@@ -419,7 +435,8 @@ func FormatReplayReport(res ReplayResult, sessions int, fts, emb, gap float64, e
 	var b strings.Builder
 	fmt.Fprintf(&b, "sessions: %d\n", sessions)
 	fmt.Fprintf(&b, "cases: %d\n", res.Cases)
-	fmt.Fprintf(&b, "recall@5: %.3f (%d/%d)\n", res.RecallAt5, res.Covered, res.Cases)
+	fmt.Fprintf(&b, "recall@5: %.3f (%d/%d) [Rules]\n", res.RecallAt5, res.Covered, res.Cases)
+	fmt.Fprintf(&b, "recall@5 (Memories): %.3f (%d/%d)\n", res.MemoryRecallAt5, res.MemoryCovered, res.Cases)
 	fmt.Fprintf(&b, "repeat-correction rate: %.3f (%d/%d)\n", res.RepeatRate, res.RepeatCovered, res.RepeatTotal)
 	if embedderOn {
 		fmt.Fprintf(&b, "fts recall@5: %.3f\n", fts)

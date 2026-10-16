@@ -1,12 +1,16 @@
 package web
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"example.com/emberloop-web/el/tools/systemone"
+	"example.com/emberloop-web/memory"
 )
 
 // roleSetting is a legacy role's harness, model and effort in the shared el
@@ -177,35 +181,84 @@ func firstSetTicketCap(primary, alias *int) *int {
 	return alias
 }
 
-// settingsView is the GET and PUT shape: roles, per-role Run skills and
-// per-role chains next to the live cap and whether the environment overrides
-// the file, so the UI can lock the field.
-func settingsView() map[string]any {
+// settingsView exposes host-global Memory controls only to admins.
+func settingsView(memorySettings ...map[string]any) map[string]any {
 	_, fromEnv := envMaxTickets()
 	decider := readDeciderSettings()
-	return map[string]any{
-		"roles":                   readRoles(),
-		"run_skills":              readRunSkillsRaw(),
-		"chains":                  agentChainsView(),
-		"max_tickets":             maxTicketsFromSettings(),
-		"max_tickets_from_env":    fromEnv,
-		"session_titles":          sessionTitlesSetting(),
-		"session_titles_from_env": titlesFromEnv(),
-		"compress":                readCompressSettings(),
-		"signup_enabled":          signupEnabledSetting(),
-		"compress_note":           compressNote(readCompressSettings().Model),
-		"decider":                 decider,
-		"decider_note":            deciderNote(decider),
-		"jev":                     readJevSettings(),
-		"disk_go_cache_cap_gb":    diskGoCacheCapGB(),
-		"oauth_redirect_base_url": oauthRedirectBaseURLSetting(),
+	view := map[string]any{
+		"roles": readRoles(), "run_skills": readRunSkillsRaw(), "chains": agentChainsView(),
+		"max_tickets": maxTicketsFromSettings(), "max_tickets_from_env": fromEnv,
+		"session_titles": sessionTitlesSetting(), "session_titles_from_env": titlesFromEnv(),
+		"compress": readCompressSettings(), "signup_enabled": signupEnabledSetting(),
+		"compress_note": compressNote(readCompressSettings().Model), "decider": decider,
+		"decider_note": deciderNote(decider), "jev": readJevSettings(),
+		"disk_go_cache_cap_gb": diskGoCacheCapGB(), "oauth_redirect_base_url": oauthRedirectBaseURLSetting(),
 	}
+	if len(memorySettings) > 0 {
+		for key, value := range memorySettings[0] {
+			view[key] = value
+		}
+	}
+	return view
+}
+
+func (d *Daemon) memorySettingsView() map[string]any {
+	all, _ := d.settingsMap()
+	model, effort, embedding := memory.DefaultExtractorModel, "low", memory.DefaultEmbeddingModel
+	decodeStringSetting(all, "memory_extract_model", &model)
+	decodeStringSetting(all, "memory_extract_effort", &effort)
+	decodeStringSetting(all, "memory_embedding_model", &embedding)
+	weights := map[string]float64{"vector": 0.5, "fts": 0.3, "importance": 0.2}
+	if raw, ok := all["memory_recall_weights"]; ok {
+		_ = json.Unmarshal(raw, &weights)
+	}
+	auto := systemone.APIKey(context.Background()) != ""
+	if raw, ok := all["memory_auto_extract"]; ok {
+		_ = json.Unmarshal(raw, &auto)
+	}
+	return map[string]any{"memory_extract_model": model, "memory_extract_effort": effort, "memory_embedding_model": embedding, "memory_recall_weights": weights, "memory_auto_extract": auto}
+}
+
+func decodeStringSetting(all map[string]json.RawMessage, key string, value *string) {
+	if raw, ok := all[key]; ok {
+		_ = json.Unmarshal(raw, value)
+	}
+}
+
+func (d *Daemon) settingsViewFor(r *http.Request) map[string]any {
+	if who, ok := d.requesterOf(r); ok && who.user != nil && who.user.Admin {
+		return settingsView(d.memorySettingsView())
+	}
+	return settingsView()
+}
+
+func validateMemoryRecallWeights(raw json.RawMessage) string {
+	var weights struct {
+		Vector     *float64 `json:"vector"`
+		FTS        *float64 `json:"fts"`
+		Importance *float64 `json:"importance"`
+	}
+	if err := json.Unmarshal(raw, &weights); err != nil || weights.Vector == nil || weights.FTS == nil || weights.Importance == nil {
+		return "memory_recall_weights must contain vector, fts and importance numbers"
+	}
+	values := []float64{*weights.Vector, *weights.FTS, *weights.Importance}
+	total := 0.0
+	for _, value := range values {
+		if value < 0 || value > 1 {
+			return "memory_recall_weights must be between 0 and 1"
+		}
+		total += value
+	}
+	if total == 0 {
+		return "memory_recall_weights must sum to more than 0"
+	}
+	return ""
 }
 
 func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
-		writeJSON(w, http.StatusOK, settingsView())
+		writeJSON(w, http.StatusOK, d.settingsViewFor(r))
 	case "PUT":
 		defer d.live.publish("settings")
 		var body struct {
@@ -221,6 +274,11 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			Compress             *compressPatch          `json:"compress"`
 			Decider              *deciderPatch           `json:"decider"`
 			Jev                  *jevPatch               `json:"jev"`
+			MemoryExtractModel   *string                 `json:"memory_extract_model"`
+			MemoryExtractEffort  *string                 `json:"memory_extract_effort"`
+			MemoryEmbeddingModel *string                 `json:"memory_embedding_model"`
+			MemoryRecallWeights  json.RawMessage         `json:"memory_recall_weights"`
+			MemoryAutoExtract    *bool                   `json:"memory_auto_extract"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -248,6 +306,23 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		// writes admin-only.
 		// The redirect base is a host-global OAuth setting, so it follows the
 		// same admin-only write rule as other host-global settings.
+		memorySettingsSet := body.MemoryExtractModel != nil || body.MemoryExtractEffort != nil || body.MemoryEmbeddingModel != nil || body.MemoryRecallWeights != nil || body.MemoryAutoExtract != nil
+		if memorySettingsSet {
+			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
+				http.Error(w, "only the admin can change Memory settings", http.StatusForbidden)
+				return
+			}
+		}
+		if body.MemoryExtractEffort != nil && *body.MemoryExtractEffort != "off" && *body.MemoryExtractEffort != "low" && *body.MemoryExtractEffort != "medium" {
+			http.Error(w, "memory_extract_effort must be off, low or medium", http.StatusBadRequest)
+			return
+		}
+		if body.MemoryRecallWeights != nil {
+			if msg := validateMemoryRecallWeights(body.MemoryRecallWeights); msg != "" {
+				http.Error(w, msg, http.StatusBadRequest)
+				return
+			}
+		}
 		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil || runSkillsSet || body.DiskGoCacheCapGB != nil || body.OAuthRedirectBaseURL != nil {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
 				http.Error(w, "only the admin can change signup, decider, jev, run_skills, disk_go_cache_cap_gb and oauth_redirect_base_url settings", http.StatusForbidden)
@@ -365,6 +440,25 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			raw, _ := json.Marshal(*body.OAuthRedirectBaseURL)
 			all[oauthRedirectBaseURLSettingKey] = raw
 		}
+		if body.MemoryExtractModel != nil {
+			raw, _ := json.Marshal(strings.TrimSpace(*body.MemoryExtractModel))
+			all["memory_extract_model"] = raw
+		}
+		if body.MemoryExtractEffort != nil {
+			raw, _ := json.Marshal(*body.MemoryExtractEffort)
+			all["memory_extract_effort"] = raw
+		}
+		if body.MemoryEmbeddingModel != nil {
+			raw, _ := json.Marshal(strings.TrimSpace(*body.MemoryEmbeddingModel))
+			all["memory_embedding_model"] = raw
+		}
+		if body.MemoryRecallWeights != nil {
+			all["memory_recall_weights"] = body.MemoryRecallWeights
+		}
+		if body.MemoryAutoExtract != nil {
+			raw, _ := json.Marshal(*body.MemoryAutoExtract)
+			all["memory_auto_extract"] = raw
+		}
 		if runSkillsSet {
 			merged := readRunSkillsRaw()
 			for role, list := range runSkills {
@@ -395,10 +489,13 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		if memorySettingsSet {
+			d.reconfigureMemoryEmbedding()
+		}
 		// The live cap reads the file on every check, so the saved value is
 		// already in force; the view reports the cap in force, which the
 		// environment still wins.
-		writeJSON(w, http.StatusOK, settingsView())
+		writeJSON(w, http.StatusOK, d.settingsViewFor(r))
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}

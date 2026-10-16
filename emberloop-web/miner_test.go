@@ -450,45 +450,22 @@ func TestMineSessionPromotesRecurringSubject(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Stored != 1 || res.Promoted != 1 {
-		t.Fatalf("second mine = %+v, want 1 stored and 1 promotion", res)
+	if res.Stored != 1 || res.Promoted != 0 {
+		t.Fatalf("second mine = %+v, want stored observation without legacy subject-key promotion", res)
 	}
-	var proposal memory.QueueItem
-	n := 0
 	items, _ = bank.Queue(t.Context())
 	for _, it := range items {
 		if it.Kind == memory.QueueRule {
-			proposal, n = it, n+1
+			t.Fatalf("legacy subject-key candidate entered queue: %+v", it)
 		}
 	}
-	if n != 1 {
-		t.Fatalf("rule queue holds %d items, want the one recurrence proposal", n)
-	}
-	decoded, err := memory.DecodeRememberProposal(proposal.Payload)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(decoded.Quotes) != 2 || len(decoded.Sessions) != 2 {
-		t.Fatalf("proposal = %+v, want both quotes and sessions", decoded)
-	}
-	// The stored observations record the Decider-proposed key and its source.
 	obs := bankQuotes(t, d, "alice", "wrapped errors")
 	if len(obs) != 2 {
 		t.Fatalf("observations = %d, want 2", len(obs))
 	}
 	for _, o := range obs {
 		if o.SubjectKey == "" {
-			t.Fatalf("observation %d has no subject key", o.ID)
-		}
-		var doc struct {
-			SubjectKey string `json:"subject_key"`
-			SubjectBy  string `json:"subject_by"`
-		}
-		if err := json.Unmarshal([]byte(o.DeciderJSON), &doc); err != nil {
-			t.Fatal(err)
-		}
-		if doc.SubjectKey != o.SubjectKey || doc.SubjectBy == "" {
-			t.Fatalf("decider doc = %+v, want the key and its proposer", doc)
+			t.Fatalf("observation %d has no legacy subject key", o.ID)
 		}
 	}
 }
@@ -539,8 +516,8 @@ func TestMineSessionRedactsSubjectKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Promoted != 1 {
-		t.Fatalf("second mine = %+v, want the redacted recurrence promoted", res)
+	if res.Promoted != 0 {
+		t.Fatalf("second mine = %+v, want no subject-key recurrence promotion", res)
 	}
 	bank, err := d.profileBankFor("alice")
 	if err != nil {

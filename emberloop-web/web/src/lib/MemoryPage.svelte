@@ -17,15 +17,11 @@
   import ProfileSettings from './ProfileSettings.svelte';
   import PromotionQueue from './PromotionQueue.svelte';
   import {
-    getRules,
-    getObservations,
-    getRulesQueue,
-    decideRuleQueue,
-    batchRuleQueue,
-    getMemoryLedger,
-    getMemoryStatus,
-    purgeMemory,
-    proposePromotion,
+    getMemories, getEpisodes, forgetMemory, parkMemory, pinMemory,
+    getNewMemoryCount,
+    promoteMemoryRule, editMemory, promoteObservationMemory,
+    getRules, getObservations, getRulesQueue, decideRuleQueue, batchRuleQueue,
+    getMemoryLedger, getMemoryStatus, purgeMemory, proposePromotion,
   } from './api.js';
   import {
     normalizeRule,
@@ -39,13 +35,23 @@
     latencyLabel,
   } from './memory.js';
 
-  let { onBack = () => {} } = $props();
+  let { onBack = () => {}, userId = 'default' } = $props();
 
   let status = $state(null);
   let statusError = $state('');
   let rules = $state([]);
   let observations = $state([]);
   let queue = $state([]);
+  let memories = $state([]);
+  let episodes = $state([]);
+  let tab = $state('memories');
+  let memoryQuery = $state('');
+  let memoryKind = $state('');
+  let memoryStatus = $state('');
+  let editingMemory = $state(0);
+  let editMemoryText = $state('');
+  let newSinceVisit = $state(0);
+  let counterInitialized = false;
   let ledger = $state([]);
   let loading = $state(true);
   let error = $state('');
@@ -57,6 +63,8 @@
   // Purge selection: IDs the human checked on the page.
   let selRules = $state([]);
   let selObs = $state([]);
+  let selMemories = $state([]);
+  let selEpisodes = $state([]);
   let selQueue = $state([]);
   let selLedger = $state([]);
   let confirm = $state('');
@@ -81,22 +89,28 @@
     loading = true;
     error = '';
     statusError = '';
+    const visitKey = `emberloop.memory.lastVisit.${userId}`;
+    const previousVisit = !counterInitialized && typeof localStorage !== 'undefined'
+      ? Number(localStorage.getItem(visitKey) || 0)
+      : 0;
     try {
-      const [st, r, o, q, l] = await Promise.all([
-        getMemoryStatus(),
-        getRules(),
-        getObservations(),
-        getRulesQueue(),
-        getMemoryLedger(),
+      const [st, r, o, q, l, m, ep, newCount] = await Promise.all([
+        getMemoryStatus(), getRules(), getObservations(), getRulesQueue(), getMemoryLedger(), getMemories(), getEpisodes(),
+        counterInitialized ? Promise.resolve({ count: newSinceVisit }) : getNewMemoryCount(previousVisit),
       ]);
       status = st;
       rules = Array.isArray(r) ? r.map(normalizeRule) : [];
       observations = Array.isArray(o) ? o.map(normalizeObservation) : [];
       queue = Array.isArray(q) ? q.map(normalizeQueueItem) : [];
       ledger = Array.isArray(l) ? l.map(normalizeLedger) : [];
+      memories = Array.isArray(m) ? m : [];
+      episodes = Array.isArray(ep) ? ep : [];
+      if (!counterInitialized && typeof localStorage !== 'undefined') {
+        newSinceVisit = Number(newCount?.count) || 0;
+        localStorage.setItem(visitKey, String(Date.now()));
+        counterInitialized = true;
+      }
     } catch (e) {
-      // A failing engine never blanks the page: the chip goes Unavailable
-      // and the sections keep their last good rows.
       if (!status && !rules.length && !queue.length) error = e.message || 'Could not load memory.';
       else statusError = e.message || 'Refresh failed.';
     } finally {
@@ -105,6 +119,20 @@
   }
   load();
 
+
+  async function filterMemories() {
+    try { memories = await getMemories({ q: memoryQuery, kind: memoryKind, status: memoryStatus }); }
+    catch (e) { error = e.message || 'Memory search failed.'; }
+  }
+  async function mutateMemory(action, m) {
+    await run(async () => {
+      if (action === 'forget') await forgetMemory(m.id);
+      if (action === 'park') await parkMemory(m.id);
+      if (action === 'pin') await pinMemory(m.id, !m.pinned);
+      if (action === 'promote') { await promoteMemoryRule(m.id); notice = 'Pending Rule proposal created; it still needs approval.'; }
+      if (action === 'edit') { await editMemory(m.id, editMemoryText.trim()); editingMemory = 0; editMemoryText = ''; }
+    });
+  }
   async function run(fn) {
     error = '';
     notice = '';
@@ -206,7 +234,7 @@
 
   const queueGroups = $derived(groupQueueBySession(queue));
   const pendingCount = $derived(queue.filter((q) => q.status === 'pending').length);
-  const selection = $derived({ observations: selObs, rules: selRules, queue: selQueue, ledger: selLedger });
+  const selection = $derived({ observations: selObs, memories: selMemories, episodes: selEpisodes, rules: selRules, queue: selQueue, ledger: selLedger });
   const counts = $derived(purgeCounts(selection));
   const canPurge = $derived(counts.total > 0 && confirm.trim() === 'PURGE' && !purging);
   const available = $derived(status?.available === true);
@@ -224,6 +252,8 @@
       purgeResult = purgeSummary(res);
       selRules = [];
       selObs = [];
+      selMemories = [];
+      selEpisodes = [];
       selQueue = [];
       selLedger = [];
       confirm = '';
@@ -260,6 +290,71 @@
           <Button variant="outline" size="sm" onclick={load} aria-label="Refresh memory"><RefreshCw /></Button>
         </div>
       </div>
+      <p class="text-xs text-muted-foreground" data-testid="memory-header-summary">
+        {newSinceVisit} new since last visit · Queue {status?.queue?.pending ?? pendingCount} pending · Oldest pending {status?.queue?.oldestPendingAgeHours ? `${Number(status.queue.oldestPendingAgeHours).toFixed(1)} hours` : '—'}
+      </p>
+      {#if status?.metrics}
+        <section class="grid grid-cols-2 gap-2 rounded-xl border p-3 text-xs" data-testid="memory-production-metrics" aria-label="Memory production metrics">
+          <div>Memories per day <strong>{status.metrics.memoriesPerDay}</strong></div>
+          <div>Forgotten within 7 days <strong>{(Number(status.metrics.forgotten7Day || 0) * 100).toFixed(1)}%</strong> · target &lt;20%</div>
+          <div>Promoted share <strong>{(Number(status.metrics.promotedShare || 0) * 100).toFixed(1)}%</strong></div>
+          <div>Injection hit rate <strong>{Number(status.metrics.injectionHitRate || 0).toFixed(2)}</strong></div>
+          <div>Contradictions <strong>{status.metrics.contradictions}</strong></div>
+          <div>Daily extractor + embedder <strong>${(Number(status.metrics.extractorCostUsd || 0) + Number(status.metrics.embedderCostUsd || 0)).toFixed(4)}</strong>
+            {#if status.metrics.costAlert}<span role="alert" class="text-destructive"> · Above $0.05/day</span>{/if}
+          </div>
+        </section>
+      {/if}
+        <nav class="flex flex-wrap gap-2" aria-label="Memory tabs">
+          <Button size="sm" variant={tab === 'memories' ? 'default' : 'outline'} onclick={() => (tab = 'memories')}>Memories · {newSinceVisit} new</Button>
+          <Button size="sm" variant={tab === 'legacy' ? 'default' : 'outline'} onclick={() => (tab = 'legacy')}>Legacy observations</Button>
+          <Button size="sm" variant={tab === 'episodes' ? 'default' : 'outline'} onclick={() => (tab = 'episodes')}>Episodes</Button>
+        </nav>
+        {#if tab === 'memories'}
+          <section class="animate-rise flex flex-col gap-3 rounded-2xl border bg-card p-4" data-testid="memory-items">
+            <h2 class="text-sm font-semibold">Memories ({memories.length})</h2>
+            <form class="flex flex-wrap gap-2" onsubmit={(e) => { e.preventDefault(); filterMemories(); }}>
+              <Input aria-label="Search memories" placeholder="Search memories" bind:value={memoryQuery} />
+              <Input aria-label="Memory kind filter" placeholder="Kind (optional)" bind:value={memoryKind} />
+              <Input aria-label="Memory status filter" placeholder="Status (optional)" bind:value={memoryStatus} />
+              <Button variant="outline" size="sm" type="submit">Filter</Button>
+            </form>
+            {#each memories as m (m.id)}
+              <article class="rounded-xl border p-3" data-testid={`memory-item-${m.id}`}>
+                <label><input type="checkbox" aria-label={`Purge memory ${m.id}`} checked={selMemories.includes(m.id)} onchange={() => (selMemories = toggle(selMemories,m.id))} /> Purge</label>
+                <div class="text-sm font-medium">{m.text}{m.pinned ? ' · Pinned' : ''}</div>
+                <div class="mt-1 text-xs text-muted-foreground">{m.kind} · {m.status} · importance {Number(m.importance).toFixed(2)} · ×{m.mentionCount} · {m.veracity}</div>
+                <blockquote class="mt-2 rounded-lg bg-muted px-2 py-1 text-xs">“{m.quote}”</blockquote>
+                <a class="text-xs underline" href={`/s/${encodeURIComponent(m.sessionId)}`}>Session {m.sessionId}</a>
+                {#if editingMemory === m.id}
+                  <FloatingInput label="Memory text" bind:value={editMemoryText} />
+                  <Button size="sm" onclick={() => mutateMemory('edit', m)}>Save edit</Button>
+                  <Button size="sm" variant="ghost" onclick={() => (editingMemory = 0)}>Cancel</Button>
+                {:else}
+                  <div class="mt-2 flex flex-wrap gap-2">
+                    <Button size="sm" variant="outline" onclick={() => mutateMemory('forget', m)}>Forget</Button>
+                    <Button size="sm" variant="outline" onclick={() => mutateMemory('park', m)}>Park</Button>
+                    <Button size="sm" variant="outline" onclick={() => mutateMemory('pin', m)}>{m.pinned ? 'Unpin' : 'Pin'}</Button>
+                    <Button size="sm" variant="outline" onclick={() => mutateMemory('promote', m)}>Promote to Rule</Button>
+                    <Button size="sm" variant="ghost" onclick={() => { editingMemory = m.id; editMemoryText = m.text; }}>Edit</Button>
+                  </div>
+                {/if}
+              </article>
+            {/each}
+          </section>
+        {:else if tab === 'legacy'}
+          <section class="animate-rise flex flex-col gap-2 rounded-2xl border bg-card p-4" data-testid="memory-legacy">
+            <h2 class="text-sm font-semibold">Legacy observations</h2>
+            {#each observations as o (o.id)}
+              <article class="rounded-xl border p-3"><div>{o.quote}</div><div class="text-xs text-muted-foreground">{o.kind} · Session {o.sessionId}</div><Button size="sm" onclick={() => run(() => promoteObservationMemory(o.id))}>Promote to Memory</Button></article>
+            {/each}
+          </section>
+        {:else}
+          <section class="animate-rise flex flex-col gap-2 rounded-2xl border bg-card p-4" data-testid="memory-episodes">
+            <h2 class="text-sm font-semibold">Episodes (read-only)</h2>
+            {#each episodes as ep (ep.id)}<article class="rounded-xl border p-3 text-sm"><label><input type="checkbox" aria-label={`Purge episode ${ep.id}`} checked={selEpisodes.includes(ep.id)} onchange={() => (selEpisodes = toggle(selEpisodes,ep.id))} /> Purge</label>{ep.text}<a class="block text-xs underline" href={`/s/${encodeURIComponent(ep.sessionId)}`}>Session {ep.sessionId}</a></article>{/each}
+          </section>
+        {/if}
 
       {#if statusError}
         <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{statusError}</p>
@@ -280,6 +375,7 @@
           <div class="grid gap-2 text-sm sm:grid-cols-2">
             <div>Pending proposals: <span class="font-medium tabular-nums" data-testid="memory-pending">{status?.queue?.pending ?? pendingCount}</span></div>
             <div>Queue budget: <span class="tabular-nums">{status?.queue?.budget ?? '—'}</span></div>
+            <div>Oldest pending age: <span class="tabular-nums">{status?.queue?.oldestPendingAgeHours ? `${Number(status.queue.oldestPendingAgeHours).toFixed(1)} hours` : '—'}</span></div>
             <div>Approval latency: <span class="tabular-nums">{latencyLabel(status?.queue?.avgApprovalLatencyHours)}</span></div>
             <div>Ledger rows: <span class="tabular-nums">{status?.ledgerSize ?? ledger.length}</span></div>
           </div>
@@ -491,7 +587,7 @@
         <section class="animate-rise flex flex-col gap-3 rounded-2xl border bg-card p-4" data-testid="memory-purge">
           <h2 class="text-sm font-semibold">Purge</h2>
           <p class="text-xs text-muted-foreground">
-            Selected: {counts.rules} rules, {counts.observations} observations, {counts.queue} queue items, {counts.ledger} ledger rows.
+            Selected: {counts.memories} memories, {counts.episodes} episodes, {counts.rules} rules, {counts.observations} observations, {counts.queue} queue items, {counts.ledger} ledger rows.
             This is the only delete path. Type PURGE to confirm.
           </p>
           <FloatingInput label="Type PURGE to confirm" bind:value={confirm} placeholder="PURGE" />

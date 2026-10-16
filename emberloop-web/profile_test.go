@@ -13,6 +13,25 @@ import (
 	"example.com/emberloop-web/memory"
 )
 
+func TestMemoryEmbeddingModelSettingDefaultsAndDisables(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-openrouter-key")
+	for _, tc := range []struct{ raw, want string }{
+		{`{}`, memory.DefaultEmbeddingModel},
+		{`{"memory_embedding_model":"custom/model"}`, "custom/model"},
+		{`{"memory_embedding_model":""}`, ""},
+	} {
+		d := NewDaemon(tempDir(t), NewFakeBackend())
+		d.SetSettingsPath(useSettings(t, tc.raw))
+		embedder, got := d.memoryEmbeddingOptions()
+		if got != tc.want {
+			t.Errorf("setting %s: model = %q, want %q", tc.raw, got, tc.want)
+		}
+		if (embedder != nil) != (tc.want != "") {
+			t.Errorf("setting %s: embedder configured=%v", tc.raw, embedder != nil)
+		}
+	}
+}
+
 // profileDaemon starts a Daemon on the fake Backend with prompt capture,
 // like handleDaemon but exposing the profile API base URL.
 func profileDaemon(t *testing.T) (*Daemon, *FakeBackend, *promptsSeen, string, string) {
@@ -272,6 +291,13 @@ func TestProfileApproveEditRejectFromSettingsView(t *testing.T) {
 	if _, view := getProfile(t, base); view.Version != 1 {
 		t.Fatalf("reject wrote v%d, want still v1", view.Version)
 	}
+	if code, _ := proposeViaSession(t, base, id, ops2, "unchanged retry"); code != http.StatusCreated {
+		t.Fatalf("unchanged rejected patch retry = %d, want successful no-op response", code)
+	}
+	queue = getProfileQueue(t, base)
+	if len(queue) != 2 {
+		t.Fatalf("rejected identical patch was proposed again: %+v", queue)
+	}
 	// Direct settings edits also append a version and an Event.
 	direct := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "direct line", Tag: memory.ProfileOther}}
 	if code, _ := putProfile(t, base, direct); code != http.StatusOK {
@@ -279,6 +305,12 @@ func TestProfileApproveEditRejectFromSettingsView(t *testing.T) {
 	}
 	if _, view := getProfile(t, base); view.Version != 2 {
 		t.Fatalf("after direct edit version = %d, want 2", view.Version)
+	}
+	if code, _ := proposeViaSession(t, base, id, ops2, "profile changed since rejection"); code != http.StatusCreated {
+		t.Fatalf("propose after Profile context changed = %d", code)
+	}
+	if got := len(getProfileQueue(t, base)); got != 3 {
+		t.Fatalf("changed Profile context did not permit a new proposal: queue has %d rows", got)
 	}
 	n := 0
 	for _, e := range transcriptOf(t, base, id) {
@@ -290,6 +322,15 @@ func TestProfileApproveEditRejectFromSettingsView(t *testing.T) {
 		t.Fatalf("profile_updated events = %d, want 2 (approve + direct)", n)
 	}
 	_ = d
+}
+
+func TestSameProfilePatchEffectCanonicalizesOperationOrder(t *testing.T) {
+	lines := []memory.ProfileLine{{ID: "l1", Text: "existing", Tag: memory.ProfileWorkflow}}
+	a := []memory.ProfileOp{{Op: memory.ProfileAdd, Text: "alpha", Tag: memory.ProfileStyle}, {Op: memory.ProfileAdd, Text: "beta", Tag: memory.ProfileOther}}
+	b := []memory.ProfileOp{a[1], a[0]}
+	if !sameProfilePatchEffect(lines, a, b) {
+		t.Fatal("reordered independent operations should have the same resulting Profile")
+	}
 }
 
 func TestProfileReviewerFilterAndBarredTag(t *testing.T) {

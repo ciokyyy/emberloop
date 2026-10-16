@@ -1,0 +1,41 @@
+{
+  "positives": [
+    {"text":"I prefer concise answers with the conclusion first.","concept":"Concise answers with conclusion first"},
+    {"text":"Always run the Go tests before you say the change is done.","concept":"Run Go tests before declaring completion"},
+    {"text":"In this repo, keep the el library independent of the Daemon package.","concept":"Keep el independent of Daemon"},
+    {"text":"We decided to use SQLite for the per-user memory bank.","concept":"Use SQLite for per-user memory"},
+    {"text":"From now on, ask before adding a new dependency.","concept":"Ask before adding dependencies"},
+    {"text":"Never rewrite a shipped database migration; add a new migration instead.","concept":"Database migrations are append-only"},
+    {"text":"I prefer small, focused commits over one large commit.","concept":"Prefer focused commits"},
+    {"text":"For future code reviews, prioritize correctness over style nits.","concept":"Reviews prioritize correctness"},
+    {"text":"We decided the production service runs on Go 1.26.","concept":"Production service uses Go 1.26"},
+    {"text":"Always preserve existing behavior unless the ticket explicitly changes it.","concept":"Preserve behavior unless requested"},
+    {"text":"I want error messages to explain how to fix the problem.","concept":"Actionable error messages"},
+    {"text":"Never put credentials in logs or test fixtures.","concept":"Keep credentials out of logs and fixtures"},
+    {"text":"The build server runs Ubuntu Linux.","concept":"Build server runs Ubuntu Linux"},
+    {"text":"Use tabs for Go indentation; gofmt owns formatting.","concept":"Use gofmt for Go formatting"},
+    {"text":"In this repo, browser tests use Vitest.","concept":"Browser tests use Vitest"}
+  ],
+  "negatives": [
+    {"text":"Please fix the failing parser test."},
+    {"text":"Why does this endpoint return a 404?"},
+    {"text":"The build failed after the latest change."},
+    {"text":"Can you add a retry to this request?"},
+    {"text":"I am debugging the login form today."},
+    {"text":"The test suite currently takes about two minutes."},
+    {"text":"Could you inspect the README for this command?"},
+    {"text":"The server returned an unexpected response."},
+    {"text":"Please rename this variable to make it clearer."},
+    {"text":"I think this bug is in the cache layer."},
+    {"text":"What changed in the latest release?"},
+    {"text":"The deployment is running now."},
+    {"text":"Can you check whether this branch is up to date?"},
+    {"text":"The button is missing from the settings page."},
+    {"text":"Please explain how this function works."},
+    {"text":"The database query is slower than expected."},
+    {"text":"I need help reproducing this crash."},
+    {"text":"Does this package support Windows?"},
+    {"text":"The documentation link is broken."},
+    {"text":"Run the formatter on the changed files."}
+  ]
+}

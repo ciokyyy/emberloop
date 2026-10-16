@@ -15,7 +15,6 @@ import (
 	"example.com/emberloop-web/memory"
 )
 
-
 // cannedPrompt builds a miner-readable user prompt Event.
 func cannedPrompt(seq int64, text string) Event {
 	return Event{Kind: "prompt", Sender: senderUser, User: "u1", Text: text, Seq: seq}
@@ -49,17 +48,21 @@ func TestReplayEvaluateCannedLogs(t *testing.T) {
 	if res.Cases != 3 {
 		t.Fatalf("cases = %d, want 3 (lunch is not a correction)", res.Cases)
 	}
-	if res.Covered != 1 {
-		t.Fatalf("covered = %d, want 1 (s2 refines s1)", res.Covered)
+	if res.Covered != 1 || res.RecallAt5 != 1.0/3.0 {
+		t.Fatalf("Rules arm = %+v, want one of three covered", res)
 	}
-	if res.RecallAt5 != 1.0/3.0 {
-		t.Fatalf("recall@5 = %v, want 1/3", res.RecallAt5)
+	if res.MemoryCovered != 1 || res.MemoryRecallAt5 != 1.0/3.0 {
+		t.Fatalf("Memories arm = %+v, want one of three covered", res)
 	}
 	if res.RepeatTotal != 3 || res.RepeatCovered != 1 || res.RepeatRate != 1.0/3.0 {
 		t.Fatalf("repeat = %+v, want total 3 covered 1 rate 1/3", res)
 	}
-	if len(cases) != 3 || !cases[1].Covered || cases[0].Covered || cases[2].Covered {
-		t.Fatalf("cases = %+v, want only the middle covered", cases)
+	if len(cases) != 3 || !cases[1].Covered || cases[0].Covered || cases[2].Covered || !cases[1].MemoryCovered || cases[0].MemoryCovered || cases[2].MemoryCovered {
+		t.Fatalf("same-case arms = %+v, want only middle case covered in Rules and Memories", cases)
+	}
+	report := FormatReplayReport(res, 3, 0, 0, 0, false)
+	if !strings.Contains(report, "recall@5: 0.333") || !strings.Contains(report, "recall@5 (Memories): 0.333") {
+		t.Fatalf("replay report omits an arm: %q", report)
 	}
 }
 
@@ -140,6 +143,38 @@ func TestNoRecallSkipsRecallBlock(t *testing.T) {
 	}
 }
 
+func TestRecallBlockInjectsOnlyActiveMemoriesAndTracksIDs(t *testing.T) {
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	bank, err := d.profileBankFor("u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(text, status string) {
+		_, e := bank.AddMemory(context.Background(), memory.MemoryItem{SessionID: "s", EventID: text, Author: "u1", Kind: memory.KindPreference, Text: text, Quote: text, Status: status, Veracity: memory.VeracityStated})
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	add("Prefer blue lanterns", memory.StatusActive)
+	add("Forgot blue lanterns", memory.StatusForgotten)
+	add("Parked blue lanterns", memory.StatusParked)
+	add("Superseded blue lanterns", memory.StatusSuperseded)
+	if _, err := bank.AddEpisode(context.Background(), memory.Episode{SessionID: "s", Author: "u1", Text: "Episode-only blue lantern detail"}); err != nil {
+		t.Fatal(err)
+	}
+	rb, refs, err := d.recallBlockFor(context.Background(), SessionMeta{Owner: "u1"}, "blue lanterns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rb) != 1 || !strings.Contains(rb[0], "Prefer blue lanterns") || strings.Contains(rb[0], "Forgot blue lanterns") || strings.Contains(rb[0], "Parked blue lanterns") || strings.Contains(rb[0], "Superseded blue lanterns") || strings.Contains(rb[0], "Episode-only") {
+		t.Fatalf("block=%v", rb)
+	}
+	if len(refs) != 1 || refs[0].MemoryID == 0 {
+		t.Fatalf("memory refs=%+v", refs)
+	}
+}
+
 func TestRecallOffNIsARunSettingInTheRunFile(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
@@ -171,7 +206,7 @@ func TestRecallOffNIsARunSettingInTheRunFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var saved struct {
-		RecallOffN int            `json:"recallOffN"`
+		RecallOffN int             `json:"recallOffN"`
 		RecallOff  map[string]bool `json:"recallOff"`
 	}
 	if err := json.Unmarshal(raw, &saved); err != nil {

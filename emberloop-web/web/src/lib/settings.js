@@ -6,7 +6,7 @@ export const SETTINGS_GROUPS = [
       { id: 'agents', label: 'Agents', icon: 'bot', hint: 'Models, effort and fallbacks per role', scope: 'Global' },
       { id: 'runs', label: 'Runs', icon: 'ticket', hint: 'Ticket concurrency', scope: 'Global' },
       { id: 'context', label: 'Context & names', icon: 'layers', hint: 'Compression, Session names', scope: 'Global' },
-      { id: 'memory', label: 'Memory', icon: 'brain', hint: 'Deciders and Jev', scope: 'Global' },
+      { id: 'memory', label: 'Memory', icon: 'brain', hint: 'Automatic extraction, embeddings, recall weights, deciders and Jev', searchTerms: ['memory_extract_model', 'memory_extract_effort', 'memory_embedding_model', 'memory_recall_weights', 'memory_auto_extract', 'automatic extraction', 'embeddings', 'recall weights'], scope: 'Admin' },
       { id: 'access', label: 'Users & access', icon: 'shield-check', hint: 'Sign-up and account access', scope: 'Admin' },
     ],
   },
@@ -24,3 +24,11 @@ export const SETTINGS_PAGE_IDS = SETTINGS_GROUPS.flatMap((group) => group.items.
 export const SETTINGS_PAGES = Object.fromEntries(SETTINGS_GROUPS.flatMap((group) => group.items.map((item) => [item.id, item])));
 
 export const settingsPath = (section) => `/settings/${encodeURIComponent(section)}`;
+
+// findSettings searches the page registry by label, hint and control keywords.
+export function findSettings(query) {
+  const needle = String(query ?? '').trim().toLocaleLowerCase();
+  if (!needle) return [];
+  return SETTINGS_GROUPS.flatMap((group) => group.items)
+    .filter((item) => [item.label, item.hint, ...(item.searchTerms ?? [])].join(' ').toLocaleLowerCase().includes(needle));
+}

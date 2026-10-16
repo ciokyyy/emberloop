@@ -178,6 +178,10 @@ export const restoreProfile = (version) =>
     body: JSON.stringify({ version }),
   }).then(json);
 
+export const getMemoryDigestPreference = () => fetch(url('/api/push/digest')).then(json);
+export const setMemoryDigestPreference = (enabled) =>
+  fetch(url('/api/push/digest'), { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ enabled }) }).then(json);
+
 export const getProfileQueue = () => fetch(url('/api/profile/queue')).then(json);
 
 export const decideProfileQueue = (id, status, ops = null) =>
@@ -231,7 +235,24 @@ export const purgeMemory = (selection, confirm) =>
     body: JSON.stringify({ ...selection, confirm }),
   }).then(json);
 
-// Promotions: propose a Rule as project knowledge (an edit to the nearest
+// Memory page controls. Actions are separate requests so every mutation is
+// explicit and promotion only creates a pending Rule proposal.
+export const getMemories = ({ q = '', kind = '', status = '' } = {}) => {
+	const params = new URLSearchParams({ limit: '100' });
+	if (q) params.set('q', q);
+	if (kind) params.set('kind', kind);
+	if (status) params.set('status', status);
+	return fetch(url(`/api/memory/memories?${params}`)).then(json);
+};
+export const getNewMemoryCount = (since = 0) => fetch(url(`/api/memory/memories/count?since=${encodeURIComponent(since)}`)).then(json);
+const memoryAction = (id, action, body = {}) => fetch(url(`/api/memory/memories/${id}/${action}`), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }).then(json);
+export const forgetMemory = (id) => memoryAction(id, 'forget');
+export const parkMemory = (id) => memoryAction(id, 'park');
+export const pinMemory = (id, pinned) => memoryAction(id, 'pin', { pinned });
+export const promoteMemoryRule = (id) => memoryAction(id, 'promote');
+export const editMemory = (id, text) => memoryAction(id, 'edit', { text });
+export const promoteObservationMemory = (id) => fetch(url(`/api/memory/observations/${id}/promote`), { method: 'POST' }).then(json);
+export const getEpisodes = () => fetch(url('/api/memory/episodes')).then(json);
 // AGENTS.md or a new note file in the Session's worktree). Propose answers
 // the queue item with its diff preview for approval; list reads the
 // promotion queue; decide approves (writing the worktree file, never

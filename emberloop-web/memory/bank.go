@@ -23,16 +23,33 @@ const busyPragma = "busy_timeout(5000)"
 // goroutine, over one connection, so writers serialize in process. Reads use a
 // separate read-only pool; WAL lets them run beside a write.
 type Bank struct {
-	path      string
-	snapDir   string
-	now       func() time.Time
-	wdb       *sql.DB // writer connection, used only by loop
-	rdb       *sql.DB // read-only pool
-	jobs      chan writeJob
-	stop      chan struct{}
-	done      chan struct{}
-	closeOnce sync.Once
-	closeErr  error
+	path           string
+	snapDir        string
+	now            func() time.Time
+	wdb            *sql.DB // writer connection, used only by loop
+	rdb            *sql.DB // read-only pool
+	jobs           chan writeJob
+	stop           chan struct{}
+	done           chan struct{}
+	closeOnce      sync.Once
+	closeErr       error
+	embedMu        sync.RWMutex
+	embedWorker    *EmbeddingWorker
+	embedder       Embedder
+	embeddingModel string
+	queryCache     *QueryEmbeddingCache
+}
+
+func (b *Bank) setEmbedding(worker *EmbeddingWorker, embedder Embedder, model string) {
+	b.embedMu.Lock()
+	defer b.embedMu.Unlock()
+	b.embedWorker, b.embedder, b.embeddingModel = worker, embedder, model
+}
+
+func (b *Bank) embeddingConfig() (*EmbeddingWorker, Embedder, string) {
+	b.embedMu.RLock()
+	defer b.embedMu.RUnlock()
+	return b.embedWorker, b.embedder, b.embeddingModel
 }
 
 // writeJob is one write, run on the writer goroutine. The result goes to reply.
@@ -84,14 +101,9 @@ func openBank(path, snapDir string, opts Options) (*Bank, error) {
 	}
 	rdb.SetMaxOpenConns(4)
 	b := &Bank{
-		path:    path,
-		snapDir: snapDir,
-		now:     opts.now,
-		wdb:     wdb,
-		rdb:     rdb,
-		jobs:    make(chan writeJob),
-		stop:    make(chan struct{}),
-		done:    make(chan struct{}),
+		path: path, snapDir: snapDir, now: opts.now, wdb: wdb, rdb: rdb,
+		jobs: make(chan writeJob), stop: make(chan struct{}), done: make(chan struct{}),
+		embedder: opts.Embedder, embeddingModel: opts.EmbeddingModel, queryCache: NewQueryEmbeddingCache(256),
 	}
 	go b.loop()
 	return b, nil

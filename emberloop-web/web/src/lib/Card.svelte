@@ -6,7 +6,7 @@
   import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
-  import { decideSudo, compressSession, imageSrc, promoteSessionRule } from './api.js';
+  import { decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
   import Badge from './ui/badge.svelte';
@@ -34,6 +34,14 @@
     } finally {
       sudoBusy = false;
     }
+  }
+  let profileBusy = $state(false);
+  let profileError = $state('');
+  async function decideProfile(status) {
+    profileBusy = true; profileError = '';
+    try { await decideProfileQueue(block.profilePatch.id, status); }
+    catch (e) { profileError = e.message; }
+    finally { profileBusy = false; }
   }
   let compressBusy = $state(false);
   let compressError = $state('');
@@ -153,6 +161,16 @@
       {/if}
       {#if sudoError}<p role="alert" class="mt-2 text-xs text-destructive">{sudoError}</p>{/if}
     </div>
+  </div>
+{:else if block.card === 'profilePatch'}
+  <div class="animate-rise rounded-2xl border border-primary/30 bg-card p-4" data-card="profile-patch" data-state={block.profilePatch?.state ?? 'pending'}>
+    <div class="text-sm font-semibold">Profile update proposed</div>
+    {#if block.body}<p class="mt-1 text-sm text-muted-foreground">{block.body}</p>{/if}
+    <pre class="mt-2 whitespace-pre-wrap text-xs">{JSON.stringify(block.profilePatch?.ops ?? [], null, 2)}</pre>
+    {#if !block.profilePatch?.state || block.profilePatch.state === 'pending'}
+      <div class="mt-3 flex gap-2"><Button disabled={profileBusy} onclick={() => decideProfile('approved')}>Approve</Button><Button variant="outline" disabled={profileBusy} onclick={() => decideProfile('rejected')}>Reject</Button></div>
+    {:else}<div class="mt-2 text-xs text-muted-foreground">{block.profilePatch.state}</div>{/if}
+    {#if profileError}<p role="alert" class="mt-2 text-xs text-destructive">{profileError}</p>{/if}
   </div>
 {:else if block.card === 'sudoresult'}
   <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="sudoresult" open>

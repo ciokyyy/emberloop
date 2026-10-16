@@ -1,26 +1,45 @@
 package web
 
-import "encoding/json"
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+
+	"example.com/emberloop-web/memory"
+)
 
 // InjectedRule names one Rule the memory block carried: its ID and version.
 // The injection Event lists these so a Session replay can resolve exactly
 // what the agent saw.
 type InjectedRule struct {
-	ID      string `json:"id"`
-	Version int    `json:"version"`
+	ID       string `json:"id,omitempty"`
+	Version  int    `json:"version,omitempty"`
+	MemoryID int64  `json:"-"`
 }
 
 // InjectionEvent is the JSON Text of an "injection" Event. The Daemon
 // appends one on every injection (Profile, recall or both), with
 // sender=system. ProfileVersion is the injected Profile version, 0 when the
-// block carried no Profile. Rules lists the injected Rule versions, empty
-// when the block carried none.
+// block carried no Profile. MemoryIDs lists injected Memories.
 type InjectionEvent struct {
 	ProfileVersion int            `json:"profileVersion,omitempty"`
 	Rules          []InjectedRule `json:"rules"`
+	MemoryIDs      []int64        `json:"memoryIds"`
 }
 
 func (e InjectionEvent) text() string {
+	var rules []InjectedRule
+	if e.MemoryIDs == nil {
+		e.MemoryIDs = []int64{}
+	}
+	for _, ref := range e.Rules {
+		if ref.MemoryID > 0 {
+			e.MemoryIDs = append(e.MemoryIDs, ref.MemoryID)
+		} else {
+			rules = append(rules, ref)
+		}
+	}
+	e.Rules = rules
 	if e.Rules == nil {
 		e.Rules = []InjectedRule{}
 	}
@@ -67,8 +86,21 @@ func FilterMinerEvents(events []Event) []Event {
 // injection. It is sender=system, never a user message.
 func (d *Daemon) appendInjectionEvent(id string, profile int, rules []InjectedRule) Event {
 	d.mu.Lock()
-	defer d.mu.Unlock()
-	return d.appendEventExtraLocked(id, "injection", InjectionEvent{ProfileVersion: profile, Rules: rules}.text(), "", "", 0, nil, func(e *Event) {
+	session := d.sessions[id]
+	e := d.appendEventExtraLocked(id, "injection", InjectionEvent{ProfileVersion: profile, Rules: rules}.text(), "", "", 0, nil, func(e *Event) {
 		e.Sender = senderSystem
 	})
+	d.mu.Unlock()
+	if session != nil && session.meta.Owner != "" {
+		if bank, err := d.profileBankFor(session.meta.Owner); err == nil {
+			memories := 0
+			for _, ref := range rules {
+				if ref.MemoryID > 0 {
+					memories++
+				}
+			}
+			_, _ = bank.RecordLedger(context.Background(), memory.LedgerRow{Stage: "injection", Status: memory.LedgerSuccess, CountsJSON: fmt.Sprintf(`{"memories":%d,"creates":1}`, memories)})
+		}
+	}
+	return e
 }

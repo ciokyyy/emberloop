@@ -53,6 +53,43 @@ func newPushStore(stateDir string) *pushStore {
 	return &pushStore{dir: filepath.Join(stateDir, "enderbloom", "push"), client: &http.Client{Timeout: 15 * time.Second}}
 }
 
+func (p *pushStore) digestEnabled(userID string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	data, err := os.ReadFile(filepath.Join(p.dir, "digest-prefs.json"))
+	if err != nil {
+		return false
+	}
+	var prefs map[string]bool
+	if json.Unmarshal(data, &prefs) != nil {
+		return false
+	}
+	return prefs[userID]
+}
+
+func (p *pushStore) setDigestEnabled(userID string, enabled bool) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	path := filepath.Join(p.dir, "digest-prefs.json")
+	prefs := map[string]bool{}
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &prefs)
+	}
+	prefs[userID] = enabled
+	data, err := json.Marshal(prefs)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(p.dir, 0o700); err != nil {
+		return err
+	}
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
+}
+
 func (p *pushStore) load() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -140,18 +177,29 @@ func (p *pushStore) remove(endpoint string) {
 // notify sends the payload to every subscription. Gone subscriptions
 // (404, 410) are dropped.
 func (p *pushStore) notify(payload []byte) {
+	p.notifyDelivered(payload)
+}
+
+// notifyDelivered reports whether at least one subscription accepted the
+// payload. Failed and gone subscriptions do not count as a delivery.
+func (p *pushStore) notifyDelivered(payload []byte) bool {
 	if p.load() != nil {
-		return
+		return false
 	}
 	p.mu.Lock()
 	subs := append([]pushSub(nil), p.subs...)
 	p.mu.Unlock()
+	delivered := false
 	for _, s := range subs {
 		code, err := p.send(s, payload)
+		if err == nil && code >= http.StatusOK && code < http.StatusMultipleChoices {
+			delivered = true
+		}
 		if err == nil && (code == http.StatusNotFound || code == http.StatusGone) {
 			p.remove(s.Endpoint)
 		}
 	}
+	return delivered
 }
 
 func (p *pushStore) send(s pushSub, payload []byte) (int, error) {
@@ -266,13 +314,43 @@ func encryptPush(s pushSub, payload []byte) ([]byte, error) {
 // the event, so a tab that already sounded it over its live stream stays
 // silent. Path is the exact client route the notification opens.
 type pushMessage struct {
-	Title     string `json:"title"`
-	Body      string `json:"body"`
-	Tag       string `json:"tag,omitempty"`
-	SessionID string `json:"sessionId,omitempty"`
-	Cue       string `json:"cue,omitempty"`
-	Key       string `json:"key,omitempty"`
-	Path      string `json:"path,omitempty"`
+	Title          string `json:"title"`
+	Body           string `json:"body"`
+	Tag            string `json:"tag,omitempty"`
+	SessionID      string `json:"sessionId,omitempty"`
+	Cue            string `json:"cue,omitempty"`
+	Key            string `json:"key,omitempty"`
+	Path           string `json:"path,omitempty"`
+	ProfilePatchID int64  `json:"profilePatchId,omitempty"`
+}
+
+func (d *Daemon) pushProfilePatch(owner, sessionID string, id int64, reason string) {
+	go d.push.notify(d.profilePatchPushPayload(owner, sessionID, id, reason))
+}
+
+func (d *Daemon) profilePatchPushPayload(owner, sessionID string, id int64, reason string) []byte {
+	var meta SessionMeta
+	d.mu.Lock()
+	if sessionID == "" {
+		for sid, s := range d.sessions {
+			if s.meta.Owner == owner {
+				sessionID, meta = sid, s.meta
+				break
+			}
+		}
+	} else if s := d.sessions[sessionID]; s != nil {
+		meta = s.meta
+	}
+	d.mu.Unlock()
+	title := "Profile patch needs approval"
+	if meta.ID != "" {
+		title = sessionTitle(meta)
+	}
+	path := "/"
+	if sessionID != "" {
+		path = "/s/" + sessionID
+	}
+	return pushPayload(pushMessage{Title: title, Body: "Approve or reject a proposed Profile update. " + truncatePush(reason, 100), Tag: "profile:" + itoa(id), SessionID: sessionID, Cue: "mention", Key: "profile:" + itoa(id), Path: path, ProfilePatchID: id})
 }
 
 func pushPayload(m pushMessage) []byte {
@@ -361,6 +439,27 @@ func itoa(n int64) string {
 
 func (d *Daemon) handlePush(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.URL.Path == "/api/push/digest" && (r.Method == http.MethodGet || r.Method == http.MethodPut):
+		user, ok := d.profileUserOf(w, r)
+		if !ok {
+			return
+		}
+		if r.Method == http.MethodGet {
+			writeJSON(w, http.StatusOK, map[string]bool{"enabled": d.push.digestEnabled(user.ID)})
+			return
+		}
+		var in struct {
+			Enabled bool `json:"enabled"`
+		}
+		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<16)).Decode(&in) != nil {
+			http.Error(w, "bad json", http.StatusBadRequest)
+			return
+		}
+		if err := d.push.setDigestEnabled(user.ID, in.Enabled); err != nil {
+			http.Error(w, "could not save preference", http.StatusInternalServerError)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]bool{"enabled": in.Enabled})
 	case r.URL.Path == "/api/push/key" && r.Method == http.MethodGet:
 		k, err := d.push.publicKey()
 		if err != nil {

@@ -133,11 +133,13 @@ export function groupQueueBySession(items) {
 export function purgeCounts(selection) {
   const n = (v) => (Array.isArray(v) ? v.length : 0);
   return {
+    memories: n(selection?.memories),
+    episodes: n(selection?.episodes),
     observations: n(selection?.observations),
     rules: n(selection?.rules),
     queue: n(selection?.queue),
     ledger: n(selection?.ledger),
-    total: n(selection?.observations) + n(selection?.rules) + n(selection?.queue) + n(selection?.ledger),
+    total: n(selection?.observations) + n(selection?.memories) + n(selection?.episodes) + n(selection?.rules) + n(selection?.queue) + n(selection?.ledger),
   };
 }
 
@@ -147,6 +149,8 @@ export function purgeSummary(result) {
   const push = (n, one, many) => {
     if (n > 0) parts.push(`${n} ${n === 1 ? one : many}`);
   };
+  push(Number(result?.memories ?? result?.Memories ?? 0), 'Memory', 'Memories');
+  push(Number(result?.episodes ?? result?.Episodes ?? 0), 'Episode', 'Episodes');
   push(Number(result?.rules ?? result?.Rules ?? 0), 'rule', 'rules');
   push(Number(result?.observations ?? result?.Observations ?? 0), 'observation', 'observations');
   push(Number(result?.queue ?? result?.Queue ?? 0), 'queue item', 'queue items');

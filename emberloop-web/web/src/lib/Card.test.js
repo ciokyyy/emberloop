@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, within, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import Card from './Card.svelte';
-import { compressSession, promoteSessionRule } from './api.js';
+import { compressSession, promoteSessionRule, decideProfileQueue } from './api.js';
 import { people } from './people.svelte.js';
 
 afterEach(() => {
@@ -14,6 +14,7 @@ vi.mock('./api.js', async (orig) => ({
   listImages: vi.fn(async () => ({ images: [{ id: 'aud_1', mediaType: 'audio/webm', peaks: [20, 80], durationMs: 5000 }] })),
   compressSession: vi.fn(async () => ({ ok: true })),
   promoteSessionRule: vi.fn(async () => ({ id: 7, status: 'pending' })),
+  decideProfileQueue: vi.fn(async () => ({ version: 1, approvedBy: 'user' })),
 }));
 
 const block = (card, title = 'T', body = 'body text') => ({ key: 1, card, title, body, collapsed: card === 'tool', events: [] });
@@ -52,6 +53,13 @@ describe('Card renders every Event kind', () => {
     const card = container.querySelector('[data-card="user"]');
     expect(card?.getAttribute('data-swap')).toBe('true');
     expect(card?.className).not.toMatch(/animate-rise/);
+  });
+});
+describe('Profile patch card actions', () => {
+  it.each([['Approve', 'approved'], ['Reject', 'rejected']])('sends %s through the profile queue API', async (label, status) => {
+    const { container } = render(Card, { props: { block: { ...block('profilePatch'), profilePatch: { id: 19, ops: [], state: 'pending' } } } });
+    await fireEvent.click(within(container).getByRole('button', { name: label }));
+    expect(decideProfileQueue).toHaveBeenCalledWith(19, status);
   });
 });
 describe('Card divider', () => {

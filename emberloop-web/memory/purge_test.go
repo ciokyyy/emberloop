@@ -3,6 +3,7 @@ package memory
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -40,7 +41,14 @@ func TestPurgeLeavesNoTextOnDiskOrInSnapshots(t *testing.T) {
 	ctx := context.Background()
 	const secret = "zanzibar-quartz-secret"
 	quote := "we never log " + secret
-
+	memID, err := b.AddMemory(ctx, MemoryItem{SessionID: "s1", EventID: "memory-event", Author: testUser, Kind: KindFact, Text: quote, Quote: quote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	epID, err := b.AddEpisode(ctx, Episode{SessionID: "s1", EventRange: "episode-range", Author: testUser, Text: quote})
+	if err != nil {
+		t.Fatal(err)
+	}
 	obs, err := b.AddObservation(ctx, Observation{
 		SessionID: "s1", EventID: "e1", Author: testUser, Quote: quote, Kind: KindPreference,
 	})
@@ -67,12 +75,12 @@ func TestPurgeLeavesNoTextOnDiskOrInSnapshots(t *testing.T) {
 		t.Fatal("sanity: secret should be on disk before purge")
 	}
 
-	res, err := b.Purge(ctx, Selection{Observations: []int64{obs}, Rules: []string{rule.RuleID}})
+	res, err := b.Purge(ctx, Selection{Observations: []int64{obs}, Rules: []string{rule.RuleID}, Memories: []int64{memID}, Episodes: []int64{epID}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Observations != 1 || res.Rules != 1 || res.Snapshots != 1 {
-		t.Fatalf("purge = %+v, want 1 observation, 1 rule, 1 snapshot", res)
+	if res.Observations != 1 || res.Rules != 1 || res.Memories != 1 || res.Episodes != 1 || res.Snapshots != 1 {
+		t.Fatalf("purge = %+v, want selected rows and one snapshot", res)
 	}
 	if res.Scrubbed < 2 {
 		t.Fatalf("scrubbed = %d, want queue and ledger rows changed", res.Scrubbed)
@@ -89,6 +97,31 @@ func TestPurgeLeavesNoTextOnDiskOrInSnapshots(t *testing.T) {
 	ledger, _ := b.Ledger(ctx)
 	if len(ledger) != 1 || strings.Contains(ledger[0].Detail, secret) {
 		t.Errorf("ledger after purge = %+v; want one row without the secret", ledger)
+	}
+	for _, table := range []string{"memories_fts", "episodes_fts"} {
+		var n int
+		if err := b.wdb.QueryRow("SELECT COUNT(*) FROM "+table+" WHERE "+table+" MATCH ?", "zanzibar").Scan(&n); err != nil || n != 0 {
+			t.Errorf("%s still matches purged text: count=%d err=%v", table, n, err)
+		}
+	}
+	snapshotFiles, err := filepath.Glob(filepath.Join(b.snapDir, "*.db"))
+	if err != nil || len(snapshotFiles) != 1 {
+		t.Fatalf("snapshots = %v, %v", snapshotFiles, err)
+	}
+	snapshotDB, err := sql.Open("sqlite", dsn(snapshotFiles[0], nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer snapshotDB.Close()
+	for _, table := range []string{"memories", "episodes", "memories_fts", "episodes_fts"} {
+		var n int
+		query := "SELECT COUNT(*) FROM " + table
+		if strings.HasSuffix(table, "_fts") {
+			query += " WHERE " + table + " MATCH 'zanzibar'"
+		}
+		if err := snapshotDB.QueryRow(query).Scan(&n); err != nil || n != 0 {
+			t.Errorf("snapshot %s retained purged row: count=%d err=%v", table, n, err)
+		}
 	}
 }
 

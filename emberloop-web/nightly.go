@@ -16,12 +16,14 @@ import (
 	"example.com/emberloop-web/memory"
 )
 
-// Nightly job (ticket 29): snapshot, mine, distill, pair, profile, anchors,
-// summary. Runs at 03:00 local when the Daemon is idle, and on demand from the
-// Memory page. Every stage writes a ledger row per User bank; a snapshot
-// failure aborts before any mine write, any other failing stage leaves later
-// stages running. Nothing is ever deleted: edits are new versions and status
-// changes, and tests assert row counts before and after.
+// Nightly job: snapshot, catch up, reembed, fold and consolidate Memories,
+// promote candidates, then run the legacy profile and anchor stages. The
+// scheduler checks each minute after the local 03:00 due boundary and starts
+// at the next idle opportunity; the Memory page can also run it on demand.
+// Every stage writes a ledger row per User bank; a snapshot failure aborts
+// before any mine write, while later stage failures leave later stages running.
+// Nothing is ever deleted: edits are new versions and status changes, and
+// tests assert row counts before and after.
 
 const (
 	// nightlyDistillCap caps one distill input at 15 KB of redacted text.
@@ -36,14 +38,18 @@ const (
 
 // Nightly stage names, one ledger row per stage per run per bank.
 const (
-	nightlyStageSnapshot    = "nightly_snapshot"
-	nightlyStageMine        = "nightly_mine"
-	nightlyStageDistill     = "nightly_distill"
-	nightlyStageConsolidate = "nightly_consolidate"
-	nightlyStagePair        = "nightly_pair"
-	nightlyStageProfile     = "nightly_profile"
-	nightlyStageAnchors     = "nightly_anchors"
-	nightlyStageSummary     = "nightly_summary"
+	nightlyStageSnapshot          = "nightly_snapshot"
+	nightlyStageMine              = "nightly_mine"
+	nightlyStageDistill           = "nightly_distill"
+	nightlyStageReembed           = "nightly_reembed"
+	nightlyStageFold              = "nightly_fold"
+	nightlyStagePromote           = "nightly_promote"
+	nightlyStageConsolidate       = "nightly_consolidate"
+	nightlyStagePair              = "nightly_pair"
+	nightlyStageMemoryConsolidate = "nightly_memory_consolidate"
+	nightlyStageProfile           = "nightly_profile"
+	nightlyStageAnchors           = "nightly_anchors"
+	nightlyStageSummary           = "nightly_summary"
 )
 
 // NightlyStageResult is one stage of one run.
@@ -283,6 +289,7 @@ func (d *Daemon) nightlyMine(ctx context.Context, runID string, owners []string)
 	if fail := d.nightlyInjectedFailure(ctx, runID, nightlyStageMine, owners); fail != nil {
 		return nil, *fail
 	}
+	catchupSessions, catchupErr := d.nightlyCatchupIngest(ctx)
 	results, err := d.MineSettledSessions()
 	scanned, kept, stored, dups, dropped, promoted := 0, 0, 0, 0, 0, 0
 	for _, r := range results {
@@ -295,6 +302,10 @@ func (d *Daemon) nightlyMine(ctx context.Context, runID string, owners []string)
 	}
 	failed := 0
 	var firstErr string
+	if catchupErr != nil {
+		failed++
+		firstErr = catchupErr.Error()
+	}
 	if err != nil {
 		failed++
 		firstErr = err.Error()
@@ -306,21 +317,15 @@ func (d *Daemon) nightlyMine(ctx context.Context, runID string, owners []string)
 		}
 	}
 	status := memory.LedgerSuccess
-	detail := fmt.Sprintf("mined %d sessions: %d scanned, %d kept, %d stored, %d duplicates, %d promoted",
-		len(results), scanned, kept, stored, dups, promoted)
+	detail := fmt.Sprintf("caught up %d Sessions and mined %d legacy Sessions: %d scanned, %d kept, %d stored, %d duplicates, %d promoted", catchupSessions, len(results), scanned, kept, stored, dups, promoted)
 	if failed > 0 {
 		status = memory.LedgerFailed
 		detail = fmt.Sprintf("mine partial: %s; %s", firstErr, detail)
-	} else if stored == 0 && promoted == 0 {
+	} else if stored == 0 && promoted == 0 && catchupSessions == 0 {
 		status = memory.LedgerNoData
-		if len(results) == 0 {
-			detail = "no settled sessions to mine"
-		} else {
-			detail = fmt.Sprintf("mined %d sessions with no new durable observations", len(results))
-		}
+		detail = "no settled Sessions to catch up or mine"
 	}
-	counts := map[string]any{"sessions": len(results), "scanned": scanned, "kept": kept,
-		"stored": stored, "duplicates": dups, "dropped": dropped, "promoted": promoted, "failed": failed}
+	counts := map[string]any{"catchup_sessions": catchupSessions, "sessions": len(results), "scanned": scanned, "kept": kept, "stored": stored, "duplicates": dups, "dropped": dropped, "promoted": promoted, "failed": failed}
 	d.nightlyLedger(ctx, runID, nightlyStageMine, status, counts, detail, owners)
 	return results, NightlyStageResult{Stage: nightlyStageMine, Status: status, Counts: counts, Detail: detail}
 }
@@ -613,6 +618,8 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 		if !ok {
 			continue
 		}
+		d.remindOldProfilePatches(ctx, bank, owner)
+		d.sendMemoryDigest(ctx, bank, owner)
 		notes := byOwner[owner]
 		if len(notes) == 0 || needModel {
 			none++
@@ -695,6 +702,82 @@ func (d *Daemon) nightlyProfile(ctx context.Context, runID string, owners []stri
 	return NightlyStageResult{Stage: nightlyStageProfile, Status: status,
 		Counts: map[string]any{"owners": len(owners), "proposed": proposed, "none": none, "failed": failed},
 		Detail: detail}
+}
+
+func (d *Daemon) remindOldProfilePatches(ctx context.Context, bank memory.Memory, owner string) {
+	d.remindOldProfilePatchesAt(ctx, bank, owner, d.now())
+}
+
+func (d *Daemon) remindOldProfilePatchesAt(ctx context.Context, bank memory.Memory, owner string, now time.Time) {
+	d.profileReminderMu.Lock()
+	defer d.profileReminderMu.Unlock()
+	items, err := bank.Queue(ctx)
+	if err != nil {
+		return
+	}
+	ledger, err := bank.Ledger(ctx)
+	if err != nil {
+		return
+	}
+	reminded := make(map[string]bool)
+	for _, row := range ledger {
+		if row.Stage == "profile_patch_reminder" {
+			reminded[row.Detail] = true
+		}
+	}
+	for _, item := range items {
+		if item.Kind != memory.QueueProfilePatch || item.Status != memory.QueuePending || item.CreatedAt.IsZero() || now.Sub(item.CreatedAt) < 48*time.Hour {
+			continue
+		}
+		key := itoa(item.ID)
+		if reminded[key] {
+			continue
+		}
+		payload := d.profilePatchPushPayload(owner, "", item.ID, "Reminder: this Profile patch is still awaiting your review.")
+		if !d.push.notifyDelivered(payload) {
+			continue
+		}
+		if _, err := bank.RecordLedger(ctx, memory.LedgerRow{Stage: "profile_patch_reminder", Status: memory.LedgerSuccess, Detail: key}); err == nil {
+			reminded[key] = true
+		}
+	}
+}
+
+func (d *Daemon) sendMemoryDigest(ctx context.Context, bank memory.Memory, owner string) {
+	if !d.push.digestEnabled(owner) {
+		return
+	}
+	d.memoryDigestMu.Lock()
+	defer d.memoryDigestMu.Unlock()
+	rows, err := bank.Ledger(ctx)
+	if err != nil {
+		return
+	}
+	today := d.now().In(time.Local).Format("2006-01-02")
+	learned := 0
+	for _, row := range rows {
+		if row.CreatedAt.In(time.Local).Format("2006-01-02") != today {
+			continue
+		}
+		if row.Stage == "memory_digest_sent" && row.Detail == today {
+			return
+		}
+		if row.Stage != "ingest" && row.Stage != nightlyStageFold {
+			continue
+		}
+		var counts map[string]int
+		if json.Unmarshal([]byte(row.CountsJSON), &counts) == nil {
+			learned += counts["stored"] + counts["memories"]
+		}
+	}
+	if learned <= 0 {
+		return
+	}
+	payload := pushPayload(pushMessage{Title: "Memory daily digest", Body: fmt.Sprintf("learned %d things today, tap to review", learned), Tag: "memory-digest:" + today, Key: "memory-digest:" + today, Path: "/memory"})
+	if !d.push.notifyDelivered(payload) {
+		return
+	}
+	_, _ = bank.RecordLedger(ctx, memory.LedgerRow{Stage: "memory_digest_sent", Status: memory.LedgerSuccess, Detail: today})
 }
 
 // nightlyMainRepoDir resolves dir to its main repo workdir through the git
@@ -891,6 +974,20 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 			failedStages++
 		}
 	}
+	memoriesStored, episodesFolded, candidatesPromoted, memoriesMerged, generalizationsProposed := 0, 0, 0, 0, 0
+	memoriesForgotten, memoriesPinned, memoriesContradicted := 0, 0, 0
+	for _, s := range stages {
+		switch s.Stage {
+		case nightlyStageFold:
+			memoriesStored += countNightly(s.Counts, "memories")
+			episodesFolded += countNightly(s.Counts, "episodes")
+		case nightlyStagePromote:
+			candidatesPromoted += countNightly(s.Counts, "proposed")
+		case nightlyStageMemoryConsolidate:
+			memoriesMerged += countNightly(s.Counts, "merged")
+			generalizationsProposed += countNightly(s.Counts, "proposed")
+		}
+	}
 	failed := 0
 	var firstErr string
 	banks, openFailed, openErr := d.nightlyOpenBanks(owners)
@@ -903,6 +1000,18 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 		if !ok {
 			continue
 		}
+		forgotten, pinned, contradicted, countErr := nightlyMemorySummaryCounts(ctx, bank)
+		if countErr != nil {
+			failed++
+			if firstErr == "" {
+				firstErr = countErr.Error()
+			}
+			nightlyRecordLedger(ctx, bank, runID, nightlyStageSummary, memory.LedgerFailed, map[string]any{}, "summary failed: "+countErr.Error())
+			continue
+		}
+		memoriesForgotten += forgotten
+		memoriesPinned += pinned
+		memoriesContradicted += contradicted
 		items, err := bank.Queue(ctx)
 		if err != nil {
 			failed++
@@ -919,6 +1028,9 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 			"pending": st.Pending, "approved": st.Approved, "rejected": st.Rejected,
 			"total": st.Total, "budget": st.Budget, "overBudget": st.OverBudget,
 			"avgApprovalLatencyHours": st.AvgLatencyHrs, "oldestPendingAgeHours": st.OldestPendingAgeHrs,
+			"memoriesStored": memoriesStored, "episodesFolded": episodesFolded, "candidatesPromoted": candidatesPromoted,
+			"memoriesMerged": memoriesMerged, "generalizationsProposed": generalizationsProposed,
+			"memoriesForgotten": memoriesForgotten, "memoriesPinned": memoriesPinned, "memoriesContradicted": memoriesContradicted,
 		}
 		detail := fmt.Sprintf("nightly %s: %d stages, %d failed; queue %d pending / %d total (budget %d)",
 			runID, len(stages)+1, failedStages, st.Pending, st.Total, st.Budget)
@@ -931,15 +1043,65 @@ func (d *Daemon) nightlySummary(ctx context.Context, runID string, owners []stri
 		detail = fmt.Sprintf("summary partial: %s; %s", firstErr, detail)
 	}
 	return NightlyStageResult{Stage: nightlyStageSummary, Status: status,
-		Counts: map[string]any{"owners": len(owners), "stages": len(stages) + 1, "failedStages": failedStages, "failed": failed},
+		Counts: map[string]any{"owners": len(owners), "stages": len(stages) + 1, "failedStages": failedStages, "failed": failed, "memoriesStored": memoriesStored, "episodesFolded": episodesFolded, "candidatesPromoted": candidatesPromoted, "memoriesMerged": memoriesMerged, "generalizationsProposed": generalizationsProposed, "memoriesForgotten": memoriesForgotten, "memoriesPinned": memoriesPinned, "memoriesContradicted": memoriesContradicted},
 		Detail: detail}
 }
 
-// RunNightly runs the seven stages in order. It runs only when the Daemon is
-// idle: a busy Daemon aborts with no ledger write. Snapshot failure aborts
-// before any mine write; every other failing stage leaves later stages
-// running. Each stage writes a ledger row per bank. There is no decay, heat
-// or compression stage: dormancy is only anchor invalidation or a human park.
+func countNightly(counts map[string]any, key string) int {
+	switch n := counts[key].(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case float64:
+		return int(n)
+	}
+	return 0
+}
+
+// nightlyMemorySummaryCounts counts Memory state across one bank. Contradictions
+// come from memory_contradicted ledger events; legacy contradicted rows also count.
+func nightlyMemorySummaryCounts(ctx context.Context, bank memory.Memory) (forgotten, pinned, contradicted int, err error) {
+	for _, status := range []string{memory.StatusActive, memory.StatusParked, memory.StatusSuperseded, memory.StatusForgotten} {
+		items, e := bank.ListMemories(ctx, "", status, -1)
+		if e != nil {
+			return 0, 0, 0, e
+		}
+		if status == memory.StatusForgotten {
+			forgotten = len(items)
+		}
+		for _, item := range items {
+			if item.Pinned != 0 {
+				pinned++
+			}
+		}
+	}
+	rows, err := bank.Ledger(ctx)
+	if err != nil {
+		return 0, 0, 0, err
+	}
+	for _, row := range rows {
+		if row.Stage != "memory_contradicted" && row.Stage != "contradicted" {
+			continue
+		}
+		var counts map[string]any
+		if json.Unmarshal([]byte(row.CountsJSON), &counts) == nil {
+			count := countNightly(counts, "memories")
+			if count == 0 {
+				count = countNightly(counts, "count")
+			}
+			if count > 0 {
+				contradicted += count
+				continue
+			}
+		}
+		contradicted++
+	}
+	return forgotten, pinned, contradicted, nil
+}
+
+// RunNightly runs the ordered nightly stages. Catch-up ingest uses the turn
+// cursor; later failures remain visible without suppressing subsequent work.
 func (d *Daemon) RunNightly(ctx context.Context) (NightlyResult, error) {
 	d.nightlyMu.Lock()
 	defer d.nightlyMu.Unlock()
@@ -961,7 +1123,11 @@ func (d *Daemon) RunNightly(ctx context.Context) (NightlyResult, error) {
 	res.Stages = append(res.Stages, mine)
 	briefs, sessionOwner, distill := d.nightlyDistill(ctx, runID, owners, mined)
 	res.Stages = append(res.Stages, distill)
+	res.Stages = append(res.Stages, d.nightlyReembed(ctx, runID, owners))
+	res.Stages = append(res.Stages, d.nightlyFold(ctx, runID, owners))
+	res.Stages = append(res.Stages, d.nightlyConsolidateMemories(ctx, runID, owners))
 	res.Stages = append(res.Stages, d.nightlyConsolidate(ctx, runID, owners))
+	res.Stages = append(res.Stages, d.nightlyPromote(ctx, runID, owners))
 	res.Stages = append(res.Stages, d.nightlyPair(ctx, runID, owners))
 	res.Stages = append(res.Stages, d.nightlyProfile(ctx, runID, owners, briefs, sessionOwner))
 	res.Stages = append(res.Stages, d.nightlyAnchors(ctx, runID, owners))
@@ -969,44 +1135,62 @@ func (d *Daemon) RunNightly(ctx context.Context) (NightlyResult, error) {
 	return res, nil
 }
 
-// nightlyDue reports whether the 03:00 local run is due: the local hour is 3
-// and no auto-run happened today. It returns the current local day so the
-// caller stores it after a run.
-func nightlyDue(now time.Time, lastDay string) (bool, string) {
+// nightlyDue compares the ledger's latest summary with the most recent local
+// 03:00 boundary. A missed run stays due at any hour until summarized.
+func nightlyDue(now, lastSummary time.Time) (bool, time.Time) {
 	local := now.Local()
-	day := local.Format("2006-01-02")
-	if local.Hour() != 3 || day == lastDay {
-		return false, day
+	cutoff := time.Date(local.Year(), local.Month(), local.Day(), 3, 0, 0, 0, local.Location())
+	if local.Before(cutoff) {
+		cutoff = cutoff.AddDate(0, 0, -1)
 	}
-	return true, day
+	return lastSummary.IsZero() || lastSummary.Before(cutoff), cutoff
 }
 
-// nightlyMaybeRun fires one scheduled run when due: the 03:00 local hour with
-// no auto-run yet today, and an idle Daemon. It marks the day for every
-// attempted run, including an aborted one, so a failing 03:00 run writes one
-// set of FAILED rows instead of retrying every minute. A busy Daemon marks
-// nothing: the run never starts, writes nothing, and retries next minute.
+// nightlyMaybeRun checks the ledger-backed marker on every minute. Busy runs
+// leave one skipped row per local day and remain due until an idle retry.
 func (d *Daemon) nightlyMaybeRun(now time.Time) bool {
-	d.nightlyMu.Lock()
-	last := d.nightlyLastDay
-	d.nightlyMu.Unlock()
-	due, day := nightlyDue(now, last)
-	if !due || !d.Idle(0) {
+	owners := d.nightlyOwners()
+	var lastSummary time.Time
+	day := now.Local().Format("2006-01-02")
+	skipped := false
+	for _, owner := range owners {
+		bank, err := d.profileBankFor(owner)
+		if err != nil {
+			continue
+		}
+		rows, err := bank.Ledger(context.Background())
+		if err != nil {
+			continue
+		}
+		for _, row := range rows {
+			if row.Stage == nightlyStageSummary && row.CreatedAt.After(lastSummary) {
+				lastSummary = row.CreatedAt
+			}
+			if row.Stage == "nightly_skipped_busy" && row.Detail == day {
+				skipped = true
+			}
+		}
+	}
+	due, _ := nightlyDue(now, lastSummary)
+	if !due {
+		return false
+	}
+	if !d.Idle(0) {
+		if !skipped {
+			for _, owner := range owners {
+				if bank, err := d.profileBankFor(owner); err == nil {
+					nightlyRecordLedger(context.Background(), bank, "busy-"+day, "nightly_skipped_busy", memory.LedgerSuccess, map[string]any{"day": day}, day)
+				}
+			}
+		}
 		return false
 	}
 	res, _ := d.RunNightly(context.Background())
-	if res.Aborted && len(res.Stages) == 0 {
-		return false
-	}
-	d.nightlyMu.Lock()
-	d.nightlyLastDay = day
-	d.nightlyMu.Unlock()
-	return true
+	return !(res.Aborted && len(res.Stages) == 0)
 }
 
-// StartNightlyLoop runs the 03:00 local job until ctx ends: once per local
-// day, when the Daemon is idle. On-demand runs from the Memory page do not
-// move the day marker, so the scheduled run still fires.
+// StartNightlyLoop checks the ledger-backed due condition every minute; a
+// missed or busy run therefore starts at the next idle opportunity.
 func (d *Daemon) StartNightlyLoop(ctx context.Context) {
 	tick := time.NewTicker(time.Minute)
 	defer tick.Stop()

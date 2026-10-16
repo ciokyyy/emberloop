@@ -44,12 +44,13 @@ child it belongs to, and every entry must resolve to a file.
 
 - `emberloop-web/AGENTS.md` — browser UI and Daemon seams: summary-only Runs,
   git caching, Ticket-to-Session index and non-blocking boot; cache-only quota
-  API, subscriber-gated `quota` live refresher and percent-first cards for
-  Claude, ChatGPT Plus, OpenCode-Go, OpenRouter and both Antigravity pools;
+  API, subscriber-gated `quota` live refresher and percent-first provider cards;
   provider status/connect flows; Project Dashboard and stable scope routes;
-  Jev draft Project picks; per-concern Settings and model/effort chains; and
-  panic-safe Run-test cleanup, slot watchdog and per-test deadlines. Indexes the
-  el library, memory, web source and Backend spikes
+  Jev draft Project picks; per-concern Settings and model/effort chains; admin-
+  only host-global Memory settings, hybrid recall/injection and nightly stages;
+  Profile patch push actions, inline Session approval, context-sensitive rejected-
+  patch dedup, one-time 48-hour reminders and opt-in daily Memory digests; Memory
+  page APIs and panic-safe Run-test cleanup.
 - `pig-antigravity-auth/AGENTS.md` — the Antigravity provider extension
 - `installer/AGENTS.md` — the install TUI and its config merges
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
@@ -63,6 +64,7 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/workspace-overhaul/AGENTS.md` — the combined spec of the 2026-10-13 grilling Session (Quota, Speed, Providers, Project scope, draft Project pick, Settings redesign, stall-proof Run tests; tickets for all Parts, Quota included)
 - `.scratch/web-v1/AGENTS.md` — the spec and ticket area for web v1 in `emberloop-web` (Handoff compress, Users, Memory with Profile, Rules and Deciders)
 - `.scratch/run-upgrade/AGENTS.md` — the spec and ticket area for the Run upgrade (Reviewer submit tool, Chains and Switch, spec branches, hygiene guards, `find` graph hits)
+- `.scratch/memory-v2/AGENTS.md` — the spec and ticket area for Memory v2 (automatic extraction, embedding-backed Memories and hybrid recall, deduplication and same-author supersession, narrowed human gate, nightly fold/promote stages and scheduler fix; tickets 01 to 11)
 - `.scratch/emberplugins/AGENTS.md` — the spec and ticket area for Emberplugins (runtime-added pages, jobs and servers in `emberloop-web`)
 - `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Emberloop (browser UI and Daemon, planned module `emberloop-web`)
 - `.scratch/archive/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
@@ -70,3 +72,4 @@ child it belongs to, and every entry must resolve to a file.
 - `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Provider, Dashboard, quota percent, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch)
 - `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el update` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK
+- `docs/adr/0004-automatic-memories-narrowed-human-gate.md` — automatic private Memories with human approval retained for Rules, Profile patches and Project notes

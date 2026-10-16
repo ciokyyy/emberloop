@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
+	"time"
 
+	"example.com/emberloop-web/el/tools/systemone"
 	"example.com/emberloop-web/memory"
 )
 
@@ -21,10 +24,11 @@ const profilePreamble = "The task prompt beats everything. AGENTS.md beats the P
 // profileQueuePayload is the JSON of a profile_patch queue item: the proposed
 // ops plus who asked for them and why.
 type profileQueuePayload struct {
-	Ops       []memory.ProfileOp `json:"ops"`
-	Reason    string             `json:"reason,omitempty"`
-	SessionID string             `json:"sessionId,omitempty"`
-	Author    string             `json:"author,omitempty"`
+	Ops            []memory.ProfileOp `json:"ops"`
+	Reason         string             `json:"reason,omitempty"`
+	SessionID      string             `json:"sessionId,omitempty"`
+	Author         string             `json:"author,omitempty"`
+	ProfileVersion int                `json:"profileVersion,omitempty"`
 }
 
 // profileUpdatedText is the JSON Text of a profile_updated Event.
@@ -45,22 +49,78 @@ func (d *Daemon) memoryRoot() string {
 	return filepath.Join(d.stateDir, "enderbloom", "memory")
 }
 
+// memoryEmbeddingOptions resolves the host-global embedding model and OpenRouter key.
+func (d *Daemon) memoryEmbeddingOptions() (memory.Embedder, string) {
+	model := memory.DefaultEmbeddingModel
+	if all, err := d.settingsMap(); err == nil {
+		if raw, ok := all[memory.EmbeddingModelSetting]; ok {
+			var configured string
+			if json.Unmarshal(raw, &configured) == nil {
+				model = strings.TrimSpace(configured)
+			}
+		}
+	}
+	if model == "" {
+		return nil, ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	key := systemone.APIKey(ctx)
+	if key == "" {
+		return nil, model
+	}
+	return &memory.OpenRouterEmbedder{APIKey: key}, model
+}
+
+// memoryRecallWeights resolves the host-global recall weights; absent or
+// malformed settings fall back to the memory package defaults.
+func (d *Daemon) memoryRecallWeights() memory.RecallWeights {
+	all, err := d.settingsMap()
+	if err != nil {
+		return memory.RecallWeights{}
+	}
+	raw, ok := all["memory_recall_weights"]
+	if !ok {
+		return memory.RecallWeights{}
+	}
+	var weights struct {
+		Vector     float64 `json:"vector"`
+		FTS        float64 `json:"fts"`
+		Importance float64 `json:"importance"`
+	}
+	if json.Unmarshal(raw, &weights) != nil {
+		return memory.RecallWeights{}
+	}
+	return memory.RecallWeights{Vector: weights.Vector, FTS: weights.FTS, Importance: weights.Importance}
+}
+
 // memoryEngine lazily opens the per-User engine. memMu is separate from mu so
 // resume and compress paths that hold mu can still read the Profile. The
-// engine reads the Daemon clock, so API tests drive bank timestamps with the
-// fake clock.
+// engine owns the Daemon's bounded embedding worker and clock.
+
 func (d *Daemon) memoryEngine() (*memory.Engine, error) {
 	d.memMu.Lock()
 	defer d.memMu.Unlock()
 	if d.memEng != nil {
 		return d.memEng, nil
 	}
-	eng, err := memory.Open(d.memoryRoot(), memory.Options{Now: d.now})
+	embedder, model := d.memoryEmbeddingOptions()
+	eng, err := memory.Open(d.memoryRoot(), memory.Options{Now: d.now, Embedder: embedder, EmbeddingModel: model})
 	if err != nil {
 		return nil, err
 	}
 	d.memEng = eng
 	return eng, nil
+
+}
+func (d *Daemon) reconfigureMemoryEmbedding() {
+	d.memMu.Lock()
+	defer d.memMu.Unlock()
+	if d.memEng == nil {
+		return
+	}
+	embedder, model := d.memoryEmbeddingOptions()
+	d.memEng.SetEmbedding(embedder, model)
 }
 
 // profileBankFor opens the bank of owner. Empty owner has no bank.
@@ -187,13 +247,79 @@ func (d *Daemon) proposeProfilePatch(ctx context.Context, owner string, patch me
 	if err := memory.ValidateProfilePatch(patch, current.Lines); err != nil {
 		return 0, err
 	}
-	if next, err := memory.ApplyProfilePatch(current.Lines, patch); err != nil {
-		return 0, err
-	} else if _, err := memory.RenderProfile(memory.ProfileVersion{Lines: next}); err != nil {
+	next, err := memory.ApplyProfilePatch(current.Lines, patch)
+	if err != nil {
 		return 0, err
 	}
-	raw, _ := json.Marshal(profileQueuePayload{Ops: patch.Ops, Reason: reason, SessionID: sessionID, Author: author})
-	return bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: string(raw)})
+	if _, err := memory.RenderProfile(memory.ProfileVersion{Lines: next}); err != nil {
+		return 0, err
+	}
+	items, err := bank.Queue(ctx)
+	if err != nil {
+		return 0, err
+	}
+	for _, item := range items {
+		if item.Kind != memory.QueueProfilePatch || item.Status != memory.QueueRejected {
+			continue
+		}
+		var previous profileQueuePayload
+		if json.Unmarshal([]byte(item.Payload), &previous) == nil && previous.ProfileVersion == current.Version && sameProfilePatchEffect(current.Lines, previous.Ops, patch.Ops) {
+			return 0, nil
+		}
+	}
+	raw, _ := json.Marshal(profileQueuePayload{Ops: patch.Ops, Reason: reason, SessionID: sessionID, Author: author, ProfileVersion: current.Version})
+	id, err := bank.Enqueue(ctx, memory.QueueItem{Kind: memory.QueueProfilePatch, Payload: string(raw)})
+	if err != nil {
+		return 0, err
+	}
+	event, _ := json.Marshal(map[string]any{"id": id, "ops": patch.Ops, "reason": reason, "state": memory.QueuePending})
+	d.broadcastProfilePatchProposal(owner, sessionID, string(event))
+	d.pushProfilePatch(owner, sessionID, id, reason)
+	return id, nil
+}
+
+func sameProfilePatchEffect(lines []memory.ProfileLine, a, b []memory.ProfileOp) bool {
+	left, err := memory.ApplyProfilePatch(lines, memory.ProfilePatch{Ops: a})
+	if err != nil {
+		return false
+	}
+	right, err := memory.ApplyProfilePatch(lines, memory.ProfilePatch{Ops: b})
+	if err != nil {
+		return false
+	}
+	canonical := func(lines []memory.ProfileLine) string {
+		type semanticLine struct {
+			Text    string `json:"text"`
+			Tag     string `json:"tag"`
+			Retired bool   `json:"retired"`
+		}
+		out := make([]semanticLine, 0, len(lines))
+		for _, line := range lines {
+			out = append(out, semanticLine{line.Text, line.Tag, line.Retired})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			if out[i].Tag != out[j].Tag {
+				return out[i].Tag < out[j].Tag
+			}
+			if out[i].Text != out[j].Text {
+				return out[i].Text < out[j].Text
+			}
+			return !out[i].Retired && out[j].Retired
+		})
+		encoded, _ := json.Marshal(out)
+		return string(encoded)
+	}
+	return canonical(left) == canonical(right)
+}
+
+func (d *Daemon) broadcastProfilePatchProposal(owner, source, text string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for sid, sess := range d.sessions {
+		if sess.meta.Owner == owner && (source == "" || source == sid) {
+			d.appendEventExtraLocked(sid, "profile_patch", text, "pending", "", 0, nil, nil)
+		}
+	}
 }
 
 // approveProfileQueueItem approves (or edits then approves) one profile_patch
@@ -454,6 +580,17 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	itemsBefore, _ := bank.Queue(r.Context())
+	var sourceSession string
+	for _, queued := range itemsBefore {
+		if queued.ID == id && queued.Kind == memory.QueueProfilePatch {
+			var payload profileQueuePayload
+			if json.Unmarshal([]byte(queued.Payload), &payload) == nil {
+				sourceSession = payload.SessionID
+			}
+			break
+		}
+	}
 	switch body.Status {
 	case memory.QueueRejected:
 		if err := bank.Decide(r.Context(), id, memory.QueueRejected, user.ID); err != nil {
@@ -464,6 +601,7 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
+		d.broadcastProfilePatchDecision(user.ID, sourceSession, id, memory.QueueRejected)
 		writeJSON(w, http.StatusOK, map[string]any{"status": memory.QueueRejected})
 	case memory.QueueApproved:
 		var edited *memory.ProfilePatch
@@ -480,6 +618,7 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 			return
 		}
 		d.broadcastProfileUpdated(user.ID, v, user.ID)
+		d.broadcastProfilePatchDecision(user.ID, sourceSession, id, memory.QueueApproved)
 		rendered, _ := memory.RenderProfile(v)
 		writeJSON(w, http.StatusOK, profileView{
 			Version: v.Version, Lines: nonNilLines(v.Lines),
@@ -487,6 +626,16 @@ func (d *Daemon) handleProfileQueueDecide(w http.ResponseWriter, r *http.Request
 		})
 	default:
 		http.Error(w, "status must be approved or rejected", http.StatusBadRequest)
+	}
+}
+func (d *Daemon) broadcastProfilePatchDecision(owner, source string, id int64, status string) {
+	raw, _ := json.Marshal(map[string]any{"id": id, "status": status})
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	for sid, sess := range d.sessions {
+		if sess.meta.Owner == owner && (source == "" || sid == source) {
+			d.appendEventExtraLocked(sid, "profile_patch_resolved", string(raw), status, "", 0, nil, nil)
+		}
 	}
 }
 

@@ -573,3 +573,127 @@ func ruleIDs(rules []Rule) []string {
 	}
 	return out
 }
+
+func TestMemoriesAndEpisodes(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			clock := newTestClock()
+			m := fac.open(t, clock)
+			ctx := context.Background()
+			id, err := m.AddMemory(ctx, MemoryItem{SessionID: "s", EventID: "e", Author: "u1", Kind: KindFact, Text: "remember this", Quote: "remember this"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got, err := m.GetMemory(ctx, id)
+			if err != nil || got.ID != id {
+				t.Fatalf("get: %+v %v", got, err)
+			}
+			all, err := m.ListMemories(ctx, "", "", 10)
+			if err != nil || len(all) != 1 {
+				t.Fatalf("list all: %d %v", len(all), err)
+			}
+			if err := m.SetMemoryStatus(ctx, id, StatusForgotten); err != nil {
+				t.Fatal(err)
+			}
+			live, err := m.ListMemories(ctx, "", "", 10)
+			if err != nil || len(live) != 0 {
+				t.Fatalf("forgotten not excluded: %d %v", len(live), err)
+			}
+			epID, err := m.AddEpisode(ctx, Episode{SessionID: "s", EventRange: "e1-e2", Author: "u1", Text: "hello user"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			epGot, err := m.GetEpisode(ctx, epID)
+			if err != nil || epGot.ID != epID {
+				t.Fatalf("get episode: %+v %v", epGot, err)
+			}
+			newID, err := m.AddMemory(ctx, MemoryItem{SessionID: "s2", EventID: "e2", Author: "u1", Kind: KindFact, Text: "new memory", Quote: "new memory"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := m.SetMemorySuperseded(ctx, id, newID); err != nil {
+				t.Fatal(err)
+			}
+			source, err := m.MemoryByID(ctx, id)
+			if err != nil || source.Status != StatusSuperseded || source.SupersededBy != newID {
+				t.Fatalf("superseded source=%+v err=%v", source, err)
+			}
+			if err := m.SetMemoryStatus(ctx, id, StatusActive); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := m.BumpMemory(ctx, id); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.SetMemoryEmbedding(ctx, id, []byte{1, 2}, "m"); err != nil {
+				t.Fatal(err)
+			}
+			if err := m.SetMemoryPinned(ctx, id, true); err != nil {
+				t.Fatal(err)
+			}
+			_, err = m.Purge(ctx, Selection{Memories: []int64{id, newID}, Episodes: []int64{epID}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := m.ListEpisodes(ctx, 10); len(got) != 0 {
+				t.Fatalf("episode not purged: %d", len(got))
+			}
+		})
+	}
+}
+
+func TestMemoryRevisionContract(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			ctx := context.Background()
+			bank := fac.open(t, newTestClock())
+			oldID, err := bank.AddMemory(ctx, MemoryItem{SessionID: "s1", EventID: "e1", Author: "u1", Kind: KindPreference, Text: "Use concise answers", Quote: "Please use concise answers"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, err := bank.GetMemory(ctx, oldID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			nextID, err := bank.ReviseMemory(ctx, oldID, MemoryItem{SessionID: old.SessionID, EventID: old.EventID, Author: old.Author, Kind: old.Kind, Text: "Prefer concise answers", Quote: old.Quote, Importance: old.Importance, Veracity: old.Veracity, ExtractorJSON: old.ExtractorJSON})
+			if err != nil {
+				t.Fatal(err)
+			}
+			old, _ = bank.GetMemory(ctx, oldID)
+			next, _ := bank.GetMemory(ctx, nextID)
+			if old.Status != StatusSuperseded || old.SupersededBy != nextID || old.Text != "Use concise answers" || next.Status != StatusActive || next.Text != "Prefer concise answers" {
+				t.Fatalf("revision old=%+v next=%+v", old, next)
+			}
+			if _, err = bank.ReviseMemory(ctx, 999, MemoryItem{SessionID: "s1", EventID: "e2", Author: "u1", Kind: KindFact, Text: "orphan", Quote: "source"}); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("missing source revise error=%v", err)
+			}
+		})
+	}
+}
+
+func TestMemorySearchFiltersBeforeLimit(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			ctx := context.Background()
+			bank := fac.open(t, newTestClock())
+			for i := 0; i < 25; i++ {
+				if _, err := bank.AddMemory(ctx, MemoryItem{SessionID: "s", EventID: strconv.Itoa(i), Author: "u1", Kind: KindFact, Text: "shared searchable memory", Quote: "shared searchable memory"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := bank.AddMemory(ctx, MemoryItem{SessionID: "s", EventID: "preferred", Author: "u1", Kind: KindPreference, Text: "shared searchable memory", Quote: "shared searchable memory"}); err != nil {
+				t.Fatal(err)
+			}
+			count, err := bank.CountMemoriesSince(ctx, time.Time{})
+			if err != nil || count != 26 {
+				t.Fatalf("count since epoch = %d err=%v", count, err)
+			}
+			got, err := bank.SearchMemories(ctx, "shared searchable", "preference", "", 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != 1 || got[0].Kind != KindPreference {
+				t.Fatalf("filtered top-one search = %+v", got)
+			}
+		})
+	}
+}

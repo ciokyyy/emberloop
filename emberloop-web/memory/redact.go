@@ -327,9 +327,7 @@ func providerKind(v string) string {
 }
 
 // Redact replaces every recognized secret in s with a [redacted:<kind>]
-// marker. It is the only path text takes to the distill LLM, a Decider LLM
-// or the Jev client: those call sites use ForDistill, ForDecider and ForJev,
-// which all call this function.
+// marker. Model egresses use their role-specific wrapper, which all call this function.
 func Redact(s string) string {
 	out, _ := RedactWithCounts(s)
 	return out
@@ -339,9 +337,10 @@ func Redact(s string) string {
 type EgressRole string
 
 const (
-	EgressDistill EgressRole = "distill"
-	EgressDecider EgressRole = "decider"
-	EgressJev     EgressRole = "jev"
+	EgressDistill  EgressRole = "distill"
+	EgressDecider  EgressRole = "decider"
+	EgressJev      EgressRole = "jev"
+	EgressEmbedder EgressRole = "embedder"
 )
 
 // RedactedFor redacts s for the named egress role. Every role redacts the
@@ -354,6 +353,9 @@ func ForDistill(s string) string { return RedactedFor(EgressDistill, s) }
 
 // ForDecider redacts text bound for a Decider LLM.
 func ForDecider(s string) string { return RedactedFor(EgressDecider, s) }
+
+// ForEmbedder redacts text bound for the embedding provider.
+func ForEmbedder(s string) string { return RedactedFor(EgressEmbedder, s) }
 
 // ForJev redacts text bound for the Jev decision endpoint.
 func ForJev(s string) string { return RedactedFor(EgressJev, s) }

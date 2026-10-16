@@ -26,6 +26,7 @@ const (
 	StatusParked     = "parked"
 	StatusDormant    = "dormant"
 	StatusSuperseded = "superseded"
+	StatusForgotten  = "forgotten"
 )
 
 // Kinds of Rule and observation.
@@ -35,6 +36,7 @@ const (
 	KindAntipattern = "antipattern"
 	KindFact        = "fact"
 	KindProcedure   = "procedure"
+	KindInstruction = "instruction"
 )
 
 // Queue kinds and statuses. Rejected items stay: they are the Decider labels.
@@ -60,8 +62,9 @@ const (
 	MaxRuleChars = 300
 	// MaxRecall caps the result size of one search.
 	MaxRecall = 20
-	// MaxList caps one Memory page list. Search stays at MaxRecall;
-	// an empty query lists the newest records instead.
+	// MaxList caps one Memory page list. Search stays at MaxRecall; an empty
+	// query lists the newest records instead. A negative list limit is reserved
+	// for internal maintenance and means all rows.
 	MaxList = 100
 	// SnapshotKeep is how many snapshots a bank keeps.
 	SnapshotKeep = 10
@@ -118,6 +121,39 @@ type Memory interface {
 	// at most MaxList. Superseded and dormant versions stay out, like Recall.
 	// The Memory page lists from it; search uses Recall.
 	ListRules(ctx context.Context, limit int) ([]Rule, error)
+
+	// Memories (auto-extracted).
+	AddMemory(ctx context.Context, m MemoryItem) (int64, error)
+	InsertMemory(ctx context.Context, m MemoryItem) (int64, error)
+	GetMemory(ctx context.Context, id int64) (MemoryItem, error)
+	MemoryByID(ctx context.Context, id int64) (MemoryItem, error)
+	// ListMemories returns at most MaxList rows; a negative limit requests all
+	// matching rows for internal maintenance scans.
+	ListMemories(ctx context.Context, kind, status string, limit int) ([]MemoryItem, error)
+	RecallMemoryItems(ctx context.Context, text string, limit int, includeSuperseded bool) ([]MemoryItem, error)
+	SearchMemories(ctx context.Context, text string, kind, status string, limit int) ([]MemoryItem, error)
+	CountMemoriesSince(ctx context.Context, since time.Time) (int, error)
+	SetMemoryStatus(ctx context.Context, id int64, status string) error
+	ReviseMemory(ctx context.Context, oldID int64, next MemoryItem) (int64, error)
+	SetMemorySuperseded(ctx context.Context, id, supersededBy int64) error
+	PinMemory(ctx context.Context, id int64, pinned int) error
+	SetMemoryPinned(ctx context.Context, id int64, pinned bool) error
+	BumpMemory(ctx context.Context, id int64) (MemoryItem, error)
+	BumpMemoryMention(ctx context.Context, id int64) (MemoryItem, error)
+	DedupAndStoreMemory(ctx context.Context, m MemoryItem) (MemoryStoreResult, error)
+	SetMemoryEmbedding(ctx context.Context, id int64, embedding []byte, model string) error
+	RecallMemories(ctx context.Context, text string, weights RecallWeights, limit int) ([]MemoryHit, error)
+	RecallEpisodes(ctx context.Context, text string, weights RecallWeights, limit int) ([]EpisodeHit, error)
+
+	// Episodes.
+	AddEpisode(ctx context.Context, e Episode) (int64, error)
+	InsertEpisode(ctx context.Context, e Episode) (int64, error)
+	GetEpisode(ctx context.Context, id int64) (Episode, error)
+	EpisodeByID(ctx context.Context, id int64) (Episode, error)
+	// ListEpisodes uses the same limit contract as ListMemories.
+	ListEpisodes(ctx context.Context, limit int) ([]Episode, error)
+	SetEpisodeEmbedding(ctx context.Context, id int64, embedding []byte, model string) error
+	SetEpisodeConsolidated(ctx context.Context, id int64, at time.Time) error
 
 	Enqueue(ctx context.Context, item QueueItem) (int64, error)
 	Decide(ctx context.Context, id int64, status, decidedBy string) error
@@ -225,6 +261,8 @@ type LedgerRow struct {
 // version of each rule ID.
 type Selection struct {
 	Observations []int64
+	Memories     []int64
+	Episodes     []int64
 	Rules        []string
 	Queue        []int64
 	Ledger       []int64
@@ -233,6 +271,8 @@ type Selection struct {
 // PurgeResult counts rows removed and rows where purged text was cleared.
 type PurgeResult struct {
 	Observations int
+	Memories     int
+	Episodes     int
 	Rules        int
 	Queue        int
 	Ledger       int
@@ -249,10 +289,48 @@ type SnapshotResult struct {
 	Pruned int
 }
 
-// Options configures an Engine or a Fake.
+// Memory is one automatically extracted durable item.
+type MemoryItem struct {
+	ID             int64
+	SessionID      string
+	EventID        string
+	Author         string
+	Kind           string
+	Text           string
+	Quote          string
+	Importance     float64
+	Veracity       string
+	MentionCount   int
+	Status         string
+	SupersededBy   int64
+	Pinned         int
+	Embedding      []byte
+	EmbeddingModel string
+	ExtractorJSON  string
+	ObservedCommit string
+	CreatedAt      time.Time
+	LastSeenAt     time.Time
+}
+
+// Episode stores the redacted text of one user turn.
+type Episode struct {
+	ID             int64
+	SessionID      string
+	EventRange     string
+	Author         string
+	Text           string
+	Importance     float64
+	Embedding      []byte
+	EmbeddingModel string
+	ConsolidatedAt time.Time
+	CreatedAt      time.Time
+}
+
 type Options struct {
 	// Now is the clock. Nil reads time.Now. Tests inject a fixed clock.
-	Now func() time.Time
+	Now            func() time.Time
+	Embedder       Embedder
+	EmbeddingModel string
 }
 
 func (o Options) now() time.Time {
@@ -261,6 +339,11 @@ func (o Options) now() time.Time {
 	}
 	return o.Now().UTC()
 }
+
+const (
+	VeracityStated   = "stated"
+	VeracityInferred = "inferred"
+)
 
 var userIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$`)
 
@@ -398,13 +481,71 @@ func clampLimit(n int) int {
 	return n
 }
 
-// clampList caps a Memory page list limit to MaxList; zero and negative mean
-// the cap. Lists show more than one search page.
+// clampList caps a Memory page list limit to MaxList. Lists show more than one
+// search page.
 func clampList(n int) int {
 	if n <= 0 || n > MaxList {
 		return MaxList
 	}
 	return n
+}
+
+// listLimit preserves the page cap while allowing maintenance callers to
+// request a complete scan with a negative limit.
+func listLimit(n int) int {
+	if n < 0 {
+		return -1
+	}
+	return clampList(n)
+}
+
+func validMemory(m MemoryItem) error {
+	switch {
+	case m.SessionID == "" || m.EventID == "" || m.Author == "":
+		return fmt.Errorf("%w: memory needs session, event and author", ErrInvalid)
+	case m.Text == "":
+		return fmt.Errorf("%w: memory text empty", ErrInvalid)
+	case utf8.RuneCountInString(m.Text) > 300:
+		return fmt.Errorf("%w: memory text too long", ErrInvalid)
+	case m.Quote == "":
+		return fmt.Errorf("%w: memory quote empty", ErrInvalid)
+	case !validMemoryKind(m.Kind):
+		return fmt.Errorf("%w: memory kind %q", ErrInvalid, m.Kind)
+	case !validMemoryStatus(m.Status) && m.Status != "":
+		return fmt.Errorf("%w: memory status %q", ErrInvalid, m.Status)
+	case m.Veracity != "" && m.Veracity != VeracityStated && m.Veracity != VeracityInferred:
+		return fmt.Errorf("%w: memory veracity %q", ErrInvalid, m.Veracity)
+	}
+	return nil
+}
+
+func validMemoryKind(k string) bool {
+	switch k {
+	case KindPreference, KindInstruction, KindDecision, KindFact:
+		return true
+	}
+	return false
+}
+
+func validMemoryStatus(s string) bool {
+	if s == "" {
+		return true
+	}
+	switch s {
+	case StatusActive, StatusParked, StatusSuperseded, StatusForgotten:
+		return true
+	}
+	return false
+}
+
+func validEpisode(e Episode) error {
+	if e.SessionID == "" || e.Author == "" || e.Text == "" {
+		return fmt.Errorf("%w: episode needs session, author and text", ErrInvalid)
+	}
+	if len(e.Text) > 4096 {
+		return fmt.Errorf("%w: episode text too long", ErrInvalid)
+	}
+	return nil
 }
 
 // validJSON reports whether s is well-formed JSON.

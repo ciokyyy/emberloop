@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -457,4 +459,145 @@ func userIDOf(t *testing.T, base string) string {
 		t.Fatal("no user id behind the base")
 	}
 	return me.ID
+}
+
+func TestMemoryPageMemoryActions(t *testing.T) {
+	d, _ := memoryPageDaemon(t)
+	h := d.Handler()
+	cookie := signedIn(t, h, "memory-actions")
+	user := userOf(t, h, cookie)
+	bank, err := d.profileBankFor(user.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	loopback := func(req *http.Request) { req.RemoteAddr = "127.0.0.1:1234"; req.Host = "127.0.0.1" }
+	id, err := bank.AddMemory(ctx, memory.MemoryItem{SessionID: "session-a", EventID: "event-a", Author: user.ID, Kind: memory.KindPreference, Text: "Use concise replies", Quote: "Please use concise replies"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	post := func(path string, body any) *httptest.ResponseRecorder {
+		raw, _ := json.Marshal(body)
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(raw))
+		loopback(req)
+		req.AddCookie(cookie)
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		return rec
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/api/memory/memories?q=concise", nil)
+	loopback(req)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != 200 || !strings.Contains(rec.Body.String(), "Use concise replies") {
+		t.Fatalf("list: %d %s", rec.Code, rec.Body.String())
+	}
+	countReq := httptest.NewRequest(http.MethodGet, "/api/memory/memories/count?since=0", nil)
+	loopback(countReq)
+	countReq.AddCookie(cookie)
+	countRec := httptest.NewRecorder()
+	h.ServeHTTP(countRec, countReq)
+	var countResp struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(countRec.Body.Bytes(), &countResp); err != nil || countResp.Count != 1 {
+		t.Fatalf("new memory count: %d %s err=%v", countRec.Code, countRec.Body.String(), err)
+	}
+	for _, action := range []string{"pin", "park"} {
+		body := map[string]any{}
+		if action == "pin" {
+			body["pinned"] = true
+		}
+		if got := post("/api/memory/memories/"+strconv.FormatInt(id, 10)+"/"+action, body); got.Code != 200 {
+			t.Fatalf("%s: %d %s", action, got.Code, got.Body.String())
+		}
+	}
+	if got := post("/api/memory/memories/"+strconv.FormatInt(id, 10)+"/edit", map[string]string{"text": "Prefer concise replies"}); got.Code != 200 {
+		t.Fatalf("edit: %d %s", got.Code, got.Body.String())
+	}
+	old, _ := bank.GetMemory(ctx, id)
+	if old.Status != memory.StatusSuperseded || old.Text != "Use concise replies" || old.SupersededBy == 0 {
+		t.Fatalf("old row changed incorrectly: %+v", old)
+	}
+	if got := post("/api/memory/memories/"+strconv.FormatInt(old.SupersededBy, 10)+"/promote", map[string]any{}); got.Code != 200 {
+		t.Fatalf("promote: %d %s", got.Code, got.Body.String())
+	}
+	items, _ := bank.Queue(ctx)
+	found := false
+	for _, item := range items {
+		if item.Kind != memory.QueueRule || item.Status != memory.QueuePending {
+			continue
+		}
+		proposal, decodeErr := memory.DecodeRememberProposal(item.Payload)
+		if decodeErr == nil && len(proposal.SourceMemoryIDs) == 1 && proposal.SourceMemoryIDs[0] == old.SupersededBy && proposal.Importance == .7 && proposal.Author == user.ID && len(proposal.Quotes) == 1 && proposal.Quotes[0] == "Please use concise replies" && len(proposal.Sessions) == 1 && proposal.Sessions[0] == "session-a" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("pending Rule omitted Memory provenance: %+v", items)
+	}
+	ledger, err := bank.Ledger(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	promotedEvents := 0
+	for _, row := range ledger {
+		if row.Stage == "memory_promoted" && strings.Contains(row.CountsJSON, `"memory_id":`+strconv.FormatInt(old.SupersededBy, 10)) {
+			promotedEvents++
+		}
+	}
+	if promotedEvents != 1 {
+		t.Fatalf("promotion ledger events for Memory %d = %d", old.SupersededBy, promotedEvents)
+	}
+	if got := post("/api/memory/memories/"+strconv.FormatInt(old.SupersededBy, 10)+"/forget", map[string]any{}); got.Code != 200 {
+		t.Fatalf("forget: %d %s", got.Code, got.Body.String())
+	}
+	forgot, _ := bank.GetMemory(ctx, old.SupersededBy)
+	if forgot.Status != memory.StatusForgotten {
+		t.Fatalf("forgotten status = %q", forgot.Status)
+	}
+	listed := httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/api/memory/memories", nil)
+	loopback(req)
+	req.AddCookie(cookie)
+	h.ServeHTTP(listed, req)
+	if got := post("/api/memory/purge", map[string]any{"memories": []int64{forgot.ID}, "confirm": "PURGE"}); got.Code != 200 {
+		t.Fatalf("purge forgotten memory: %d %s", got.Code, got.Body.String())
+	}
+	if _, err := bank.GetMemory(ctx, forgot.ID); !errors.Is(err, memory.ErrNotFound) {
+		t.Fatalf("purged memory remains: %v", err)
+	}
+	if strings.Contains(listed.Body.String(), `"id":`+strconv.FormatInt(forgot.ID, 10)) {
+		t.Fatalf("forgotten row visible in default list: %s", listed.Body.String())
+	}
+	obsID, err := bank.AddObservation(ctx, memory.Observation{SessionID: "session-a", EventID: "legacy-event", Author: user.ID, Quote: "I prefer compact summaries", Kind: memory.KindPreference, DeciderJSON: `{"candidate_text":"We chose compact summaries","kind":"decision"}`})
+	if err != nil {
+		t.Fatal(err)
+	}
+	promoted := post("/api/memory/observations/"+strconv.FormatInt(obsID, 10)+"/promote", map[string]any{})
+	if promoted.Code != http.StatusCreated {
+		t.Fatalf("legacy promote: %d %s", promoted.Code, promoted.Body.String())
+	}
+	var promotedResult struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal(promoted.Body.Bytes(), &promotedResult); err != nil {
+		t.Fatal(err)
+	}
+	legacy, err := bank.GetMemory(ctx, promotedResult.ID)
+	if err != nil || legacy.Text != "We chose compact summaries" || legacy.Quote != "I prefer compact summaries" || legacy.Kind != memory.KindDecision {
+		t.Fatalf("legacy content lost: %+v err=%v", legacy, err)
+	}
+	if _, err := bank.AddEpisode(ctx, memory.Episode{SessionID: "session-a", EventRange: "event-a:event-z", Author: user.ID, Text: "old user turn text"}); err != nil {
+		t.Fatal(err)
+	}
+	episodesReq := httptest.NewRequest(http.MethodGet, "/api/memory/episodes", nil)
+	loopback(episodesReq)
+	episodesReq.AddCookie(cookie)
+	episodesRec := httptest.NewRecorder()
+	h.ServeHTTP(episodesRec, episodesReq)
+	if episodesRec.Code != 200 || !strings.Contains(episodesRec.Body.String(), "old user turn text") {
+		t.Fatalf("episodes: %d %s", episodesRec.Code, episodesRec.Body.String())
+	}
 }

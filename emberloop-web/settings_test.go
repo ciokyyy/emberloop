@@ -527,3 +527,102 @@ func TestLookupChainSkipsInvalidHandEditedClaudeEntries(t *testing.T) {
 		t.Fatalf("invalid canonical chain fell back to legacy roles: %+v", got)
 	}
 }
+
+func TestMemorySettingsSaveAndValidation(t *testing.T) {
+	srv, file := settingsServer(t, `{}`)
+	_, code := putSettingsBody(t, srv.URL, `{"memory_extract_model":"custom/extract","memory_extract_effort":"medium","memory_embedding_model":"custom/embed","memory_recall_weights":{"vector":0.2,"fts":0.4,"importance":0.4},"memory_auto_extract":false}`)
+	if code != http.StatusOK {
+		t.Fatalf("settings write status = %d, want 200", code)
+	}
+	raw, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]any
+	if err := json.Unmarshal(raw, &saved); err != nil {
+		t.Fatal(err)
+	}
+	if saved["memory_extract_model"] != "custom/extract" || saved["memory_extract_effort"] != "medium" || saved["memory_embedding_model"] != "custom/embed" || saved["memory_auto_extract"] != false {
+		t.Fatalf("saved Memory settings = %v", saved)
+	}
+	for _, bad := range []string{
+		`{"memory_recall_weights":{"vector":-0.1,"fts":0.5,"importance":0.5}}`,
+		`{"memory_recall_weights":{"vector":1.1,"fts":0,"importance":0}}`,
+		`{"memory_recall_weights":{"vector":0,"fts":0,"importance":0}}`,
+		`{"memory_extract_effort":"high"}`,
+	} {
+		if _, code := putSettingsBody(t, srv.URL, bad); code != http.StatusBadRequest {
+			t.Fatalf("invalid settings %s status = %d, want 400", bad, code)
+		}
+	}
+}
+
+func TestMemorySettingsAutomaticExtractionDefaultTracksOpenRouterKey(t *testing.T) {
+	t.Setenv("OPENROUTER_API_KEY", "test-key")
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(useSettings(t, `{}`))
+	if !memoryExtractionEnabled(map[string]json.RawMessage{}, true) {
+		t.Fatal("automatic extraction default should be on when OpenRouter is configured")
+	}
+	if memoryExtractionEnabled(map[string]json.RawMessage{"memory_auto_extract": json.RawMessage("false")}, true) {
+		t.Fatal("explicitly disabled automatic extraction should remain off")
+	}
+	view := d.memorySettingsView()
+	if view["memory_auto_extract"] != true {
+		t.Fatalf("default settings view = %v, want extraction on", view["memory_auto_extract"])
+	}
+}
+
+func TestMemorySettingsAreAdminOnly(t *testing.T) {
+	_, settings := settingsServer(t, `{"memory_extract_model":"private/model"}`)
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(d.Handler())
+	defer srv.Close()
+	request := func(method, body string) (*http.Response, error) {
+		req, err := http.NewRequest(method, srv.URL+"/api/settings", strings.NewReader(body))
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+d.machineToken)
+		req.Header.Set("Content-Type", "application/json")
+		return http.DefaultClient.Do(req)
+	}
+	get, err := request(http.MethodGet, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var view map[string]any
+	_ = json.NewDecoder(get.Body).Decode(&view)
+	get.Body.Close()
+	for _, key := range []string{"memory_extract_model", "memory_extract_effort", "memory_embedding_model", "memory_recall_weights", "memory_auto_extract"} {
+		if _, ok := view[key]; ok {
+			t.Errorf("non-admin settings view exposed %q", key)
+		}
+	}
+	put, err := request(http.MethodPut, `{"memory_auto_extract":false}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put.Body.Close()
+	if put.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin memory settings write = %d, want 403", put.StatusCode)
+	}
+	raw, err := os.ReadFile(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"memory_auto_extract"`) {
+		t.Fatalf("unauthorized setting was persisted: %s", raw)
+	}
+}
+
+func TestMemoryRecallWeightsValidation(t *testing.T) {
+	for _, raw := range []string{`{"vector":-0.01,"fts":0.5,"importance":0.5}`, `{"vector":1.01,"fts":0,"importance":0}`, `{"vector":0,"fts":0,"importance":0}`} {
+		if msg := validateMemoryRecallWeights(json.RawMessage(raw)); msg == "" {
+			t.Errorf("weights %s accepted", raw)
+		}
+	}
+	if msg := validateMemoryRecallWeights(json.RawMessage(`{"vector":0.2,"fts":0.3,"importance":0.5}`)); msg != "" {
+		t.Fatalf("valid weights rejected: %s", msg)
+	}
+}
