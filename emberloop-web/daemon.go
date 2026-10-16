@@ -515,6 +515,41 @@ func modelEffortsFor(harness string, models []string) map[string][]string {
 	return out
 }
 
+// modelImageInputs reports only catalog-known image support. Missing entries
+// are intentionally omitted so the UI can distinguish unknown from false.
+func modelImageInputs(harness string, models []string) map[string]bool {
+	out := map[string]bool{}
+	if harness == "claude" {
+		for _, model := range models {
+			if model == "opus" || model == "sonnet" || model == "haiku" {
+				out[model] = true
+			}
+		}
+		return out
+	}
+	if harness != "pig" {
+		return out
+	}
+	for _, model := range models {
+		for _, catalogModel := range ai.GeneratedModels {
+			if catalogModel.Provider+"/"+catalogModel.ID != model {
+				continue
+			}
+			for _, capability := range catalogModel.Capabilities {
+				if capability == "image" {
+					out[model] = true
+					break
+				}
+			}
+			if _, known := out[model]; !known {
+				out[model] = false
+			}
+			break
+		}
+	}
+	return out
+}
+
 // handleModels lists the harness's runnable models for the new-Session form.
 // Pig lists only providers with usable auth; ?current= keeps the selected or
 // stored model visible even when its provider has none.
@@ -530,7 +565,7 @@ func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	if harness == "claude" {
 		models := ClaudeModels()
-		writeJSON(w, http.StatusOK, map[string]any{"models": models, "model_efforts": modelEffortsFor(harness, models)})
+		writeJSON(w, http.StatusOK, map[string]any{"models": models, "model_efforts": modelEffortsFor(harness, models), "image_input": modelImageInputs(harness, models)})
 		return
 	}
 	if harness != "pig" && harness != "fake" {
@@ -555,7 +590,7 @@ func (d *Daemon) handleModels(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"models": models, "model_efforts": modelEffortsFor(harness, models)})
+	writeJSON(w, http.StatusOK, map[string]any{"models": models, "model_efforts": modelEffortsFor(harness, models), "image_input": modelImageInputs(harness, models)})
 }
 
 func validClaudeModel(model string) bool {

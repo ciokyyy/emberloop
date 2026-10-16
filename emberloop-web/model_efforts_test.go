@@ -90,3 +90,35 @@ func TestModelEffortOptionsPigCatalog(t *testing.T) {
 		}
 	}
 }
+
+func TestModelImageInputsOnlyReportsKnownPigCatalogCapabilities(t *testing.T) {
+	catalog := ai.ListModels("")
+	var image, textOnly *ai.GeneratedModel
+	for i := range catalog {
+		model := &catalog[i]
+		if model.Provider == "" {
+			continue
+		}
+		hasImage := slices.Contains(model.Capabilities, "image")
+		if hasImage && image == nil {
+			image = model
+		}
+		if !hasImage && textOnly == nil {
+			textOnly = model
+		}
+	}
+	if image == nil || textOnly == nil {
+		t.Fatal("catalog must contain image and text-only models")
+	}
+	name := func(model *ai.GeneratedModel) string { return model.Provider + "/" + model.ID }
+	got := modelImageInputs("pig", []string{name(image), name(textOnly), "custom/model"})
+	if got[name(image)] != true || got[name(textOnly)] != false {
+		t.Fatalf("image_input = %#v, want known true and false values", got)
+	}
+	if _, ok := got["custom/model"]; ok {
+		t.Fatalf("unknown model capability was reported: %#v", got)
+	}
+	if got := modelImageInputs("fake", []string{name(image)}); len(got) != 0 {
+		t.Fatalf("fake image_input = %#v, want unknown/empty", got)
+	}
+}

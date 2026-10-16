@@ -4337,10 +4337,10 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 		ticketWarnings := []string{}
 		effectiveType := effectiveRunTicketType(rs, t)
 		if effectiveType == "design" && rs.DesignWorkerFallback {
-			ticketWarnings = append(ticketWarnings, "Designer worker Chain is empty; using worker Chain.")
+			ticketWarnings = append(ticketWarnings, "No designer model set; using the worker model.")
 		}
 		if effectiveType == "design" && rs.DesignReviewerFallback {
-			ticketWarnings = append(ticketWarnings, "Design reviewer Chain is empty; using reviewer-standards Chain.")
+			ticketWarnings = append(ticketWarnings, "No design reviewer model set; using the standards reviewer model.")
 		}
 		tickets = append(tickets, map[string]any{
 			"id": t.ID, "num": t.Num, "title": title, "blockers": blockers,

@@ -21,7 +21,7 @@ function stubSettings({ settings, failGet = false, failPut = false, failModels =
         const harness = new URL(url, 'http://x').searchParams.get('harness');
         const models = harness === 'claude' ? ['opus'] : harness === 'pig' ? ['auto'] : ['auto'];
         const model_efforts = { opus: ['low', 'high'], 'auto': ['medium'], auto: ['low'] };
-        return { ok: true, json: async () => ({ models, model_efforts }) };
+        return { ok: true, json: async () => ({ models, model_efforts, image_input: harness === 'pig' ? { auto: false } : {} }) };
       }
       if (url.includes('/api/settings') && opts?.method === 'PUT') {
         seen.body = JSON.parse(opts.body);
@@ -512,18 +512,34 @@ describe('SettingsPage agent chains', () => {
     await fireEvent.click(within(agents).getByLabelText('Ticket worker Fallback 1 model'));
     await fireEvent.click(await screen.findByRole('option', { name: /auto/i }));
     await fireEvent.click(within(agents).getByLabelText('Ticket worker Fallback 1 effort'));
-    expect(await screen.findByRole('option', { name: 'Medium' })).toBeTruthy();
-    expect(screen.queryByRole('option', { name: 'Low' })).toBeNull();
+    expect(await screen.findByRole('option', { name: 'Low' })).toBeTruthy();
+    expect(screen.queryByRole('option', { name: 'Medium' })).toBeNull();
     expect(screen.queryByRole('option', { name: 'High' })).toBeNull();
-    await fireEvent.click(screen.getByRole('option', { name: 'Medium' }));
+    await fireEvent.click(screen.getByRole('option', { name: 'Low' }));
 
     await fireEvent.click(await within(container).findByText('Save'));
     expect(await within(container).findByText('Saved')).toBeTruthy();
     expect(seen.body.chains.worker).toEqual([
       { backend: 'claude', model: 'opus', effort: 'high' },
-      { backend: 'pig', model: 'auto', effort: 'medium' },
+      { backend: 'pig', model: 'auto', effort: 'low' },
     ]);
     expect(seen.body.roles.implementer).toEqual({ harness: 'claude', model: 'opus', effort: 'high' });
+  });
+
+
+  it('warns for catalog-known image-blind design models but still saves', async () => {
+    const seen = {};
+    stubSettings({
+      settings: { ...base, chains: { 'worker-design': [{ backend: 'pig', model: 'auto' }] } },
+      seen,
+    });
+    const { container } = renderSettings();
+    expect(await within(container).findByTestId('image-input-warning-worker-design-0')).toBeTruthy();
+    await fireEvent.click(within(container).getByLabelText('Add Designer worker entry'));
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.chains['worker-design'][0]).toEqual({ backend: 'pig', model: 'auto' });
+    expect(seen.body.chains['worker-design']).toHaveLength(2);
   });
 
   it('renders canonical chains returned by the server alongside legacy role keys', async () => {

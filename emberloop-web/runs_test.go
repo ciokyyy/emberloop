@@ -144,7 +144,7 @@ func TestSpecPreviewBlockersAndProgress(t *testing.T) {
 	repo := tempDir(t)
 	writeFile(t, repo, ".scratch/demo/spec.md", "# Demo spec\n")
 	writeFile(t, repo, ".scratch/demo/issues/01-first.md", "# 01: First\n\n**Blocked by:** None\n\n- [x] done box\n- [ ] todo box\n")
-	writeFile(t, repo, ".scratch/demo/issues/02-second.md", "# 02: Second\n\n**Blocked by:** 01\n\n- [ ] a box\n")
+	writeFile(t, repo, ".scratch/demo/issues/02-second.md", "# 02: Second\n\n**Type:** design\n\n**Blocked by:** 01\n\n- [ ] a box\n")
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
 	defer srv.Close()
@@ -169,6 +169,10 @@ func TestSpecPreviewBlockersAndProgress(t *testing.T) {
 			Total    int      `json:"total"`
 			Error    string   `json:"error"`
 		} `json:"tickets"`
+		DesignWarnings struct {
+			WorkerFallback   bool `json:"workerFallback"`
+			ReviewerFallback bool `json:"reviewerFallback"`
+		} `json:"designWarnings"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		t.Fatal(err)
@@ -185,6 +189,9 @@ func TestSpecPreviewBlockersAndProgress(t *testing.T) {
 	}
 	if second.ID != "02-second" || len(second.Blockers) != 1 || second.Blockers[0] != "01-first" {
 		t.Fatalf("second = %+v, want blocker 01-first", second)
+	}
+	if !out.DesignWarnings.WorkerFallback || !out.DesignWarnings.ReviewerFallback {
+		t.Fatalf("designWarnings = %+v, want both unset Chain fallbacks", out.DesignWarnings)
 	}
 }
 

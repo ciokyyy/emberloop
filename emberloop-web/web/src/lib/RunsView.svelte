@@ -439,6 +439,12 @@
         Final merge needs attention in: {run.finalMergeFiles.join(', ')}
       </p>
     {/if}
+    {#each (run.tickets ?? []).filter((ticket) => ticket.warnings?.length) as ticket (ticket.id)}
+      <section class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200" data-testid={`ticket-chain-warnings-${ticket.id}`}>
+        <strong>{ticket.title || `Ticket ${ticket.num}`} — advisory Chain warning</strong>
+        <ul class="mt-1 list-inside list-disc">{#each ticket.warnings as warning}<li>{warning}</li>{/each}</ul>
+      </section>
+    {/each}
   {:else if discovery.selected}
     <div class="flex items-center gap-2">
       <h3 class="text-sm font-semibold tracking-tight">{discovery.previewTitle || discovery.selected}</h3>
@@ -477,6 +483,12 @@
               </td>
               <td class="py-1">{`${t.done ?? 0}/${t.total ?? 0}`}</td>
             </tr>
+            {#if previewType(t) === 'design' && discovery.designWarnings.workerFallback}
+              <tr><td colspan="6" class="pb-2"><p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200" data-testid={`design-worker-fallback-${t.id}`}>No designer model set; using the worker model.</p></td></tr>
+            {/if}
+            {#if previewType(t) === 'design' && discovery.designWarnings.reviewerFallback}
+              <tr><td colspan="6" class="pb-2"><p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200" data-testid={`design-reviewer-fallback-${t.id}`}>No design reviewer model set; using the standards reviewer model.</p></td></tr>
+            {/if}
             {#if t.error}
               <tr>
                 <td colspan="5" class="pb-2">

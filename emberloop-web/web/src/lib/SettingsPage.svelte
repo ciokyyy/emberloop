@@ -97,6 +97,7 @@
   let locked = $state(false);
   let saved = $state(null);
   let catalogue = $state({});
+  let imageCatalogue = $state({});
   let effortCatalogue = $state({});
   let loading = $state(true);
   let saving = $state(false);
@@ -109,15 +110,22 @@
   async function models(harness) {
     let list = modelsForHarness(harness);
     let efforts = null;
+    let imageInput = {};
     try {
       const body = await getModels(harness);
       if (body.models?.length) list = body.models;
       efforts = body.model_efforts ?? {};
+      imageInput = body.image_input ?? {};
     } catch {
-      // Static model fallback; effort capabilities stay unknown.
+      // Static model fallback; capabilities stay unknown.
     }
     catalogue = { ...catalogue, [harness]: list };
     effortCatalogue = { ...effortCatalogue, [harness]: efforts };
+    imageCatalogue = { ...imageCatalogue, [harness]: imageInput };
+  }
+
+  function lacksImageInput(role, entry) {
+    return ['worker-design', 'reviewer-design'].includes(role) && imageCatalogue[entry.backend]?.[entry.model] === false;
   }
 
   function supportedEffortsFor(harness, model) {
@@ -478,6 +486,11 @@
                           <Button size="icon-sm" variant="ghost" aria-label={`Remove ${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`}`} disabled={saving} onclick={() => removeChainEntry(role.id, index)}><Trash2 /></Button>
                         </div>
                       </div>
+                      {#if lacksImageInput(role.id, entry)}
+                        <p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200" data-testid={`image-input-warning-${role.id}-${index}`}>
+                          This model does not accept image input. This advisory warning does not prevent saving the Chain.
+                        </p>
+                      {/if}
                     {/each}
                   </section>
                 {/each}

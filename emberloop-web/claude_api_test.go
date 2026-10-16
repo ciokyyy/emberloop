@@ -125,6 +125,7 @@ func TestModelsEndpointOffersClaudeAliases(t *testing.T) {
 		var out struct {
 			Models       []string            `json:"models"`
 			ModelEfforts map[string][]string `json:"model_efforts"`
+			ImageInput   map[string]bool     `json:"image_input"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 			resp.Body.Close()
@@ -141,8 +142,16 @@ func TestModelsEndpointOffersClaudeAliases(t *testing.T) {
 			if len(out.ModelEfforts["haiku"]) != 0 {
 				t.Errorf("Claude Haiku effort options = %v, want none", out.ModelEfforts["haiku"])
 			}
-		} else if len(out.ModelEfforts["fake-model"]) != 0 {
-			t.Errorf("Fake model effort options = %v, want none", out.ModelEfforts["fake-model"])
+			if out.ImageInput["opus"] != true || out.ImageInput["haiku"] != true {
+				t.Errorf("Claude image_input = %#v, want image support for known aliases", out.ImageInput)
+			}
+		} else {
+			if len(out.ModelEfforts["fake-model"]) != 0 {
+				t.Errorf("Fake model effort options = %v, want none", out.ModelEfforts["fake-model"])
+			}
+			if len(out.ImageInput) != 0 {
+				t.Errorf("Fake image_input = %#v, want unknown/empty", out.ImageInput)
+			}
 		}
 	}
 	resp, err := http.Get(srv.URL + "/api/models?harness=nope")

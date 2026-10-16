@@ -56,6 +56,17 @@ describe('RunsView preview and live run', () => {
     expect(await within(container).findByRole('button', { name: 'design' })).toBeTruthy();
   });
 
+  it('shows design Chain fallback warnings on the preview, including after a type flip', async () => {
+    seedPreview([{ ...preview.tickets[0], type: 'code' }]);
+    discovery.designWarnings = { workerFallback: true, reviewerFallback: true };
+    stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));
+    const { container } = render(RunsView, { props: { workDir: '/repo' } });
+    expect(within(container).queryByTestId('design-worker-fallback-01-first')).toBeNull();
+    await fireEvent.click(await within(container).findByRole('button', { name: 'code' }));
+    expect(await within(container).findByTestId('design-worker-fallback-01-first')).toBeTruthy();
+    expect(within(container).getByTestId('design-reviewer-fallback-01-first')).toBeTruthy();
+  });
+
   it('prompts for a sidebar pick with nothing selected', async () => {
     stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));
     const { container } = render(RunsView, { props: { workDir: '/repo' } });
@@ -84,10 +95,11 @@ describe('RunsView preview and live run', () => {
     resolveDetail({
       run: {
         id: 'run-1', spec: specRow.spec, repo: '/repo', status: 'running',
-        tickets: [{ id: '01-first', num: 1, title: 'First detail', state: 'queued', body: 'acceptance detail' }],
+        tickets: [{ id: '01-first', num: 1, title: 'First detail', state: 'queued', body: 'acceptance detail', warnings: ['No designer model set; using the worker model.'] }],
       },
     });
     expect(await within(container).findByTestId('runs-graph')).toBeTruthy();
+    expect(await within(container).findByTestId('ticket-chain-warnings-01-first')).toBeTruthy();
     expect(within(container).queryByTestId('run-loading')).toBeNull();
   });
   it('flips and clears a queued Ticket type through the Run override API', async () => {
