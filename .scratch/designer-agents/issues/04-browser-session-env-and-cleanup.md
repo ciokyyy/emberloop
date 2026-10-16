@@ -4,11 +4,11 @@
 
 **Blocked by:** 01-remove-grok, 03-browser-cli-install
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] Wire tests on each Backend's el server entry show the full environment, with the Session ID in the session and screenshot-dir values, and no variables when `browser.enabled` is false or the binary is absent
-- [ ] A test runs the `bash` tool and an `execute` script against a stub `agent-browser` and sees the variables and the bin dir on `PATH`
-- [ ] Session end, merged-Worker end and worktree removal each invoke `close` for that Session's name (stub binary records calls); Daemon shutdown invokes `close --all` once per namespace
-- [ ] `browser.allowed_domains` is an admin-only host-global setting served through `/api/settings` and validated as a domain list
-- [ ] Per-Session screenshot directories are cleaned by the disk janitor with the existing cap logic
-- [ ] `emberloop-web/AGENTS.md` records the environment and cleanup contract; `.emberloop/check` passes
+- [x] Wire tests on each Backend's el server entry show the full environment, with the Session ID in the session and screenshot-dir values, and no variables when `browser.enabled` is false or the binary is absent
+- [x] A test runs the `bash` tool and an `execute` script against a stub `agent-browser` and sees the variables and the bin dir on `PATH`
+- [x] Session end, merged-Worker end and worktree removal each invoke `close` for that Session's name (stub binary records calls); Daemon shutdown invokes `close --all` once per namespace
+- [x] `browser.allowed_domains` is an admin-only host-global setting served through `/api/settings` and validated as a domain list
+- [x] Per-Session screenshot directories are cleaned by the disk janitor with the existing cap logic
+- [x] `emberloop-web/AGENTS.md` records the environment and cleanup contract; `.emberloop/check` passes
