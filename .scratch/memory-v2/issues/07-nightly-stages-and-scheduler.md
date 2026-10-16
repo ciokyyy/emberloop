@@ -4,11 +4,11 @@
 
 **Blocked by:** 03, 04, 05
 
-**Status:** todo
+**Status:** done
 
-- [ ] A missed day runs the next time the Daemon is idle at any hour; a restart does not repeat a finished day
-- [ ] A busy day writes exactly one skipped row
-- [ ] Fold keeps originals and never re-folds a consolidated Episode
-- [ ] Promote candidate creates a pending Rule with its quotes; nothing is auto-approved
-- [ ] The old subject-key recurrence test is removed from candidate creation
-- [ ] Owning `AGENTS.md` files and root index updated; repo check passes
+- [x] A missed day runs the next time the Daemon is idle at any hour; a restart does not repeat a finished day
+- [x] A busy day writes exactly one skipped row
+- [x] Fold keeps originals and never re-folds a consolidated Episode
+- [x] Promote candidate creates a pending Rule with its quotes; nothing is auto-approved
+- [x] The old subject-key recurrence test is removed from candidate creation
+- [x] Owning `AGENTS.md` files and root index updated; repo check passes
