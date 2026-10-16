@@ -72,3 +72,4 @@ child it belongs to, and every entry must resolve to a file.
 - `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Provider, Dashboard, quota percent, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch)
 - `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el update` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK
+- `docs/adr/0004-automatic-memories-narrowed-human-gate.md` — automatic private Memories with human approval retained for Rules, Profile patches and Project notes
