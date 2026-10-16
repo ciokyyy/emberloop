@@ -314,7 +314,25 @@ func (d *Daemon) recallText(ctx context.Context, sessionID, query string) (strin
 		hits = hits[:10]
 	}
 	obs, obsErr := bank.SearchObservations(ctx, memory.Redact(query), 10)
-	return formatRecallResults(hits, obs, obsErr)
+	rendered, results, err := formatRecallResults(hits, obs, obsErr)
+	if err != nil {
+		return "", nil, err
+	}
+	memories, memErr := bank.RecallMemories(ctx, memory.Redact(query), memory.RecallWeights{}, 10)
+	if memErr == nil {
+		for _, h := range memories {
+			results = append(results, recallHit{Source: "memory", ID: strconv.FormatInt(h.Memory.ID, 10), Text: h.Memory.Text})
+			rendered += "\nmemory: " + h.Memory.Text
+		}
+	}
+	episodes, episodeErr := bank.RecallEpisodes(ctx, memory.Redact(query), 10)
+	if episodeErr == nil {
+		for _, h := range episodes {
+			results = append(results, recallHit{Source: "episode", ID: strconv.FormatInt(h.Episode.ID, 10), Text: h.Episode.Text})
+			rendered += "\nepisode: " + h.Episode.Text
+		}
+	}
+	return rendered, results, nil
 }
 
 // formatRecallHit renders one fused hit as its structured result and its text

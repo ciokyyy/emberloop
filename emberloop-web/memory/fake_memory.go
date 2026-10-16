@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -199,4 +200,58 @@ func (f *Fake) SetEpisodeConsolidated(_ context.Context, id int64, at time.Time)
 		}
 	}
 	return fmt.Errorf("%w: episode %d", ErrNotFound, id)
+}
+
+func (f *Fake) RecallMemories(_ context.Context, text string, weights RecallWeights, limit int) ([]MemoryHit, error) {
+	q := Query(text)
+	terms := strings.Fields(strings.ReplaceAll(q, `"`, ""))
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []MemoryHit
+	for _, m := range f.mems {
+		if m.Status != StatusActive {
+			continue
+		}
+		matched := 0
+		for _, term := range terms {
+			if strings.Contains(strings.ToLower(m.Text+" "+m.Quote), strings.ToLower(term)) {
+				matched++
+			}
+		}
+		if matched == 0 {
+			continue
+		}
+		score := m.Importance * kindDecay(m, f.now())
+		if m.Veracity == VeracityInferred {
+			score *= .8
+		}
+		out = append(out, MemoryHit{m, score + float64(matched)/float64(len(terms))})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	if limit <= 0 || limit > MaxRecall {
+		limit = MaxRecall
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
+}
+
+func (f *Fake) RecallEpisodes(_ context.Context, text string, limit int) ([]EpisodeHit, error) {
+	q := strings.ToLower(text)
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []EpisodeHit
+	for _, e := range f.eps {
+		if strings.Contains(strings.ToLower(e.Text), q) {
+			out = append(out, EpisodeHit{e, e.Importance})
+		}
+	}
+	if limit <= 0 || limit > MaxRecall {
+		limit = MaxRecall
+	}
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }

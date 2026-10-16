@@ -136,9 +136,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
   `handoff_test.go`, `compress_retry_test.go`, `grok_handoff_test.go` and
   `acpretry_test.go`.
-- Memory vectors: `memory/embedder.go` supplies redacted OpenRouter embeddings, a bounded per-Daemon worker, model-filtered Go cosine ranking and an 800ms FTS fallback boundary. The bank remains usable before asynchronous vectors are stored.
-- Memory deciders: `decider.go` uses OpenRouter systemone for a blank Jev URL in Jev mode when a key is available; ensemble keeps its memory-model default unless a custom URL is set. `decider_test.go` covers the mode and key paths. Turn-end ingestion (`ingest.go`, `mine_live.go`) debounces settled turns, selects and redacts sender=user Events, writes Episodes and an ingest ledger per sender bank, and extracts off-turn. `memory/AGENTS.md` maps package contracts and tests; browser tests are mapped in `web/README.md`.
-
+- Memory vectors and recall: `memory/embedder.go` supplies redacted OpenRouter embeddings, a bounded per-Daemon worker, model-filtered cosine ranking and FTS fallback; `memory/hybrid.go` ranks Memories and searches Episodes separately (Episodes are never injected). `memory/AGENTS.md` maps package contracts and tests; browser tests are mapped in `web/README.md`.
 - Browser project scope: `/` renders the active-work Dashboard; stable-id
   Project routes scope Sessions and Runs, with `/p/none` for home Sessions.
   `/p/<id>/runs` filters Run summaries and discovers/starts specs at the Project
