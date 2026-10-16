@@ -134,7 +134,7 @@ type Memory interface {
 	BumpMemoryMention(ctx context.Context, id int64) (MemoryItem, error)
 	SetMemoryEmbedding(ctx context.Context, id int64, embedding []byte, model string) error
 	RecallMemories(ctx context.Context, text string, weights RecallWeights, limit int) ([]MemoryHit, error)
-	RecallEpisodes(ctx context.Context, text string, limit int) ([]EpisodeHit, error)
+	RecallEpisodes(ctx context.Context, text string, weights RecallWeights, limit int) ([]EpisodeHit, error)
 
 	// Episodes.
 	AddEpisode(ctx context.Context, e Episode) (int64, error)

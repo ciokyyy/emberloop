@@ -21,6 +21,12 @@ type EpisodeHit struct {
 }
 
 func normalizedWeights(w RecallWeights, hasVector bool) RecallWeights {
+	values := []*float64{&w.Vector, &w.FTS, &w.Importance}
+	for _, v := range values {
+		if math.IsNaN(*v) || math.IsInf(*v, 0) || *v < 0 {
+			*v = 0
+		}
+	}
 	if w == (RecallWeights{}) {
 		w = RecallWeights{Vector: .5, FTS: .3, Importance: .2}
 	}
@@ -92,29 +98,10 @@ func (b *Bank) RecallMemories(ctx context.Context, text string, weights RecallWe
 	}
 	rows.Close()
 	queryVec, model := b.queryVector(ctx, text)
-	vectorScores := map[int64]float64{}
+	vectorScores := make(map[int64]float64)
 	if len(queryVec) > 0 {
-		vs, err := b.rdb.QueryContext(ctx, `SELECT id,embedding,embedding_model FROM memories WHERE status='active' AND embedding IS NOT NULL`)
-		if err != nil {
-			return nil, err
-		}
-		candidates := []VectorCandidate{}
-		for vs.Next() {
-			var c VectorCandidate
-			if err := vs.Scan(&c.ID, &c.Vector, &c.Model); err != nil {
-				vs.Close()
-				return nil, err
-			}
-			candidates = append(candidates, c)
-		}
-		if err := vs.Err(); err != nil {
-			vs.Close()
-			return nil, err
-		}
-		vs.Close()
-		hits, _ := VectorSearch(ctx, candidates, queryVec, model, 40, EmbeddingQueryBudget, nil)
-		for _, h := range hits {
-			vectorScores[h.ID] = h.Similarity
+		for _, hit := range b.vectorSearchTable(ctx, `SELECT id,embedding,embedding_model FROM memories WHERE status='active' AND embedding IS NOT NULL ORDER BY id LIMIT 50000`, queryVec, model) {
+			vectorScores[hit.ID] = hit.Similarity
 		}
 	}
 	ids := map[int64]bool{}
@@ -193,7 +180,7 @@ func (b *Bank) queryVector(ctx context.Context, text string) ([]float32, string)
 // RecallEpisodes searches Episodes for the agent recall tool only. Results
 // use the same per-table FTS/vector/importance scoring as Memory recall and
 // are never passed to the injection builder.
-func (b *Bank) RecallEpisodes(ctx context.Context, text string, limit int) ([]EpisodeHit, error) {
+func (b *Bank) RecallEpisodes(ctx context.Context, text string, weights RecallWeights, limit int) ([]EpisodeHit, error) {
 	q := Query(text)
 	if q == "" {
 		return nil, nil
@@ -238,27 +225,8 @@ func (b *Bank) RecallEpisodes(ctx context.Context, text string, limit int) ([]Ep
 	vec, model := b.queryVector(ctx, text)
 	vector := map[int64]float64{}
 	if len(vec) > 0 {
-		vr, err := b.rdb.QueryContext(ctx, `SELECT id,embedding,embedding_model FROM episodes WHERE embedding IS NOT NULL`)
-		if err != nil {
-			return nil, err
-		}
-		var candidates []VectorCandidate
-		for vr.Next() {
-			var c VectorCandidate
-			if err := vr.Scan(&c.ID, &c.Vector, &c.Model); err != nil {
-				vr.Close()
-				return nil, err
-			}
-			candidates = append(candidates, c)
-		}
-		if err := vr.Err(); err != nil {
-			vr.Close()
-			return nil, err
-		}
-		vr.Close()
-		hits, _ := VectorSearch(ctx, candidates, vec, model, 40, EmbeddingQueryBudget, nil)
-		for _, h := range hits {
-			vector[h.ID] = h.Similarity
+		for _, hit := range b.vectorSearchTable(ctx, `SELECT id,embedding,embedding_model FROM episodes WHERE embedding IS NOT NULL ORDER BY id LIMIT 50000`, vec, model) {
+			vector[hit.ID] = hit.Similarity
 		}
 	}
 	ids := map[int64]bool{}
@@ -287,7 +255,7 @@ func (b *Bank) RecallEpisodes(ctx context.Context, text string, limit int) ([]Ep
 				lex = (hi - r.bm25) / (hi - lo)
 			}
 		}
-		w := normalizedWeights(RecallWeights{}, hasVec)
+		w := normalizedWeights(weights, hasVec)
 		score := w.FTS*lex + w.Importance*r.e.Importance
 		if hasVec {
 			score += w.Vector * cos
@@ -307,4 +275,38 @@ func (b *Bank) RecallEpisodes(ctx context.Context, text string, limit int) ([]Ep
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+// vectorSearchTable shares one 800ms context across loading rows and cosine ranking.
+// If loading or ranking times out, callers retain the FTS-only result set.
+func (b *Bank) vectorSearchTable(ctx context.Context, query string, vector []float32, model string) []VectorHit {
+	budgetCtx, cancel := context.WithTimeout(ctx, EmbeddingQueryBudget)
+	defer cancel()
+	rows, err := b.rdb.QueryContext(budgetCtx, query)
+	if err != nil {
+		return nil
+	}
+	candidates := make([]VectorCandidate, 0, MaxVectorsPerBank)
+	for rows.Next() {
+		if len(candidates)%64 == 0 && budgetCtx.Err() != nil {
+			rows.Close()
+			return nil
+		}
+		var c VectorCandidate
+		if err := rows.Scan(&c.ID, &c.Vector, &c.Model); err != nil {
+			rows.Close()
+			return nil
+		}
+		candidates = append(candidates, c)
+	}
+	if rows.Err() != nil || budgetCtx.Err() != nil {
+		rows.Close()
+		return nil
+	}
+	rows.Close()
+	hits, err := VectorSearch(budgetCtx, candidates, vector, model, 40, EmbeddingQueryBudget, nil)
+	if err != nil {
+		return nil
+	}
+	return hits
 }

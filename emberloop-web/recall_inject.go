@@ -133,7 +133,7 @@ func (d *Daemon) recallBlockFor(ctx context.Context, meta SessionMeta, query str
 	if len(selected) > 5 {
 		selected = selected[:5]
 	}
-	memories, err := bank.RecallMemories(ctx, memory.Redact(query), memory.RecallWeights{}, memory.MaxRecall)
+	memories, err := bank.RecallMemories(ctx, memory.Redact(query), d.memoryRecallWeights(), memory.MaxRecall)
 	if err != nil {
 		return nil, nil, err
 	}

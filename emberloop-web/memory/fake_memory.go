@@ -240,7 +240,7 @@ func (f *Fake) RecallMemories(_ context.Context, text string, weights RecallWeig
 	return out, nil
 }
 
-func (f *Fake) RecallEpisodes(_ context.Context, text string, limit int) ([]EpisodeHit, error) {
+func (f *Fake) RecallEpisodes(_ context.Context, text string, weights RecallWeights, limit int) ([]EpisodeHit, error) {
 	q := strings.ToLower(text)
 	f.mu.Lock()
 	defer f.mu.Unlock()

@@ -681,3 +681,20 @@ func TestFormatRecallResults(t *testing.T) {
 		t.Fatalf("on observation failure = %q %+v, want only the Rule and note hits", text, out)
 	}
 }
+
+func TestRecallToolRRFInterleavesRankedSources(t *testing.T) {
+	rules := []memory.MergedHit{{Source: memory.MergeRule, Rule: memory.Rule{RuleID: "r1", Text: "rule"}}, {Source: memory.MergeRule, Rule: memory.Rule{RuleID: "r2", Text: "rule2"}}}
+	obs := []memory.Observation{{ID: 1, Quote: "observation"}, {ID: 2, Quote: "observation2"}}
+	mems := []memory.MemoryHit{{Memory: memory.MemoryItem{ID: 3, Text: "memory"}}, {Memory: memory.MemoryItem{ID: 4, Text: "memory2"}}}
+	episodes := []memory.EpisodeHit{{Episode: memory.Episode{ID: 5, Text: "episode"}}, {Episode: memory.Episode{ID: 6, Text: "episode2"}}}
+	_, got := fuseRecallToolResults(rules, obs, nil, mems, episodes)
+	if len(got) != 8 {
+		t.Fatalf("results=%+v", got)
+	}
+	want := []string{"rule", "observation", "memory", "episode"}
+	for i, source := range want {
+		if got[i].Source != source {
+			t.Fatalf("result[%d]=%s, want %s; results=%+v", i, got[i].Source, source, got)
+		}
+	}
+}

@@ -70,6 +70,28 @@ func (d *Daemon) memoryEmbeddingOptions() (memory.Embedder, string) {
 	return &memory.OpenRouterEmbedder{APIKey: key}, model
 }
 
+// memoryRecallWeights resolves the host-global recall weights; absent or
+// malformed settings fall back to the memory package defaults.
+func (d *Daemon) memoryRecallWeights() memory.RecallWeights {
+	all, err := d.settingsMap()
+	if err != nil {
+		return memory.RecallWeights{}
+	}
+	raw, ok := all["memory_recall_weights"]
+	if !ok {
+		return memory.RecallWeights{}
+	}
+	var weights struct {
+		Vector     float64 `json:"vector"`
+		FTS        float64 `json:"fts"`
+		Importance float64 `json:"importance"`
+	}
+	if json.Unmarshal(raw, &weights) != nil {
+		return memory.RecallWeights{}
+	}
+	return memory.RecallWeights{Vector: weights.Vector, FTS: weights.FTS, Importance: weights.Importance}
+}
+
 // memoryEngine lazily opens the per-User engine. memMu is separate from mu so
 // resume and compress paths that hold mu can still read the Profile. The
 // engine owns the Daemon's bounded embedding worker and clock.

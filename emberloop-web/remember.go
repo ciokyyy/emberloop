@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -314,25 +315,58 @@ func (d *Daemon) recallText(ctx context.Context, sessionID, query string) (strin
 		hits = hits[:10]
 	}
 	obs, obsErr := bank.SearchObservations(ctx, memory.Redact(query), 10)
-	rendered, results, err := formatRecallResults(hits, obs, obsErr)
-	if err != nil {
-		return "", nil, err
+	memories, memErr := bank.RecallMemories(ctx, memory.Redact(query), d.memoryRecallWeights(), 10)
+	if memErr != nil {
+		memories = nil
 	}
-	memories, memErr := bank.RecallMemories(ctx, memory.Redact(query), memory.RecallWeights{}, 10)
-	if memErr == nil {
-		for _, h := range memories {
-			results = append(results, recallHit{Source: "memory", ID: strconv.FormatInt(h.Memory.ID, 10), Text: h.Memory.Text})
-			rendered += "\nmemory: " + h.Memory.Text
+	episodes, episodeErr := bank.RecallEpisodes(ctx, memory.Redact(query), d.memoryRecallWeights(), 10)
+	if episodeErr != nil {
+		episodes = nil
+	}
+	text, results := fuseRecallToolResults(hits, obs, obsErr, memories, episodes)
+	return text, results, nil
+}
+
+// fuseRecallToolResults combines each independently ranked source by RRF.
+// It never compares BM25 values across the bank, notes, or Episode indexes.
+func fuseRecallToolResults(rulesNotes []memory.MergedHit, observations []memory.Observation, obsErr error, memories []memory.MemoryHit, episodes []memory.EpisodeHit) (string, []recallHit) {
+	type item struct {
+		hit   recallHit
+		line  string
+		score float64
+	}
+	var ranked []item
+	add := func(hit recallHit, line string, rank int) {
+		ranked = append(ranked, item{hit, line, 1 / (float64(memory.RRFK) + float64(rank))})
+	}
+	for i, h := range rulesNotes {
+		text, hits, _ := formatRecallResults([]memory.MergedHit{h}, nil, nil)
+		if len(hits) > 0 {
+			add(hits[0], text, i+1)
 		}
 	}
-	episodes, episodeErr := bank.RecallEpisodes(ctx, memory.Redact(query), 10)
-	if episodeErr == nil {
-		for _, h := range episodes {
-			results = append(results, recallHit{Source: "episode", ID: strconv.FormatInt(h.Episode.ID, 10), Text: h.Episode.Text})
-			rendered += "\nepisode: " + h.Episode.Text
+	if obsErr == nil {
+		for i, o := range observations {
+			add(recallHit{Source: "observation", ID: strconv.FormatInt(o.ID, 10), Text: o.Quote}, "observation: "+o.Quote, i+1)
 		}
 	}
-	return rendered, results, nil
+	for i, m := range memories {
+		add(recallHit{Source: "memory", ID: strconv.FormatInt(m.Memory.ID, 10), Text: m.Memory.Text}, "memory: "+m.Memory.Text, i+1)
+	}
+	for i, e := range episodes {
+		add(recallHit{Source: "episode", ID: strconv.FormatInt(e.Episode.ID, 10), Text: e.Episode.Text}, "episode: "+e.Episode.Text, i+1)
+	}
+	sort.SliceStable(ranked, func(i, j int) bool { return ranked[i].score > ranked[j].score })
+	if len(ranked) > 10 {
+		ranked = ranked[:10]
+	}
+	results := make([]recallHit, 0, len(ranked))
+	lines := make([]string, 0, len(ranked))
+	for _, r := range ranked {
+		results = append(results, r.hit)
+		lines = append(lines, r.line)
+	}
+	return strings.Join(lines, "\n"), results
 }
 
 // formatRecallHit renders one fused hit as its structured result and its text
