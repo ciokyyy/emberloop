@@ -89,7 +89,7 @@ func (f *updateFake) exec(t *testing.T, webDir string) Exec {
 				return Result{Code: 1, Stderr: "no rev"}, nil
 			}
 			return Result{Code: 0, Stdout: f.rev + "\n"}, nil
-		case "npx":
+		case "npx", "npm":
 			f.npxCalls++
 			if f.npxCode != 0 {
 				return Result{Code: f.npxCode, Stderr: f.failNpxMsg}, nil

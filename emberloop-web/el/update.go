@@ -182,8 +182,11 @@ func uiHashPath(dir string) string {
 
 // updateWebUI rebuilds the web bundle unless the source hashes to the
 // recorded hash of the last build and its dist still stands. It reports
-// whether vite ran; a failed vite build fails the update before any Go
-// build, so a broken UI never ships under a fresh Daemon stamp.
+// whether the build ran; a failed build fails the update before any Go
+// build, so a broken UI never ships under a fresh Daemon stamp. It runs the
+// package build script, not a bare vite build: the main build empties dist,
+// and the SSR and hydrator builds that follow it in the script are what the
+// Dashboard SSR tests and the Daemon embed.
 func updateWebUI(run Exec, webDir, hashPath, uiHash string) (bool, error) {
 	if uiHash != "" {
 		if raw, err := os.ReadFile(hashPath); err == nil && strings.TrimSpace(string(raw)) == uiHash {
@@ -192,7 +195,7 @@ func updateWebUI(run Exec, webDir, hashPath, uiHash string) (bool, error) {
 			}
 		}
 	}
-	res, err := run("npx", []string{"vite", "build"}, ExecOpts{Cwd: webDir, Timeout: 10 * time.Minute})
+	res, err := run("npm", []string{"run", "build"}, ExecOpts{Cwd: webDir, Timeout: 10 * time.Minute})
 	if err != nil {
 		return false, err
 	}

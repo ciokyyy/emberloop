@@ -74,7 +74,7 @@ settings is unchanged; only the login is shared.
 
 ## Dev loop
 
-- Start: `scripts/web-dev.sh` through the background tool, never with bash. Rebuild the UI first (`npx vite build` in `emberloop-web/web`), then restart it, because `go run` embeds `web/dist` at compile time.
+- Start: `scripts/web-dev.sh` through the background tool, never with bash. Rebuild the UI first (`npm run build` in `emberloop-web/web`; a bare `npx vite build` empties `dist/ssr`), then restart it, because `go run` embeds `web/dist` at compile time.
 - Browser suite: `cd emberloop-web/web && npm run test:e2e`. It starts its own throwaway Daemon and needs no key.
 - Component tests: `cd emberloop-web/web && npx vitest run`. Go tests: `cd emberloop-web && go test ./...`.
 
