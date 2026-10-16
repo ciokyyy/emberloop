@@ -125,6 +125,8 @@ type SessionMeta struct {
 	Title string `json:"title,omitempty"`
 	// DesignSession grants this Session an isolated dev-server PORT.
 	DesignSession bool `json:"designSession,omitempty"`
+	// PreviewPort persists the Session's dev-server port across Daemon restarts.
+	PreviewPort int `json:"previewPort,omitempty"`
 	// ResumeToken is the harness handle needed to resume: the claude ACP
 	// session id, the pig Session id, or an opaque marker for fake.
 	ResumeToken string `json:"resumeToken,omitempty"`

@@ -32,9 +32,13 @@ func (d *Daemon) Shutdown() {
 		be Backend
 	}
 	var all []live
+	var previews []SessionMeta
 	d.mu.Lock()
 	d.shuttingDown = true
 	for id, s := range d.sessions {
+		if s.meta.DesignSession {
+			previews = append(previews, s.meta)
+		}
 		if s.live {
 			d.markShutdownInterruptedLocked(id)
 			s.live = false
@@ -46,6 +50,9 @@ func (d *Daemon) Shutdown() {
 		if l.be != nil {
 			l.be.CloseSession(l.id)
 		}
+	}
+	for _, meta := range previews {
+		d.stopPreview(meta.ID, meta.WorkDir, true)
 	}
 	d.closeBrowser("", true)
 }

@@ -637,10 +637,19 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 	if meta.ProjectID == "" {
 		meta.ProjectID = d.projectIDForPath(meta.WorkDir)
 	}
+	previewAllocated, previewStarted := false, false
 	if meta.DesignSession {
-		if _, err := d.previewPort(meta.ID); err != nil {
+		port, err := d.previewPort(meta.ID)
+		if err != nil {
 			return nil, &startError{code: http.StatusInternalServerError, msg: "could not allocate preview port: " + err.Error()}
 		}
+		meta.PreviewPort = port
+		previewAllocated = true
+		defer func() {
+			if previewAllocated && !previewStarted {
+				d.releasePreviewPort(meta.ID)
+			}
+		}()
 	}
 	h := startHandle(meta, handleCreate)
 	// The Profile leads the injection block: owner Sessions, Subagents and
@@ -693,8 +702,8 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		d.starting--
 		d.mu.Unlock()
 		// Seed the context meter now that the handle exists: the first turn's
-		// end may be far away (or stalled), and the meter reads empty until a
 		// usage Event lands.
+		previewStarted = true
 		d.seedUsage(meta.ID)
 		return be, nil
 	}
@@ -719,8 +728,8 @@ func (d *Daemon) startSession(meta SessionMeta) (Backend, *startError) {
 		d.removeSession(meta.ID)
 		return nil, &startError{code: http.StatusInternalServerError, msg: err.Error()}
 	}
-	// Seed the meter from the known claude window: the adapter's first
 	// usage_update may never come, and the meter reads empty until one does.
+	previewStarted = true
 	d.seedUsage(meta.ID)
 	return cb, nil
 }
