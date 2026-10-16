@@ -61,6 +61,20 @@ Other commands:
 | `el logs` | print the prod Daemon journal |
 | `el restart` | restart the prod Daemon |
 
+## What the UI covers
+
+| Area | What it does |
+|---|---|
+| Sessions | run coding-agent Sessions per Project; Steer, Follow-up, Subagents and Groups |
+| Runs | deterministic implement/review Runs with Chains and Switch, spec branches and hygiene guards |
+| Projects | Project Dashboard and stable scope routes; draft Project pick; Project init and validate |
+| Providers and quota | provider status and connect flows; cache-only quota API with percent-first provider cards |
+| Memory | automatic private Memories with hybrid recall, nightly fold/promote stages, Profile patches, Rules and daily digests; humans approve Rules, Profile patches and Project notes |
+| Settings | per-concern pages with model and effort chains; admin-only host-global Memory settings |
+| Emberplugins | pages, jobs and servers added at runtime |
+
+Terms are defined in [GLOSSARY.md](GLOSSARY.md).
+
 ## How a run works
 
 The driver reads a spec, starts workers, and keeps every other ticket running while one waits. Each worker implements one ticket in `.el-worktrees/<ticket>` on branch `implement/<ticket>` and submits `done` or `blocked`. At most three tickets run at once by default (`max_tickets`); extra tickets wait until a slot frees. Subagents are uncapped: reviewers and scouts spawn freely.

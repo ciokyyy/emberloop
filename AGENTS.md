@@ -56,7 +56,7 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/archive/archived-emberloop-tui/AGENTS.md` — the archived dashboard module (not built, not tested)
 - `.scratch/archive/archived-herdr-report/AGENTS.md` — the archived herdr report extension (not built, not tested)
 - `.scratch/archive/archived-herdr-emberloop/AGENTS.md` — the archived herdr compress plugin (not built, not tested)
-- `scripts/AGENTS.md` — the live probe scripts (live agents only, no check)
+- `scripts/AGENTS.md` — the probe scripts (live agents only) and the offline fakellm server (no check)
 - `.scratch/archive/retro-hardening/AGENTS.md` — the spec and ticket area for this run
 - `.scratch/project-init/AGENTS.md` — the spec and ticket area for project init and validate
 - `.scratch/quota-tab/AGENTS.md` — the quota tab history (original spec, done tickets 01 and 02); open quota work lives in workspace-overhaul
@@ -65,11 +65,13 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/web-v1/AGENTS.md` — the spec and ticket area for web v1 in `emberloop-web` (Handoff compress, Users, Memory with Profile, Rules and Deciders)
 - `.scratch/run-upgrade/AGENTS.md` — the spec and ticket area for the Run upgrade (Reviewer submit tool, Chains and Switch, spec branches, hygiene guards, `find` graph hits)
 - `.scratch/memory-v2/AGENTS.md` — the spec and ticket area for Memory v2 (automatic extraction, embedding-backed Memories and hybrid recall, deduplication and same-author supersession, narrowed human gate, nightly fold/promote stages and scheduler fix; tickets 01 to 11)
+- `.scratch/ssr/AGENTS.md` — the spec and ticket area for server-side rendering in `emberloop-web` (Go route table, embedded JS engine spike, per-route prefetch with Boot payload, cache headers, dependency updates first; tickets 01 to 06)
 - `.scratch/emberplugins/AGENTS.md` — the spec and ticket area for Emberplugins (runtime-added pages, jobs and servers in `emberloop-web`)
 - `.scratch/archive/enderbloom-web/AGENTS.md` — the spec and ticket area for Emberloop (browser UI and Daemon, planned module `emberloop-web`)
 - `.scratch/archive/web-pipeline/AGENTS.md` — the spec and ticket area for the web pipeline (deterministic Runs from the browser UI)
 - `.scratch/settings-redesign/AGENTS.md` — the design reference (static mock) for the Settings redesign in `emberloop-web`
-- `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Provider, Dashboard, quota percent, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch)
+- `.scratch/acp-bench/AGENTS.md` — the ACP agent/harness benchmark-candidate survey (tables + machine-readable JSON, survey only)
+- `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Provider, Dashboard, quota percent, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch, Boot payload, Prefetch table)
 - `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el update` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK
 - `docs/adr/0004-automatic-memories-narrowed-human-gate.md` — automatic private Memories with human approval retained for Rules, Profile patches and Project notes

@@ -1,3 +1,6 @@
 .emberloop-worktrees/
 .serena/
 .el-worktrees/
+
+# Stakpak session files
+.stakpak/session*

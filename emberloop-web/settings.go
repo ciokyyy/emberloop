@@ -192,6 +192,7 @@ func settingsView(memorySettings ...map[string]any) map[string]any {
 		"compress": readCompressSettings(), "signup_enabled": signupEnabledSetting(),
 		"compress_note": compressNote(readCompressSettings().Model), "decider": decider,
 		"decider_note": deciderNote(decider), "jev": readJevSettings(),
+		"find":                 readFindSettings(),
 		"disk_go_cache_cap_gb": diskGoCacheCapGB(), "oauth_redirect_base_url": oauthRedirectBaseURLSetting(),
 	}
 	if len(memorySettings) > 0 {
@@ -279,6 +280,7 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			MemoryEmbeddingModel *string                 `json:"memory_embedding_model"`
 			MemoryRecallWeights  json.RawMessage         `json:"memory_recall_weights"`
 			MemoryAutoExtract    *bool                   `json:"memory_auto_extract"`
+			Find                 *findPatch              `json:"find"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			http.Error(w, "bad json", http.StatusBadRequest)
@@ -323,9 +325,9 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil || runSkillsSet || body.DiskGoCacheCapGB != nil || body.OAuthRedirectBaseURL != nil {
+		if body.SignupEnabled != nil || body.Decider != nil || body.Jev != nil || body.Find != nil || runSkillsSet || body.DiskGoCacheCapGB != nil || body.OAuthRedirectBaseURL != nil {
 			if who, ok := d.requesterOf(r); !ok || who.user == nil || !who.user.Admin {
-				http.Error(w, "only the admin can change signup, decider, jev, run_skills, disk_go_cache_cap_gb and oauth_redirect_base_url settings", http.StatusForbidden)
+				http.Error(w, "only the admin can change signup, decider, jev, find, run_skills, disk_go_cache_cap_gb and oauth_redirect_base_url settings", http.StatusForbidden)
 				return
 			}
 		}
@@ -338,6 +340,10 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if msg := body.Jev.validate(); msg != "" {
+			http.Error(w, msg, http.StatusBadRequest)
+			return
+		}
+		if msg := body.Find.validate(); msg != "" {
 			http.Error(w, msg, http.StatusBadRequest)
 			return
 		}
@@ -479,6 +485,7 @@ func (d *Daemon) handleSettings(w http.ResponseWriter, r *http.Request) {
 		body.Compress.apply(all)
 		body.Decider.apply(all)
 		body.Jev.apply(all)
+		body.Find.apply(all)
 		out, _ := json.MarshalIndent(all, "", "  ")
 		p := settingsFile()
 		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {

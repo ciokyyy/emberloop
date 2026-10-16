@@ -80,6 +80,8 @@
   let jev = $state({ baseURL: '', apiKey: '', model: 'jev-latest' });
   let jevOpen = $state(false);
   let jevKeySet = $state(false);
+  let findModel = $state('');
+  let findInfo = $state({ default: 'typesafe/jev-1.13', fromEnv: false, suggestions: [] });
   let deciderNote = $state('');
   let signupOpen = $state('on');
   let memoryExtractModel = $state('inclusionai/ling-3.0-flash');
@@ -97,7 +99,7 @@
   let justSaved = $state(false);
   let error = $state('');
 
-  const snapshot = () => JSON.stringify({ roles, chains, maxTickets, diskCap, pigTitle, sessionTitles, compress, decider, jev, signupOpen, memoryExtractModel, memoryExtractEffort, memoryEmbeddingModel, memoryAutoExtract, memoryRecallWeights });
+  const snapshot = () => JSON.stringify({ roles, chains, maxTickets, diskCap, pigTitle, sessionTitles, compress, decider, jev, findModel, signupOpen, memoryExtractModel, memoryExtractEffort, memoryEmbeddingModel, memoryAutoExtract, memoryRecallWeights });
   const dirty = $derived(saved !== null && DATA_SECTIONS.includes(section) && snapshot() !== saved);
 
   async function models(harness) {
@@ -181,6 +183,9 @@
       memoryAutoExtract = body.memory_auto_extract !== false;
       const weights = body.memory_recall_weights ?? { vector: 0.5, fts: 0.3, importance: 0.2 };
       memoryRecallWeights = { vector: String(weights.vector ?? 0.5), fts: String(weights.fts ?? 0.3), importance: String(weights.importance ?? 0.2) };
+      const f = body.find ?? {};
+      findModel = f.decision_model ?? '';
+      findInfo = { default: f.default || 'typesafe/jev-1.13', fromEnv: !!f.from_env, suggestions: f.suggestions ?? [] };
       saved = snapshot();
     } catch (e) {
       error = e.message;
@@ -297,6 +302,7 @@
         payload.memory_embedding_model = memoryEmbeddingModel.trim();
         payload.memory_auto_extract = memoryAutoExtract;
         payload.memory_recall_weights = { vector: Number(memoryRecallWeights.vector), fts: Number(memoryRecallWeights.fts), importance: Number(memoryRecallWeights.importance) };
+        if (!findInfo.fromEnv) payload.find = { decision_model: findModel.trim() };
       }
       const savedBody = await putSettings(payload);
       roles = savedBody.roles ?? payload.roles;
@@ -315,6 +321,8 @@
       memoryEmbeddingModel = savedBody.memory_embedding_model ?? memoryEmbeddingModel;
       memoryAutoExtract = savedBody.memory_auto_extract ?? memoryAutoExtract;
       if (savedBody.memory_recall_weights) memoryRecallWeights = Object.fromEntries(Object.entries(savedBody.memory_recall_weights).map(([key, value]) => [key, String(value)]));
+      findModel = savedBody.find?.decision_model ?? findModel;
+      findInfo = { default: savedBody.find?.default || findInfo.default, fromEnv: !!savedBody.find?.from_env, suggestions: savedBody.find?.suggestions ?? findInfo.suggestions };
       saved = snapshot();
       justSaved = true;
       setTimeout(() => (justSaved = false), 1800);
@@ -336,6 +344,7 @@
     compress = prev.compress;
     decider = prev.decider;
     jev = prev.jev;
+    findModel = prev.findModel;
     signupOpen = prev.signupOpen;
     memoryExtractModel = prev.memoryExtractModel;
     memoryExtractEffort = prev.memoryExtractEffort;
@@ -657,6 +666,36 @@
               </div>
               <FloatingInput id="decider-high" label="High" type="number" min="0" max="1" step="0.05" bind:value={decider.high} />
             </div>
+          </div>
+        </section>
+        <section class="animate-rise flex flex-col gap-2" data-testid="find-settings">
+          <div class="px-1">
+            <h2 class="text-sm font-semibold">Find tool</h2>
+            <p class="text-xs text-muted-foreground">The decisions model that ranks `find` results. Pick a cheaper one to cut cost. Empty uses the pinned default.</p>
+          </div>
+          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
+              <div class="min-w-0">
+                <div class="text-sm font-medium">Find decision model</div>
+                <div class="text-xs text-muted-foreground">
+                  {#if findInfo.fromEnv}Set by the EL_DECISION_MODEL environment variable. Unset it to edit here.{:else}Any OpenRouter decisions model id. Default {findInfo.default}.{/if}
+                </div>
+              </div>
+              <FloatingInput id="find-decision-model" label="Model" bind:value={findModel} placeholder={findInfo.default} disabled={findInfo.fromEnv} />
+            </div>
+            {#if findInfo.suggestions.length && !findInfo.fromEnv}
+              <div class="flex flex-wrap gap-2 p-4" role="group" aria-label="Find model suggestions">
+                {#each findInfo.suggestions as id (id)}
+                  <Button
+                    size="sm"
+                    variant={findModel.trim() === id ? 'secondary' : 'ghost'}
+                    class="h-8 rounded-lg px-3 max-md:h-11"
+                    aria-pressed={findModel.trim() === id}
+                    onclick={() => (findModel = id)}
+                  >{id}</Button>
+                {/each}
+              </div>
+            {/if}
           </div>
         </section>
         {/if}

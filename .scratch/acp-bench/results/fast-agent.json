@@ -1,0 +1,43 @@
+{
+  "agent": "fast-agent",
+  "language": "Python",
+  "version": "0.10.1",
+  "artifact": "pypi:fast-agent-acp==0.10.1 (BROKEN metadata-only wheel) + fast-agent-mcp==0.10.1 (real code)",
+  "artifact_sha256": {
+    "fast_agent_acp-0.10.1-py3-none-any.whl": "61f970f52a01e38c1c151a65c9c8a08ca2357fe0f4bcb9073897170f6898837b",
+    "fast_agent_mcp-0.10.1-py3-none-any.whl": "0ca29103adc186cec9d99bc87a33d0c23f04c951bc2fb0a102830cf8d6e4037f"
+  },
+  "disk_mb": 306,
+  "start_command": "fast-agent --home <dir> acp -x --model generic.<id> (NOT fast-agent-acp: ModuleNotFoundError)",
+  "python": "3.12.14 (python-build-standalone tag 20260924)",
+  "requires_python": ">=3.12,<3.15 (system python is 3.11; standalone toolchain used)",
+  "provider_config": {
+    "file": "--home <dir>/fast-agent.yaml (+ fast-agent.secrets.yaml)",
+    "provider_keys": ["base_url", "api_key", "default_model", "default_headers"],
+    "env_overrides": ["GENERIC_BASE_URL"],
+    "verified_model_ids": ["fake-py-small", "fake-custom-1"]
+  },
+  "scenarios": {
+    "initialize": {"verdict": "ok", "latency_ms": 19099},
+    "new_session": {"verdict": "ok", "latency_ms": 19636},
+    "prompt_text": {"verdict": "wrong-result", "latency_ms": 21622, "cause": "probe-fake-limitation"},
+    "cancel": {"verdict": "ok", "latency_ms": 18466, "detail": "cancelled streaming; session reusable; manual SLOW cancel 5.0s"},
+    "steer_followup": {"verdict": "ok", "latency_ms": 20087, "detail": "no steering; 2nd prompt queued"},
+    "load_resume": {"verdict": "ok", "latency_ms": 53415, "detail": "session/resume used"},
+    "set_model_config": {"verdict": "ok (rerun)", "latency_ms": 31852, "detail": "set_config_option accepted; set_model accepts valid generic.* ids; first run hit init-timeout flake"},
+    "images": {"verdict": "ok", "latency_ms": 17058},
+    "permission": {"verdict": "skipped", "manual": "permission asked+approved for stub echo; full loop done"},
+    "crash_recovery": {"verdict": "skipped", "cause": "fast turns race the SIGKILL"},
+    "concurrency": {"verdict": "ok", "multi_process_ok": 3, "single_process_ok": 3},
+    "soak": {"verdict": "wrong-result", "cause": "probe-fake-limitation"}
+  },
+  "soak50": {"turns": 50, "completed": 50, "hangs": 0, "crashes": 0, "p50_ms": 210, "p95_ms": 393},
+  "init_flakes": 3,
+  "ram_mb": {"idle_init": 195, "post_turn": 212, "conc_peak": {"n1": 213, "n5": 1059, "n10": 2133}, "marginal_per_session": 185},
+  "startup_ms": 14000,
+  "time_to_first_chunk_ms": 0,
+  "catalog": {"custom_provider_no_rebuild": true, "custom_models_in_session_new": false, "live_switch": "session/set_model + session/set_config_option", "remote_fetch": false, "builtin_providers": 22},
+  "subscriptions": {"xai_oauth_supergrok": true, "codex_oauth_chatgpt": true, "hf_token": true, "antigravity": false, "opencode_go": false, "claude": false, "copilot": false},
+  "blockers": ["fast-agent-acp 0.10.1 wheel ships no code (use fast-agent acp)", "slow startup flaky past 30s under machine load"],
+  "verdict": "strongest-of-three"
+}

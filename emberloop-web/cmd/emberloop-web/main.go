@@ -151,6 +151,7 @@ func main() {
 	d.EnableLiveMining()
 	go d.StartNightlyLoop(context.Background())
 	go d.StartDiskJanitor(context.Background().Done())
+	go d.StartPigCatalogSync(context.Background().Done())
 	d.ResumeAfterRestart()
 	if *tailnet {
 		d.AllowTailnet(true)

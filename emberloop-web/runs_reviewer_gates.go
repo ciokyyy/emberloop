@@ -90,7 +90,7 @@ func tipCheckEvidenceLine(tip string) string {
 // tip gate: the Worker cannot fix them, so Reviewers still start.
 func isCheckInfraError(failing []string) bool {
 	for _, f := range failing {
-		if strings.Contains(f, "could not run") {
+		if strings.HasPrefix(f, "base check could not run") || strings.HasPrefix(f, "tip check could not run") {
 			return true
 		}
 	}
@@ -182,9 +182,20 @@ func (d *Daemon) checkTipBeforeReview(runID, ticketID, tip string) bool {
 		rs.TipRedTold = map[string]string{}
 	}
 	rs.TipRedTold[ticketID] = tip
+	if rs.tipChecking == nil {
+		rs.tipChecking = map[string]int{}
+	}
+	rs.tipChecking[ticketID]++
 	d.mu.Unlock()
 
 	green, failing := d.cachedTipCheck(runID, repo, branch, tip)
+	d.mu.Lock()
+	if rs.tipChecking[ticketID] > 1 {
+		rs.tipChecking[ticketID]--
+	} else {
+		delete(rs.tipChecking, ticketID)
+	}
+	d.mu.Unlock()
 	if green || isCheckInfraError(failing) {
 		// Release the claim so the next pass judges the cached result; a
 		// newer tip's claim in flight is left alone.
@@ -494,6 +505,18 @@ func lateRoundReviewNote(rounds []ticketRound) string {
 	return "This is review round " + strconv.Itoa(len(rounds)+1) + ": a `major` finding that only restates a topic raised in a prior round does not block (only `blocker` blocks). Report repeats as `minor`, or do not re-raise them."
 }
 
+// diffBasePrompt tells a Reviewer which commits are the ticket's own. A
+// ticket branch starts from a spec branch that already holds its merged
+// blockers, so a plain branch-versus-master diff shows their commits as if
+// the ticket made them; Reviewers flagged them as scope creep round after
+// round. Empty when the base is unknown.
+func diffBasePrompt(base, tip string) string {
+	if base == "" || tip == "" {
+		return ""
+	}
+	return "Diff base (non-blocking context): the ticket's own work is `git diff " + shortSHA(base) + " " + shortSHA(tip) + "` (commits `git log " + shortSHA(base) + ".." + shortSHA(tip) + "`). Commits at or before " + shortSHA(base) + " are earlier merged tickets: review only the ticket's own diff, and never flag the branch history, stacked blocker commits or files outside that diff."
+}
+
 // reviewerPromptWithExtras builds a Reviewer prompt from the task prefix, the
 // declined findings, the green driver-check evidence, the scope warning and
 // the round-4+ note, ahead of the axis brief. Empty extras are skipped.
@@ -555,6 +578,12 @@ func (d *Daemon) reviewerPromptExtras(runID, ticketID, tip string) (evidence, sc
 	changed := reviewChangedFiles(repo, base, tip)
 	if warn := scopeWarningFiles(body, changed); len(warn) > 0 {
 		scope = scopeWarningPrompt(warn)
+	}
+	if note := diffBasePrompt(base, tip); note != "" {
+		if scope != "" {
+			note += "\n\n" + scope
+		}
+		scope = note
 	}
 	return evidence, scope, late
 }

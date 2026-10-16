@@ -98,6 +98,12 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `runs_test.go` covers both HTTP shapes and a bounded 40-Run, 8-Ticket list;
   `runs_session_index_test.go` covers indexed HTTP results and restart recovery.
   `runs_git_cache_test.go` covers cache hits, expiry and Run-event invalidation.
+- Pig model catalog: `catalogsync.go` (`StartPigCatalogSync`, boot +45s then
+  every 4h, `EL_PIG_CATALOG_SYNC=0` disables) copies pi.dev's per-provider
+  catalog into the host pig `models-store.json` through pig's locked
+  `ai.FileModelsStore`, because pig's own overlay host (pi-in-go.dev) serves
+  none. Providers are the keys of `models-store.json` and `auth.json`.
+  `catalogsync_test.go` runs it against a local server.
 - Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
   `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip
   check, selective re-review, scope warning), `runs_persist_test.go`,
@@ -133,6 +139,15 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `waitMCPReady`) before a pig start returns, so the first prompt has tools;
   Shutdown marks open turns `restart: turn interrupted` and maps their close
   errors to idle, never failed.
+  Check, merge and review seams (`runs_checkfixes_test.go`): a red check reruns
+  once on the same clean tree before it counts (flake filter); a red banner
+  carries the output tail when no test line parses; a tip without
+  `.emberloop/check` is green however git words the miss; one check is capped
+  at 45 minutes. A running Daemon tip check counts as ticket activity for the
+  ten-minute idle alert (`tipChecking`). Merges into one spec branch run under
+  one lock (`specMergeLock`). Reviewer prompts carry the diff base
+  (`diffBasePrompt`): the ticket's own diff, not stacked blocker commits. A
+  tell that hits a resuming Worker retries next pass instead of failing the Run.
 - Backend and Handoff seams: `claude_*_test.go`, `pig_test.go`,
   `handoff_test.go`, `compress_retry_test.go`, `grok_handoff_test.go` and
   `acpretry_test.go`.
@@ -148,7 +163,8 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   (chats and files stay) and gist editing, with no override fields. `/s/<id>`
   stays canonical and derives scope from Session metadata. Account pages remain
   global; the switcher and Dashboard are available in the phone drawer.
-  Browser Settings: `/settings` is the hub on phones and redirects to `/settings/agents` on desktop. Each concern has a stable `/settings/<section>` route, grouped Workspace and You in `SettingsNav.svelte`; each page shows its Global, Admin or You scope and a phone return link. Agents has one ordered chain per Session and Run role (Orchestrator, Subagent, Scout, Ticket worker, Spec reviewer, Standards reviewer), at most three `{harness, model, effort}` entries; effort choices come from each model's `/api/models` metadata. The Daemon migrates legacy role settings and Run Chain aliases to canonical chains; configured legacy role keys mirror primaries for `el settings role` compatibility. Daemon-backed pages share a first-change Revert/Save bar. Runs labels the global cap “Maximum tickets per Run (spec)” and explains that `max_tickets` caps each Run while a spec value can only lower it. Memory combines its legacy decider controls with admin-only host-global extractor model/effort, embedding model, automatic extraction and validated recall weights; settings are searchable by control name, and redacted user turns egress to the extractor/embedder. Profile, notification and device preference components retain their existing behavior. `model_efforts_test.go`, `settings_test.go`, `SettingsPage.test.js`, `SettingsHub.test.js`, `SettingsRoutes.test.js` and `router.test.js` cover model capabilities, editing, migration, grouping, routes, phone navigation and the save bar.
+  Browser Settings: `/settings` is the hub on phones and redirects to `/settings/agents` on desktop. Each concern has a stable `/settings/<section>` route, grouped Workspace and You in `SettingsNav.svelte`; each page shows its Global, Admin or You scope and a phone return link. Agents has one ordered chain per Session and Run role (Orchestrator, Subagent, Scout, Ticket worker, Spec reviewer, Standards reviewer), at most three `{harness, model, effort}` entries; effort choices come from each model's `/api/models` metadata. The Daemon migrates legacy role settings and Run Chain aliases to canonical chains; configured legacy role keys mirror primaries for `el settings role` compatibility. Daemon-backed pages share a first-change Revert/Save bar. Runs labels the global cap “Maximum tickets per Run (spec)” and explains that `max_tickets` caps each Run while a spec value can only lower it. Memory combines its legacy decider controls with admin-only host-global extractor model/effort, embedding model, automatic extraction and validated recall weights; settings are searchable by control name, and redacted user turns egress to the extractor/embedder. A Find tool block under Memory edits the find tool decision model: `findsettings.go` serves `find` in the settings view (saved value, pinned default, `from_env` lock for `EL_DECISION_MODEL`, quick-pick suggestions) and an admin-only `find.decision_model` write to the shared `decision_model` key, canonicalized onto the Jev pin, empty clears; `findsettings_test.go` covers it.
+  Profile, notification and device preference components retain their existing behavior. `model_efforts_test.go`, `settings_test.go`, `SettingsPage.test.js`, `SettingsHub.test.js`, `SettingsRoutes.test.js` and `router.test.js` cover model capabilities, editing, migration, grouping, routes, phone navigation and the save bar.
 - Browser boot: the Dashboard and global pages do not wait for Session or Run
   lists. Project scope loads Sessions asynchronously; `/runs` and
   `/p/<id>/runs` load summaries in `RunsSidebar`. `runsStore` shares one summary
@@ -219,7 +235,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   after a pause first waits for the driver to exit (`driving` false) or park
   in `pauseGate` (`gateParked`); a driver between gates rewrites the status.
 - `ensureReviewers` runs one call per Ticket at a time (`ensuring` lock): the
-  submit route and the driver's finish race on one done submit, and an
+  submit route (async: it acks before the tip check and Reviewer starts) and the driver's finish race on one done submit, and an
   unserialized second call re-prompts a seat whose verdict has not landed.
 
 ## Child DOX Index

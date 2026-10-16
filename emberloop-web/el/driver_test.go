@@ -1895,3 +1895,50 @@ func TestDriverTellsASubmittedWorkerWhoseReviewPassesAreStale(t *testing.T) {
 		t.Errorf("told = %v, want the stale-pass refusal once", told)
 	}
 }
+
+// A tell that lands while the Worker resumes (a restart race) is retried on
+// the next pass; it never fails the whole Run.
+func TestDriverTellWhileWorkerResumingDoesNotFailTheRun(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxTickets = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	world.Tell = func(id, text string) error {
+		return errors.New("could not reach worker for 01-first: session is resuming; send the message again")
+	}
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: false, Detail: "rebase onto spec/x conflicted in a.go"}, nil
+	}
+	if _, err := RunDriver(spec, world); err != nil {
+		t.Fatalf("RunDriver = %v, want a resuming tell to leave the run alive", err)
+	}
+}
+
+// Any other tell failure still ends the run.
+func TestDriverTellFailureStillFailsTheRun(t *testing.T) {
+	spec, world, _ := driverWorld(t, map[string]string{
+		"01-first.md": ticketDoc("None"),
+	})
+	world.MaxTickets = 1
+	world.Tip = func(id string) string { return "tip" }
+	world.Reviews = func(id string) map[string]DriverReview {
+		return map[string]DriverReview{
+			reviewerStandards: {Verdict: verdictPass, At: "tip"},
+			reviewerSpec:      {Verdict: verdictPass, At: "tip"},
+		}
+	}
+	world.Tell = func(id, text string) error { return errors.New("ticket 01-first has no worker") }
+	world.Finish = func(id string) (DriverFinish, error) {
+		return DriverFinish{Merged: false, Detail: "rebase onto spec/x conflicted in a.go"}, nil
+	}
+	if _, err := RunDriver(spec, world); err == nil || !strings.Contains(err.Error(), "could not tell 01-first") {
+		t.Fatalf("RunDriver err = %v, want could not tell", err)
+	}
+}

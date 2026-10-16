@@ -1,0 +1,42 @@
+{
+  "agent": "mistral-vibe",
+  "language": "Python",
+  "version": "2.26.1",
+  "artifact": "pypi:mistral-vibe==2.26.1",
+  "artifact_sha256": {
+    "mistral_vibe-2.26.1-cp312-abi3-manylinux_2_28_x86_64.whl": "1ceb43e38a2e82cb8c54e1032b011874f8422e998cf87b4a3fdf58704133de55"
+  },
+  "disk_mb": 457,
+  "start_command": "vibe-acp --legacy-harness (legacy flag REQUIRED for mcpServers forwarding)",
+  "python": "3.12.14 (python-build-standalone tag 20260924)",
+  "requires_python": ">=3.12 (system python is 3.11; standalone toolchain used)",
+  "provider_config": {
+    "file": "$VIBE_HOME/config.toml",
+    "provider_keys": ["name", "api_base", "api_key_env_var", "api_style", "backend", "reasoning_field_name", "emits_finish_reason", "extra_headers"],
+    "model_keys": ["name", "provider", "alias", "temperature", "thinking", "supports_images", "max_context_length"],
+    "api_styles": ["openai", "reasoning", "anthropic", "openai-responses", "vertex-anthropic"],
+    "verified_model_ids": ["fake-py-small", "fake-custom-1"]
+  },
+  "scenarios": {
+    "initialize": {"verdict": "ok", "latency_ms": 4877},
+    "new_session": {"verdict": "ok", "latency_ms": 10465},
+    "prompt_text": {"verdict": "wrong-result", "latency_ms": 4184, "cause": "probe-fake-limitation"},
+    "cancel": {"verdict": "skipped", "manual": "cancelled in 4.0s, clean"},
+    "steer_followup": {"verdict": "skipped", "cause": "no steering advertised, fast turns"},
+    "load_resume": {"verdict": "ok", "latency_ms": 7419, "detail": "session/resume used"},
+    "set_model_config": {"verdict": "ok", "latency_ms": 3462, "detail": "no set_model; set_config_option allowlist (mode/model/thinking/max_turns/max_tokens); live model switch proven"},
+    "images": {"verdict": "ok", "latency_ms": 4630},
+    "permission": {"verdict": "skipped", "cause": "no ask on tool-less turns"},
+    "crash_recovery": {"verdict": "skipped", "cause": "fast turns race the SIGKILL"},
+    "concurrency": {"verdict": "ok", "multi_process_ok": 3, "single_process_ok": 3},
+    "soak": {"verdict": "wrong-result", "cause": "probe-fake-limitation"}
+  },
+  "soak50": {"turns": 50, "completed": 50, "hangs": 0, "crashes": 0, "p50_ms": 56, "p95_ms": 81},
+  "ram_mb": {"idle_init": 96, "post_turn": 136, "conc_peak": {"n1": 246, "n5": 683, "n10": 1369}, "marginal_per_session": 120},
+  "startup_ms": 4300,
+  "time_to_first_chunk_ms": 0,
+  "catalog": {"custom_provider_no_rebuild": true, "custom_models_in_session_new": false, "live_switch": "session/set_config_option(model=<alias>)", "remote_fetch": false, "builtin_providers": 2, "growthbook_caveat": "routed_default_model injection unless active_model pinned"},
+  "subscriptions": {"mistral_api_key": true, "mistral_browser_signin": true, "supergrok": false, "chatgpt": false, "antigravity": false, "opencode_go": false, "claude": false, "copilot": false},
+  "blockers": ["mcpServers forwarded ONLY by --legacy-harness (temporary escape hatch)", "strict parsing needs fakellm index+usage fixes for full tool loops"],
+  "verdict": "viable-leanest-with-harness-caveat"
+}

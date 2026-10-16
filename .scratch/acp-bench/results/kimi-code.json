@@ -1,0 +1,43 @@
+{
+  "agent": "kimi-code",
+  "language": "Python",
+  "version": "1.50.0",
+  "artifact": "pypi:kimi-code==1.50.0 (shim for kimi-cli==1.50.0)",
+  "artifact_sha256": {
+    "kimi_code-1.50.0-py3-none-any.whl": "2511eddeb8647509a79ffaa509f9e4ffa5d7494b9793ad79bf9a926f1aa30957",
+    "kimi_cli-1.50.0-py3-none-any.whl": "0341d283a3d5233128c1634c8201820a91cc09a1eaefc1d5075c481131b0b7e7"
+  },
+  "disk_mb": 343,
+  "start_command": "kimi acp",
+  "python": "3.12.14 (python-build-standalone tag 20260924)",
+  "requires_python": ">=3.12 (system python is 3.11; standalone toolchain used)",
+  "provider_config": {
+    "file": "$KIMI_SHARE_DIR/config.toml",
+    "provider_keys": ["type", "base_url", "api_key", "env", "custom_headers", "reasoning_key", "oauth"],
+    "model_keys": ["provider", "model", "max_context_size", "capabilities", "display_name"],
+    "env_overrides": ["OPENAI_BASE_URL", "OPENAI_API_KEY", "KIMI_BASE_URL", "KIMI_API_KEY", "KIMI_MODEL_NAME"],
+    "verified_model_ids": ["fake-py-small", "fake-custom-1"]
+  },
+  "scenarios": {
+    "initialize": {"verdict": "ok", "latency_ms": 5642},
+    "new_session": {"verdict": "ok", "latency_ms": 11101},
+    "prompt_text": {"verdict": "wrong-result", "latency_ms": 11651, "cause": "probe-fake-limitation"},
+    "cancel": {"verdict": "skipped", "manual": "cancelled in 4.0s, clean"},
+    "steer_followup": {"verdict": "skipped", "cause": "no steering advertised, fast turns"},
+    "load_resume": {"verdict": "ok", "latency_ms": 24766, "detail": "session/resume used"},
+    "set_model_config": {"verdict": "ok", "latency_ms": 6761, "detail": "set_model accepts config ids (manual proof); set_config_option unsupported"},
+    "images": {"verdict": "ok", "latency_ms": 5881, "detail": "needs capabilities=[image_in]"},
+    "permission": {"verdict": "skipped", "manual": "full MCP tool loop proven via TOOL: turn"},
+    "crash_recovery": {"verdict": "skipped", "cause": "fast turns race the SIGKILL"},
+    "concurrency": {"verdict": "ok", "multi_process_ok": 3, "single_process_ok": 3},
+    "soak": {"verdict": "wrong-result", "cause": "probe-fake-limitation"}
+  },
+  "soak50": {"turns": 50, "completed": 50, "hangs": 0, "crashes": 0, "p50_ms": 90, "p95_ms": 158},
+  "ram_mb": {"idle_init": 100, "post_turn": 153, "conc_peak": {"n1": 151, "n5": 761, "n10": 1398}, "marginal_per_session": 130},
+  "startup_ms": 5600,
+  "time_to_first_chunk_ms": 0,
+  "catalog": {"custom_provider_no_rebuild": true, "custom_models_in_session_new": true, "live_switch": "session/set_model", "remote_fetch": false, "builtin_provider_types": 6},
+  "subscriptions": {"kimi_oauth": true, "moonshot_keys": true, "supergrok": false, "chatgpt": false, "antigravity": false, "opencode_go": false, "claude": false, "copilot": false},
+  "blockers": ["ACP gated on Kimi OAuth token presence even for API-key providers", "auto-compaction wipes user message when max_context_size <= reserved 50000"],
+  "verdict": "usable-with-caveats"
+}

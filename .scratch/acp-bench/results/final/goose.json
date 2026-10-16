@@ -1,0 +1,350 @@
+{
+ "agent": "goose",
+ "version": "1.54.0",
+ "worker": 2,
+ "tool": "acpbench2",
+ "fake_llm_port": 18722,
+ "flags": [
+  "--mcp-stub(stdio)",
+  "--cooperate",
+  "--auth-method auto"
+ ],
+ "scenarios": {
+  "initialize": {
+   "verdict": "ok",
+   "latencyMs": 1873
+  },
+  "new_session": {
+   "verdict": "ok",
+   "latencyMs": 7123
+  },
+  "prompt_text": {
+   "verdict": "wrong-result",
+   "latencyMs": 1342
+  },
+  "cancel": {
+   "verdict": "skipped",
+   "latencyMs": 1046
+  },
+  "steer_followup": {
+   "verdict": "skipped",
+   "latencyMs": 772
+  },
+  "load_resume": {
+   "verdict": "ok",
+   "latencyMs": 1264
+  },
+  "set_model_config": {
+   "verdict": "ok",
+   "latencyMs": 839
+  },
+  "images": {
+   "verdict": "ok",
+   "latencyMs": 727
+  },
+  "permission": {
+   "verdict": "skipped",
+   "latencyMs": 825
+  },
+  "crash_recovery": {
+   "verdict": "skipped",
+   "latencyMs": 821
+  },
+  "concurrency": {
+   "verdict": "ok",
+   "latencyMs": 2715
+  },
+  "soak": {
+   "verdict": "ok",
+   "latencyMs": 2049
+  },
+  "provider_fault": {
+   "verdict": "skipped",
+   "latencyMs": 0
+  }
+ },
+ "ram_phases": {
+  "concurrency-multi": {
+   "max": 468336640
+  },
+  "idle-after-initialize": {
+   "max": 170348544
+  },
+  "idle-after-new-session": {
+   "max": 150700032
+  },
+  "post-turn": {
+   "max": 160407552
+  },
+  "prompt-turn": {
+   "max": 160407552
+  },
+  "startup-init": {
+   "max": 115900416
+  }
+ },
+ "soak50": {
+  "ok": 50,
+  "iterations": 50,
+  "hangs": 0,
+  "p50Ms": 26,
+  "p95Ms": 48
+ },
+ "cancelmix": {
+  "ok": 24,
+  "cancelled": 0,
+  "classes": {
+   "end_turn": 24,
+   "no-slow-turn": 6
+  }
+ },
+ "faultsoak40": {
+  "ok": 39,
+  "iterations": 40,
+  "classes": {
+   "end_turn": 39,
+   "protocol-error": 1
+  }
+ },
+ "fault_matrix": {
+  "empty": [
+   {
+    "run": "1",
+    "verdict": "silent-empty-turn",
+    "latencyMs": 1018,
+    "cls": "silent-empty-turn"
+   },
+   {
+    "run": "2",
+    "verdict": "silent-empty-turn",
+    "latencyMs": 949,
+    "cls": "silent-empty-turn"
+   },
+   {
+    "run": "3",
+    "verdict": "silent-empty-turn",
+    "latencyMs": 776,
+    "cls": "silent-empty-turn"
+   }
+  ],
+  "http429": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 4386,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 4095,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 4341,
+    "cls": "surfaced-error"
+   }
+  ],
+  "http500": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 7469,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 7599,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 8063,
+    "cls": "surfaced-error"
+   }
+  ],
+  "http529": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 8586,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 8049,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 7711,
+    "cls": "surfaced-error"
+   }
+  ],
+  "midstream-error": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 934,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 848,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 798,
+    "cls": "retried-success"
+   }
+  ],
+  "reset": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 876,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 775,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 1060,
+    "cls": "retried-success"
+   }
+  ],
+  "stall-5s": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 1231,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 1279,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 1388,
+    "cls": "retried-success"
+   }
+  ],
+  "stall-forever": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 1624,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 1466,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 1635,
+    "cls": "retried-success"
+   }
+  ],
+  "truncate": [
+   {
+    "run": "1",
+    "verdict": "wrong-result",
+    "latencyMs": 971,
+    "cls": "truncated-unflagged"
+   },
+   {
+    "run": "2",
+    "verdict": "wrong-result",
+    "latencyMs": 854,
+    "cls": "truncated-unflagged"
+   },
+   {
+    "run": "3",
+    "verdict": "wrong-result",
+    "latencyMs": 807,
+    "cls": "truncated-unflagged"
+   }
+  ]
+ },
+ "conc1": {
+  "verdict": "ok",
+  "latencyMs": 2436,
+  "details": {
+   "multiProcessOk": 1,
+   "sessions": 1,
+   "singleProcessOk": 1
+  },
+  "peak": 242941952
+ },
+ "conc5": {
+  "verdict": "ok",
+  "latencyMs": 4695,
+  "details": {
+   "multiProcessOk": 5,
+   "sessions": 5,
+   "singleProcessOk": 5
+  },
+  "peak": 788164608
+ },
+ "conc10": {
+  "verdict": "ok",
+  "latencyMs": 6779,
+  "details": {
+   "multiProcessOk": 10,
+   "sessions": 10,
+   "singleProcessOk": 10
+  },
+  "peak": 1567555584
+ },
+ "wire_validity": {
+  "real": [
+   "http429",
+   "http500",
+   "http529",
+   "midstream-error",
+   "reset",
+   "empty"
+  ],
+  "void_noop": [
+   "stall-5s",
+   "stall-forever",
+   "truncate"
+  ]
+ },
+ "model_binding": {
+  "session_new_model_param": "ignored",
+  "set_config_option_model": "wire-effective-incl-PUT-ids",
+  "catalog_refetch": "per-session-v1-models",
+  "custom_ids_live_without_restart": true
+ },
+ "hang_test": {
+  "method": "HANG-directive-130s",
+  "outcome": "HANG-no-response-in-130s",
+  "wire_requests": 2,
+  "retries": 1,
+  "retry_gap_s": 0,
+  "timeout_surfaced": false
+ }
+}

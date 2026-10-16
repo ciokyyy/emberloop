@@ -748,6 +748,13 @@ func runDriverLoop(order []DriverTicket, world DriverWorld) ([]DriverMerged, []s
 							at = world.Submits(tk.ID)
 						}
 						if err := world.Tell(tk.ID, fin.Detail); err != nil {
+							// A Worker mid-resume (restart, release) cannot take
+							// the tell yet. The refusal stays recorded and
+							// untold, so the next pass tells it again; failing
+							// the whole Run on a race lost a 29-ticket Run.
+							if strings.Contains(err.Error(), "resuming") {
+								continue
+							}
 							return nil, nil, nil, nil, "", fmt.Errorf("could not tell %s: %w", tk.ID, err)
 						}
 						toldText[tk.ID] = fin.Detail

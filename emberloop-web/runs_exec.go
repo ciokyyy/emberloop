@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -315,6 +316,10 @@ type runState struct {
 	// baseChecking names the spec-branch tips whose base check runs now;
 	// each channel closes when its check ends. Guarded by d.mu.
 	baseChecking map[string]chan struct{} `json:"-"`
+	// tipChecking counts the Daemon-side tip checks running per ticket. The
+	// Worker sits idle while the Daemon checks its tip, so the idle alert
+	// reads a running check as activity. Guarded by d.mu.
+	tipChecking map[string]int `json:"-"`
 }
 
 // runPollInterval caps the driver sleep: the loop polls for Worker submits
@@ -1072,7 +1077,7 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 			if !ok {
 				return false
 			}
-			return s.meta.Status == "working" || sessionToolActiveLocked(s, d.now())
+			return s.meta.Status == "working" || sessionToolActiveLocked(s, d.now()) || rs.tipChecking[ticketID] > 0
 		},
 		Submits: func(ticketID string) int {
 			return d.runSubmitCount(rs.ID, ticketID)
@@ -1404,7 +1409,7 @@ func runRepoCheckAtTip(repo, tip string) (bool, []string) {
 		return false, []string{"base check could not run: base tip: " + strings.TrimSpace(err.Error())}
 	}
 	if _, err := runGit(repo, "show", tip+":.emberloop/check"); err != nil {
-		if strings.Contains(err.Error(), "does not exist") {
+		if checkFileAbsentAtTip(err.Error()) {
 			return true, nil
 		}
 		return false, []string{"base check could not run: check file: " + strings.TrimSpace(err.Error())}
@@ -1416,16 +1421,74 @@ func runRepoCheckAtTip(repo, tip string) (bool, []string) {
 	if err != nil {
 		return false, []string{"base check could not run: worktree: " + strings.TrimSpace(err.Error())}
 	}
-	cmd := exec.Command("sh", ".emberloop/check")
+	green, failing := runCheckScript(dir)
+	if green || isCheckInfraError(failing) {
+		return green, failing
+	}
+	// A red result may be a flake (a slow test past its timeout, a busy
+	// machine). One rerun on the same clean tree separates a flake from a
+	// real failure before a red base parks the Run or a red tip costs the
+	// Worker a round. Go's test cache keeps the rerun short.
+	if green, _ := runCheckScript(dir); green {
+		return true, nil
+	}
+	return false, failing
+}
+
+// repoCheckTimeout bounds one .emberloop/check run, so a wedged check never
+// holds the repo's check lock forever.
+const repoCheckTimeout = 45 * time.Minute
+
+// checkFileAbsentAtTip reports whether a `git show tip:.emberloop/check`
+// error means the tip has no check file. Git words it two ways: "does not
+// exist in" and, when the path is only untracked on disk, "exists on disk,
+// but not in". Both mean the tip carries no check, which is green.
+func checkFileAbsentAtTip(msg string) bool {
+	return strings.Contains(msg, "does not exist") || strings.Contains(msg, "exists on disk, but not in")
+}
+
+// runCheckScript runs .emberloop/check in dir with no stdin and the repo
+// check timeout. A failure names the failing tests, or the output tail when
+// none parse, so the Needs-you banner says why instead of "check failed".
+func runCheckScript(dir string) (bool, []string) {
+	ctx, cancel := context.WithTimeout(context.Background(), repoCheckTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", ".emberloop/check")
 	cmd.Dir = dir
+	cmd.WaitDelay = 10 * time.Second
 	out, err := cmd.CombinedOutput()
 	if err == nil {
 		return true, nil
+	}
+	if ctx.Err() != nil {
+		return false, []string{"check timed out after " + repoCheckTimeout.String() + checkOutputTail(string(out))}
 	}
 	if len(bytes.TrimSpace(out)) == 0 {
 		return false, []string{"base check could not run: " + strings.TrimSpace(err.Error())}
 	}
 	return false, parseCheckFailing(string(out))
+}
+
+// checkOutputTail returns the last lines of check output as ": a | b | c",
+// or "" when the output is blank. Lines and total length are capped.
+func checkOutputTail(output string) string {
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	if len(lines) > 8 {
+		lines = lines[len(lines)-8:]
+	}
+	tail := strings.Join(lines, " | ")
+	if len(tail) > 600 {
+		tail = "…" + strings.ToValidUTF8(tail[len(tail)-600:], "")
+	}
+	return ": " + tail
 }
 
 // repoCheckLocks holds one lock per repo: its check worktree serves one
@@ -1491,7 +1554,7 @@ func parseCheckFailing(output string) []string {
 		}
 	}
 	if len(failing) == 0 {
-		failing = []string{"check failed"}
+		failing = []string{"check failed" + checkOutputTail(output)}
 	}
 	return failing
 }
@@ -2008,7 +2071,7 @@ func (d *Daemon) handleReviewerTurnEnd(id string) {
 	// re-prompt this reviewer once at the current tip, so the stale verdict
 	// never reads fresh later. When the re-prompt for the current tip is
 	// already out (queued by a later done), the verdict stays stale with no
-	// extra Tell.
+	// extra Tell; repairOwedReviewerPrompts covers a prompt that never landed.
 	retell := ""
 	if tip != "" && cur != "" && tip != cur && rs.ReviewTips[ticketID][typ] != cur {
 		if rs.ReviewTips == nil {
@@ -2262,7 +2325,12 @@ func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 	}
 	count := rec.Count
 	if len(missing) == 0 && rs.Reprompted[ticketID] >= count {
+		// Every seat was prompted for this done submit. A steer into a busy
+		// reviewer can still be lost, leaving a seat that owes the current
+		// tip but never got the prompt; repair it, or the gate waits
+		// forever on a verdict nobody asked for.
 		d.mu.Unlock()
+		d.repairOwedReviewerPrompts(runID, ticketID)
 		return
 	}
 	d.mu.Unlock()
@@ -2409,6 +2477,71 @@ func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 		if sess := existing[typ]; sess != "" {
 			_ = d.runTellSession(sess, reviewerPromptWithExtras(ticketID, spec, typ, branch, tip, declined, evidence, scope, late))
 		}
+	}
+}
+
+// owedPromptGrace is how long a seat gets to answer a prompt before the
+// repair treats it as lost.
+const owedPromptGrace = time.Minute
+
+// repairOwedReviewerPrompts re-prompts each idle reviewer seat that owes the
+// current tip but holds no prompt naming it. A seat owes the tip when the Run
+// marked it as the seat's review tip and its verdict is not at that tip. A
+// busy seat is left alone: its turn end re-prompts a stale verdict itself.
+func (d *Daemon) repairOwedReviewerPrompts(runID, ticketID string) {
+	d.mu.Lock()
+	rs, ok := d.runs[runID]
+	if !ok || rs.Status == runStatusPaused || rs.TicketPaused[ticketID] {
+		d.mu.Unlock()
+		return
+	}
+	repo, branch, spec := rs.Repo, rs.Branches[ticketID], rs.Spec
+	d.mu.Unlock()
+	if branch == "" {
+		return
+	}
+	tip, err := runGit(repo, "rev-parse", branch)
+	if err != nil || tip == "" {
+		return
+	}
+	type owed struct{ typ, sess string }
+	var list []owed
+	d.mu.Lock()
+	rs, ok = d.runs[runID]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	for _, typ := range requiredReviewerTypes {
+		sess := rs.Reviewers[ticketID][typ]
+		if sess == "" || rs.ReviewTips[ticketID][typ] != tip {
+			continue
+		}
+		if r, ok := rs.Reviews[ticketID][typ]; ok && r.Verdict != "" && r.At == tip {
+			continue
+		}
+		s, ok := d.sessions[sess]
+		if !ok || s.busy || len(s.pending) > 0 || time.Since(rs.ReviewStarted[ticketID][typ]) < owedPromptGrace {
+			continue
+		}
+		appendReviewPending(rs, ticketID, typ, tip)
+		if rs.ReviewStarted == nil {
+			rs.ReviewStarted = map[string]map[string]time.Time{}
+		}
+		if rs.ReviewStarted[ticketID] == nil {
+			rs.ReviewStarted[ticketID] = map[string]time.Time{}
+		}
+		rs.ReviewStarted[ticketID][typ] = time.Now().UTC()
+		list = append(list, owed{typ, sess})
+	}
+	declined := declinedFindingsForRounds(rs.Rounds[ticketID])
+	if len(list) > 0 {
+		d.persistRun(rs)
+		d.broadcastRunLocked(rs)
+	}
+	d.mu.Unlock()
+	for _, o := range list {
+		_ = d.runTellSession(o.sess, reviewerPromptWithDeclined(ticketID, spec, o.typ, branch, tip, declined))
 	}
 }
 
@@ -3516,6 +3649,9 @@ func ffUpdateSpecBranch(repo, branch, specBranch, ticketID string) (sha, kept st
 // and commits it in gitDir: the spec-branch finish commits in the ticket
 // worktree, the legacy finish in the main checkout. For a file without a
 // Status line it still ticks and commits its boxes after merge, when present.
+// The add is forced: a spec directory untracked in the main checkout leaves
+// the ticket file untracked too, and the worktree excludes it, so a plain add
+// is refused and fails the Run.
 func stageAndCommitTicketDone(gitDir, filePath, rel, workerID string) (changed bool, err error) {
 	done, merr := el.MarkDriverTicketDone(filePath)
 	if merr != nil {
@@ -3541,7 +3677,7 @@ func stageAndCommitTicketDone(gitDir, filePath, rel, workerID string) (changed b
 	if !done {
 		return false, nil
 	}
-	if _, err := runGit(gitDir, "add", "--", rel); err != nil {
+	if _, err := runGit(gitDir, "add", "-f", "--", rel); err != nil {
 		return false, err
 	}
 	staged, err := runStagedDiff(gitDir, rel)
@@ -3559,6 +3695,15 @@ func stageAndCommitTicketDone(gitDir, filePath, rel, workerID string) (changed b
 	return true, nil
 }
 
+// specMergeLocks holds one lock per repo and spec branch: merges into a
+// spec branch run one at a time.
+var specMergeLocks sync.Map
+
+func specMergeLock(repo, specBranch string) *sync.Mutex {
+	lock, _ := specMergeLocks.LoadOrStore(filepath.Clean(repo)+"\x00"+specBranch, &sync.Mutex{})
+	return lock.(*sync.Mutex)
+}
+
 // mergeTicketIntoSpec runs the git half of a spec-branch finish: the
 // dirty-worktree check, a rebase of the ticket branch onto the spec branch
 // as it stands at finish (aborted on conflict), a fast-forward of the spec
@@ -3567,6 +3712,14 @@ func stageAndCommitTicketDone(gitDir, filePath, rel, workerID string) (changed b
 // when the branch is kept and the worker stays alive; err is a hard git
 // failure. The main checkout never moves.
 func (d *Daemon) mergeTicketIntoSpec(repo, worktree, branch, specBranch, path, ticketID, workerID string) (sha, kept string, err error) {
+	// Two tickets of one Run finish at the same time (max_tickets > 1): one
+	// rebases, the other moves the spec branch, and the first fast-forward
+	// then fails with "it moved under the ticket; finish again" and parks
+	// the ticket until its Worker submits again. One merge at a time per
+	// spec branch removes that race.
+	lock := specMergeLock(repo, specBranch)
+	lock.Lock()
+	defer lock.Unlock()
 	if out, err := runGit(worktree, "status", "--porcelain"); err != nil {
 		return "", "", err
 	} else if strings.TrimSpace(out) != "" {
@@ -4481,11 +4634,11 @@ func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, 
 	d.broadcastRunLocked(rs)
 	d.mu.Unlock()
 	d.appendEvent(id, "submit", "done", "")
-	// Sync so the driver's next finish sees the re-prompt already out,
-	// never a stale refusal first, and prompts queue in submit order.
-	// Bounded to two reviewer starts plus two steers; the cap refuses
-	// fast and Tell is best effort, so the ack waits on at most that.
-	d.ensureReviewers(workerRun, workerTicket)
+	// Async: the tip check can run minutes (and queues behind other Runs on
+	// the repo check lock), far past the submit tool's client timeout. The
+	// ack never waits on it; the `ensuring` lock keeps one call per Ticket
+	// and the driver's finish pass retries it.
+	go d.ensureReviewers(workerRun, workerTicket)
 	writeJSON(w, http.StatusAccepted, map[string]any{"submits": count})
 }
 

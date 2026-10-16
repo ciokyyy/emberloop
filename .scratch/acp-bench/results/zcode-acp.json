@@ -1,0 +1,1 @@
+{"agent":"zcode-acp","blocked":"needs ZCode macOS app engine + subscription; ZCODE_CJS unwired on Linux","disk_mb":26,"initialize":"ok (1.1s)","new_session":"timeout-hang (engine spawn fails silently)","subscriptions":["ZCode subscription via desktop app"],"version":"0.9.1"}

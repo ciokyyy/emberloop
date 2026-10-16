@@ -157,3 +157,11 @@ _Avoid_: Note, memory item, lesson
 **Purge**:
 The one human action that deletes memory rows. It removes the chosen records and clears their text from the queue, the ledger and the snapshots.
 _Avoid_: Delete, forget, wipe
+
+**Boot payload**:
+The route's prefetched data that the Daemon embeds in the page it serves. The browser reads it first and fetches only what it lacks.
+_Avoid_: Preload, hydration data, initial state
+
+**Prefetch table**:
+The Daemon's list of routes, each naming the data its page needs on first load.
+_Avoid_: Route loader, route map

@@ -30,19 +30,36 @@ are read-only usage GETs; neither probe refreshes or writes a login.
 
 Plus one offline measurement: `explore-replay.sh` replays web-v1 exploration
 patterns and prints baseline vs guided call counts (no agents, no network).
+Plus one offline fake: `fakellm/` is a stdlib-only Go module serving scripted
+OpenAI/Anthropic/Gemini endpoints for benchmarking harnesses (own README;
+never calls real model APIs), with COOPERATE fuzzy tool-calling, FAULT:
+failure injection (`--faults`/`--fault-rate`), and a mutable catalog
+(`PUT /__catalog`, fetch counts in `/__stats`).
+ Plus the `acpbench/` standalone Go module (stdlib only, own README): a
+ black-box ACP client probe running thirteen scenarios against any agent
+ command with one JSON report (schemaVersion + per-scenario durations +
+ summary, plus a `compare` subcommand for markdown tables), plus an in-repo
+ fake ACP agent its own `go test` covers (it simulates auth-gated sessions,
+ real model discovery, namespaced tools, stub-side MCP invocation, and the
+ FAULT provider-fault contract). Hand runs against real agents need a fake
+ LLM endpoint.
 `web-dev.sh` runs the dev Daemon in the foreground. Each script names its
 prerequisites in its header comment.
 
 ## Ownership
 
-Owns the shell scripts in this directory. Anything a script verifies in
-another package is owned there.
+Owns the shell scripts and the `fakellm/` and `acpbench/` modules.
+Anything a script verifies in another package is owned there.
 
 ## Local Contracts
 
 - Scripts run only by hand; live probes use temporary state. Agent probes
-  need live sessions, while quota probes need the real provider login; no
-  script is part of an automated check and none runs inside ticket work.
+  need live sessions, while quota probes need the real provider login;
+  `explore-replay.sh` needs only bash (no agents, no network) and `fakellm/`
+  needs only its own module (no agents, no real model APIs). `acpbench/`
+  self-tests against its in-repo fake agent; hand runs against real agents
+  need a fake LLM endpoint. No script is part of an automated check and none
+  runs inside ticket work.
 
 ## Work Guidance
 
@@ -50,8 +67,10 @@ another package is owned there.
 
 ## Verification
 
-No check.
+No repo-level check. `fakellm/` and `acpbench/` verify themselves with
+`go test ./...` inside their own modules.
 
 ## Child DOX Index
 
-No child docs.
+- `scripts/fakellm/README.md` — the fake LLM benchmark server
+- `scripts/acpbench/README.md` — the ACP probe/benchmark module and scenarios

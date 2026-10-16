@@ -617,3 +617,38 @@ describe('SettingsPage automatic Memory settings', () => {
     expect(seen.body.memory_recall_weights).toEqual({ vector: 0.2, fts: 0.4, importance: 0.2 });
   });
 });
+
+describe('SettingsPage find decision model', () => {
+  beforeEach(() => { section = 'memory'; });
+  it('shows the saved model and sends the picked one', async () => {
+    const seen = {};
+    stubSettings({
+      settings: {
+        ...base,
+        find: { decision_model: '', default: 'typesafe/jev-1.13', from_env: false, suggestions: ['typesafe/jev-1.13', 'liquid/d1'] },
+      },
+      seen,
+    });
+    const { container } = renderSettings({ props: { admin: true } });
+    const panel = await within(container).findByTestId('find-settings');
+    expect(within(panel).getByLabelText('Model').placeholder).toBe('typesafe/jev-1.13');
+    await fireEvent.click(within(panel).getByRole('button', { name: 'liquid/d1' }));
+    await tick();
+    await fireEvent.click(await within(container).findByText('Save'));
+    expect(await within(container).findByText('Saved')).toBeTruthy();
+    expect(seen.body.find).toEqual({ decision_model: 'liquid/d1' });
+  });
+
+  it('locks the field and omits it from the save when the environment sets it', async () => {
+    const seen = {};
+    stubSettings({
+      settings: { ...base, find: { decision_model: '', default: 'typesafe/jev-1.13', from_env: true, suggestions: ['liquid/d1'] }, decider: { decider_mode: 'heuristic' } },
+      seen,
+    });
+    const { container } = renderSettings({ props: { admin: true } });
+    const panel = await within(container).findByTestId('find-settings');
+    expect(within(panel).getByLabelText('Model').disabled).toBe(true);
+    expect(within(panel).getByText(/EL_DECISION_MODEL/)).toBeTruthy();
+    expect(within(panel).queryByRole('button', { name: 'liquid/d1' })).toBeNull();
+  });
+});

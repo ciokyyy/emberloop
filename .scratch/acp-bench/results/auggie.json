@@ -1,0 +1,1 @@
+{"agent":"auggie","auth":"Augment OAuth (login / AUGMENT_SESSION_AUTH / ~/.augment/session.json)","blocked":"Augment cloud only","disk_mb":39,"entry":"augment.mjs --acp (not dist/index.js)","initialize":"ok (1.9s)","new_session":"Internal error (unauthenticated)","version":"0.36.0"}

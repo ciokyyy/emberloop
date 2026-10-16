@@ -1,0 +1,353 @@
+{
+ "agent": "codex-acp",
+ "version": "2.2.2",
+ "worker": 2,
+ "tool": "acpbench2",
+ "fake_llm_port": 18720,
+ "flags": [
+  "--mcp-stub",
+  "--cooperate",
+  "--auth-method auto"
+ ],
+ "scenarios": {
+  "initialize": {
+   "verdict": "ok",
+   "latencyMs": 1381
+  },
+  "new_session": {
+   "verdict": "ok",
+   "latencyMs": 6880
+  },
+  "prompt_text": {
+   "verdict": "wrong-result",
+   "latencyMs": 8045
+  },
+  "cancel": {
+   "verdict": "ok",
+   "latencyMs": 9064
+  },
+  "steer_followup": {
+   "verdict": "ok",
+   "latencyMs": 1907
+  },
+  "load_resume": {
+   "verdict": "ok",
+   "latencyMs": 20646
+  },
+  "set_model_config": {
+   "verdict": "ok",
+   "latencyMs": 7310
+  },
+  "images": {
+   "verdict": "ok",
+   "latencyMs": 7394
+  },
+  "permission": {
+   "verdict": "skipped",
+   "latencyMs": 8856
+  },
+  "crash_recovery": {
+   "verdict": "ok",
+   "latencyMs": 2085
+  },
+  "concurrency": {
+   "verdict": "ok",
+   "latencyMs": 35270
+  },
+  "soak": {
+   "verdict": "ok",
+   "latencyMs": 34259
+  },
+  "provider_fault": {
+   "verdict": "skipped",
+   "latencyMs": 0
+  }
+ },
+ "ram_phases": {
+  "concurrency-multi": {
+   "max": 899522560,
+   "last": 899522560
+  },
+  "idle-after-initialize": {
+   "max": 329949184,
+   "last": 305381376
+  },
+  "idle-after-new-session": {
+   "max": 350478336,
+   "last": 276422656
+  },
+  "post-turn": {
+   "max": 322027520,
+   "last": 306511872
+  },
+  "prompt-turn": {
+   "max": 380768256,
+   "last": 306360320
+  },
+  "startup-init": {
+   "max": 319008768,
+   "last": 319008768
+  }
+ },
+ "soak50": {
+  "ok": 50,
+  "iterations": 50,
+  "hangs": 0,
+  "p50Ms": 6576,
+  "p95Ms": 6881
+ },
+ "cancelmix": {
+  "ok": 24,
+  "cancelled": 6,
+  "hangs": 0,
+  "p50Ms": 6540,
+  "p95Ms": 6858
+ },
+ "faultsoak40": {
+  "ok": 40,
+  "iterations": 40,
+  "hangs": 0,
+  "p50Ms": 6486,
+  "p95Ms": 6926
+ },
+ "fault_matrix": {
+  "empty": [
+   {
+    "run": "1",
+    "verdict": "silent-empty-turn",
+    "latencyMs": 7947,
+    "cls": "silent-empty-turn"
+   },
+   {
+    "run": "2",
+    "verdict": "silent-empty-turn",
+    "latencyMs": 7799,
+    "cls": "silent-empty-turn"
+   },
+   {
+    "run": "3",
+    "verdict": "silent-empty-turn",
+    "latencyMs": 7323,
+    "cls": "silent-empty-turn"
+   }
+  ],
+  "http429": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 1383,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 1183,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 1118,
+    "cls": "surfaced-error"
+   }
+  ],
+  "http500": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 26407,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 26291,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 26452,
+    "cls": "retried-success"
+   }
+  ],
+  "http529": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 25523,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 26910,
+    "cls": "surfaced-error"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 26438,
+    "cls": "surfaced-error"
+   }
+  ],
+  "midstream-error": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 6921,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 6755,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 6894,
+    "cls": "retried-success"
+   }
+  ],
+  "reset": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 7672,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 7838,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 7791,
+    "cls": "retried-success"
+   }
+  ],
+  "stall-5s": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 10421,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 10888,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 10889,
+    "cls": "retried-success"
+   }
+  ],
+  "stall-forever": [
+   {
+    "run": "1",
+    "verdict": "ok",
+    "latencyMs": 10979,
+    "cls": "retried-success"
+   },
+   {
+    "run": "2",
+    "verdict": "ok",
+    "latencyMs": 10298,
+    "cls": "retried-success"
+   },
+   {
+    "run": "3",
+    "verdict": "ok",
+    "latencyMs": 10316,
+    "cls": "retried-success"
+   }
+  ],
+  "truncate": [
+   {
+    "run": "1",
+    "verdict": "wrong-result",
+    "latencyMs": 7677,
+    "cls": "truncated-unflagged"
+   },
+   {
+    "run": "2",
+    "verdict": "wrong-result",
+    "latencyMs": 7626,
+    "cls": "truncated-unflagged"
+   },
+   {
+    "run": "3",
+    "verdict": "wrong-result",
+    "latencyMs": 8210,
+    "cls": "truncated-unflagged"
+   }
+  ]
+ },
+ "conc1": {
+  "verdict": "ok",
+  "latencyMs": 16077,
+  "details": {
+   "multiProcessOk": 1,
+   "sessions": 1,
+   "singleProcessOk": 1
+  },
+  "peak": 392933376
+ },
+ "conc5": {
+  "verdict": "ok",
+  "latencyMs": 54968,
+  "details": {
+   "multiProcessOk": 5,
+   "sessions": 5,
+   "singleProcessOk": 5
+  },
+  "peak": 1631412224
+ },
+ "conc10": {
+  "verdict": "ok",
+  "latencyMs": 102028,
+  "details": {
+   "multiProcessOk": 10,
+   "sessions": 10,
+   "singleProcessOk": 10
+  },
+  "peak": 3140481024
+ },
+ "catalog": {
+  "verdict": "ok",
+  "catalog_fetches_after_put": 0,
+  "custom_ids_visible": false,
+  "currentModel": "gpt-5-fake[medium]"
+ },
+ "wire_validity": {
+  "real": [
+   "http429",
+   "http500",
+   "http529",
+   "midstream-error",
+   "reset",
+   "empty"
+  ],
+  "void_noop": [
+   "stall-5s",
+   "stall-forever",
+   "truncate"
+  ]
+ },
+ "hang_test": {
+  "method": "HANG-directive-130s",
+  "outcome": "HANG-no-response-in-130s",
+  "wire_requests": 1,
+  "retries": 0,
+  "timeout_surfaced": false
+ }
+}
