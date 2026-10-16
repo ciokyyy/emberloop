@@ -125,7 +125,7 @@ func serveBootShell(d *Daemon, sub fs.FS, w http.ResponseWriter, r *http.Request
 	loader := []byte("<script>window.__EL_BOOT__=" + string(raw) + ";</script>")
 	index = append(index[:idx], append(loader, index[idx:]...)...)
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if route == "/" {
+	if route == "/" && boot["/api/auth/me"] != nil {
 		if html, err := renderDashboardWithin(200 * time.Millisecond); err == nil {
 			index = bytes.Replace(index, []byte(`<script type="module" src="/src/main.js"></script>`), []byte(`<div id="el-ssr-dashboard">`+html+`</div><script type="module" src="/src/main.js"></script>`), 1)
 		} else {
