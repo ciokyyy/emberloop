@@ -67,7 +67,7 @@ type DepsConfig struct {
 	BinDir string
 	// IsTerminal reports whether sudo may prompt; nil checks stdin.
 	IsTerminal func() bool
-	// ReleaseBaseURL overrides the graph release base for tests.
+	// ReleaseBaseURL overrides the graph release base and browser release host for tests.
 	ReleaseBaseURL string
 	// GraphVersion overrides DefaultGraphVersion.
 	GraphVersion string
@@ -117,9 +117,6 @@ func (c DepsConfig) browserVersion() string {
 	if c.BrowserVersion != "" {
 		return c.BrowserVersion
 	}
-	if c.GraphVersion != "" {
-		return c.GraphVersion
-	}
 	return DefaultBrowserVersion
 }
 
@@ -128,6 +125,13 @@ func (c DepsConfig) browserReleaseBase() string {
 		return strings.TrimSuffix(c.ReleaseBaseURL, "/")
 	}
 	return DefaultBrowserReleaseBase
+}
+
+func (c DepsConfig) browserDigestURL(version string) string {
+	if c.ReleaseBaseURL != "" {
+		return strings.TrimSuffix(c.ReleaseBaseURL, "/") + "/releases/tags/" + version
+	}
+	return "https://api.github.com/repos/vercel-labs/agent-browser/releases/tags/" + version
 }
 
 func (c DepsConfig) goos() string {
@@ -629,27 +633,56 @@ func (c DepsConfig) resolveBrowser(s tools.Settings) string {
 	return ""
 }
 
-// downloadBrowser fetches the release asset for the platform, verifies its
-// sha256 against the release checksums and writes it into the bin directory.
+// browserReleaseAsset reads the GitHub release metadata digest for the named
+// asset. GitHub publishes SHA-256 values in asset.digest, not checksums.txt.
+func (c DepsConfig) browserReleaseAsset(version, name string) (string, string, error) {
+	url := c.browserDigestURL(version)
+	raw, err := fetchURL(c.httpClient(), url)
+	if err != nil {
+		return "", "", fmt.Errorf("could not fetch release metadata %s: %v", url, err)
+	}
+	var release struct {
+		Assets []struct {
+			Name               string `json:"name"`
+			Digest             string `json:"digest"`
+			BrowserDownloadURL string `json:"browser_download_url"`
+		} `json:"assets"`
+	}
+	if err := json.Unmarshal(raw, &release); err != nil {
+		return "", "", fmt.Errorf("invalid release metadata: %v", err)
+	}
+	for _, asset := range release.Assets {
+		if asset.Name != name {
+			continue
+		}
+		digest := strings.TrimPrefix(strings.ToLower(asset.Digest), "sha256:")
+		if len(digest) != 64 {
+			return "", "", fmt.Errorf("release digest for %s is missing or not SHA-256", name)
+		}
+		if _, err := hex.DecodeString(digest); err != nil {
+			return "", "", fmt.Errorf("release digest for %s is malformed", name)
+		}
+		if asset.BrowserDownloadURL == "" {
+			return "", "", fmt.Errorf("release has no download URL for %s", name)
+		}
+		return asset.BrowserDownloadURL, digest, nil
+	}
+	return "", "", fmt.Errorf("release has no asset %s", name)
+}
+
+// downloadBrowser fetches the release asset and verifies GitHub's SHA-256
+// release digest before installing it into the el bin directory.
 func (c DepsConfig) downloadBrowser() (string, error) {
 	asset, err := browserAssetName(c.goos(), c.goarch())
 	if err != nil {
 		return "", err
 	}
-	base := c.browserReleaseBase()
 	version := c.browserVersion()
-	assetURL := base + "/" + version + "/" + asset
-	sumsURL := base + "/" + version + "/checksums.txt"
-	client := c.httpClient()
-	sumsRaw, err := fetchURL(client, sumsURL)
+	assetURL, want, err := c.browserReleaseAsset(version, asset)
 	if err != nil {
-		return "", fmt.Errorf("could not fetch %s: %v", sumsURL, err)
+		return "", err
 	}
-	want, err := graphChecksum(sumsRaw, asset)
-	if err != nil {
-		return "", fmt.Errorf("%s: %v", sumsURL, err)
-	}
-	data, err := fetchURL(client, assetURL)
+	data, err := fetchURL(c.httpClient(), assetURL)
 	if err != nil {
 		return "", fmt.Errorf("could not fetch %s: %v", assetURL, err)
 	}

@@ -495,8 +495,8 @@ func TestDepsBrowserAssetsAndDownload(t *testing.T) {
 	hits := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits++
-		if strings.HasSuffix(r.URL.Path, "/checksums.txt") {
-			fmt.Fprintf(w, "%x  %s\n", sum, asset)
+		if strings.HasSuffix(r.URL.Path, "/releases/tags/v0.39.1") {
+			fmt.Fprintf(w, `{"assets":[{"name":%q,"digest":"sha256:%x","browser_download_url":%q}]}`, asset, sum, "http://"+r.Host+"/v0.39.1/"+asset)
 			return
 		}
 		if strings.HasSuffix(r.URL.Path, "/"+asset) {
@@ -506,7 +506,7 @@ func TestDepsBrowserAssetsAndDownload(t *testing.T) {
 		http.NotFound(w, r)
 	}))
 	defer srv.Close()
-	cfg := DepsConfig{BinDir: binDir, ReleaseBaseURL: srv.URL, GOOS: "linux", GOARCH: "amd64"}
+	cfg := DepsConfig{BinDir: binDir, ReleaseBaseURL: srv.URL, GraphVersion: "v9.9.9", GOOS: "linux", GOARCH: "amd64"}
 	path, err := cfg.downloadBrowser()
 	if err != nil {
 		t.Fatal(err)
