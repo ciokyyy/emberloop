@@ -230,6 +230,22 @@ func (b *Bank) SetMemoryStatus(ctx context.Context, id int64, status string) err
 		return nil
 	})
 }
+
+func (b *Bank) SetMemorySuperseded(ctx context.Context, id, supersededBy int64) error {
+	if id <= 0 || supersededBy <= 0 || id == supersededBy {
+		return fmt.Errorf("%w: invalid Memory supersession", ErrInvalid)
+	}
+	return b.write(ctx, func(db *sql.DB) error {
+		res, err := db.ExecContext(ctx, `UPDATE memories SET status = ?, superseded_by = ? WHERE id = ?`, StatusSuperseded, supersededBy, id)
+		if err != nil {
+			return err
+		}
+		if n, _ := res.RowsAffected(); n == 0 {
+			return fmt.Errorf("%w: memory %d", ErrNotFound, id)
+		}
+		return nil
+	})
+}
 func (b *Bank) PinMemory(ctx context.Context, id int64, pinned int) error {
 	return b.write(ctx, func(db *sql.DB) error {
 		res, err := db.ExecContext(ctx, `UPDATE memories SET pinned = ? WHERE id = ?`, pinned, id)

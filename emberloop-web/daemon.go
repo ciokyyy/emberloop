@@ -190,19 +190,19 @@ type Daemon struct {
 	// Nightly job (nightly.go): distillOneShot and profileOneShot script the
 	// cheap-LLM calls in tests; nil runs the bare pig one-shot. nightlyFailStage
 	// forces one stage to fail (the test seam for abort and continue paths).
-	// nightlyMu serializes runs; nightlyLastDay is the last auto-run local day.
+	// nightlyMu serializes scheduled and on-demand runs; scheduling state is read from the ledger.
 	nightlyMu          sync.Mutex
 	distillOneShot     func(model, system, user string) (string, error)
 	profileOneShot     func(model, system, user string) (string, error)
 	consolidateOneShot func(model, system, user string) (string, error)
 	nightlyFailStage   string
+	foldOneShot        func(model, system, user string) (string, error)
 	// baseCheck scripts the spec-branch base-red gate in tests; nil runs
 	// .emberloop/check at the requested tip in a detached worktree.
 	baseCheck func(repo, specBranch, tip string) (bool, []string)
 	// tipCheck scripts the per-tip repo check before Reviewers in tests; nil
 	// runs .emberloop/check at the requested tip in a detached worktree.
-	tipCheck       func(repo, ticketBranch, tip string) (bool, []string)
-	nightlyLastDay string
+	tipCheck func(repo, ticketBranch, tip string) (bool, []string)
 	// Turn-end ingestion (mine_live.go): liveMine enables the worker; mineState
 	// owns debounce and per-Session serialization, mineWG drains it on shutdown.
 	liveMine        bool

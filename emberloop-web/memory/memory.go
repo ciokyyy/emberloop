@@ -132,6 +132,7 @@ type Memory interface {
 	CountMemoriesSince(ctx context.Context, since time.Time) (int, error)
 	SetMemoryStatus(ctx context.Context, id int64, status string) error
 	ReviseMemory(ctx context.Context, oldID int64, next MemoryItem) (int64, error)
+	SetMemorySuperseded(ctx context.Context, id, supersededBy int64) error
 	PinMemory(ctx context.Context, id int64, pinned int) error
 	SetMemoryPinned(ctx context.Context, id int64, pinned bool) error
 	BumpMemory(ctx context.Context, id int64) (MemoryItem, error)

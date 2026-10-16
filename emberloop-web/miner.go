@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,6 +43,12 @@ type MineResult struct {
 // minerCursorPath is the cursor file beside the Session's events.jsonl.
 func (d *Daemon) minerCursorPath(id string) string {
 	return filepath.Join(d.sessionDir(id), "miner.cursor.json")
+}
+
+// legacyMinerCursorPath keeps observation mining isolated from the v2 ingest
+// cursor, which is shared by turn-end ingestion and nightly catch-up.
+func (d *Daemon) legacyMinerCursorPath(id string) string {
+	return filepath.Join(d.sessionDir(id), "legacy-miner.cursor.json")
 }
 
 // minerDeciderDoc is the decider_json of a mined observation: the Decider
@@ -86,11 +91,10 @@ type minerDeciderDoc struct {
 // fallback, and is recorded in decider_json with who proposed it. Duplicates
 // fold into evidence_count; refines and contradicts are stored with the
 // relation and the related observation ID in decider_json, nothing is
-// dropped. After the scan, every touched subject key runs the recurrence
-// check (promoteSubject): a key recurring across Sessions enqueues one
-// proposal, a single mention enqueues nothing. A transient bank error aborts
-// the scan without advancing the cursor, so the bytes mine again; permanently
-// invalid records are skipped.
+// Nightly Memory candidates are promoted in the nightly job; legacy observation
+// subject keys no longer create Rule proposals during ingestion. A transient
+// bank error aborts the scan without advancing the cursor, so the bytes mine
+// again; permanently invalid records are skipped.
 func (d *Daemon) MineSession(id string) (MineResult, error) {
 	return d.mineSession(id, false)
 }
@@ -138,7 +142,7 @@ func (d *Daemon) mineSession(id string, live bool) (MineResult, error) {
 		}
 		return res, err
 	}
-	cur, err := memory.LoadCursor(d.minerCursorPath(id))
+	cur, err := memory.LoadCursor(d.legacyMinerCursorPath(id))
 	if err != nil {
 		return res, err
 	}
@@ -148,7 +152,7 @@ func (d *Daemon) mineSession(id string, live bool) (MineResult, error) {
 	}
 	res.Reset = reset
 	if len(chunk) == 0 {
-		if err := memory.SaveCursor(d.minerCursorPath(id), next); err != nil {
+		if err := memory.SaveCursor(d.legacyMinerCursorPath(id), next); err != nil {
 			return res, err
 		}
 		return res, nil
@@ -171,11 +175,6 @@ func (d *Daemon) mineSession(id string, live bool) (MineResult, error) {
 	// in-memory history cut where this chunk starts, then earlier fresh
 	// Events as the scan advances.
 	prior := minerPriorEvents(memCopy, fresh)
-	// touched collects one subject key per author for the post-scan
-	// recurrence check. Replays contribute their stored key without costing
-	// another confirming call, so a held cursor retries the promotion.
-	type touch struct{ author, key string }
-	touched := make(map[touch]bool)
 	for i, e := range fresh {
 		// The miner reads Sessions only through MinerReadable, the
 		// per-Event predicate of FilterMinerEvents: injections, Handoffs
@@ -216,15 +215,11 @@ func (d *Daemon) mineSession(id string, live bool) (MineResult, error) {
 		// A replayed Event (cursor reset) is read here, before the Decider,
 		// so it never costs a confirming LLM call; the store below would
 		// return the same row without bumping or inserting.
-		if existing, err := bank.ObservationByEvent(ctx, id, eventID); err == nil {
+		if _, err := bank.ObservationByEvent(ctx, id, eventID); err == nil {
 			res.Duplicates++
-			if key := memory.NormalizeSubjectKey(existing.SubjectKey); key != "" {
-				touched[touch{author, key}] = true
-			}
 			prior = append(prior, e)
 			continue
 		}
-		// The heuristic proposes; the confirming Decider (decider.go) judges
 		// durable and offers kind and scope. A drop below its cut stores
 		// nothing; an unavailable confirmer leaves the heuristic keep
 		// standing, but never queue-eligible.
@@ -283,44 +278,12 @@ func (d *Daemon) mineSession(id string, live bool) (MineResult, error) {
 		} else {
 			res.Stored++
 		}
-		if subjectKey != "" {
-			touched[touch{author, subjectKey}] = true
-		}
 		prior = append(prior, e)
-	}
-	// Recurrence promotion runs after the scan in sorted key order, so a key
-	// recurring across Sessions enqueues one proposal on its own, with no
-	// manual promote call. Every touched key is tried even when one fails;
-	// the errors join and the cursor holds, while replays re-touch the same
-	// keys above, so a failed promotion retries instead of being lost.
-	ordered := make([]touch, 0, len(touched))
-	for t := range touched {
-		ordered = append(ordered, t)
-	}
-	sort.Slice(ordered, func(i, j int) bool {
-		if ordered[i].author != ordered[j].author {
-			return ordered[i].author < ordered[j].author
-		}
-		return ordered[i].key < ordered[j].key
-	})
-	var promoteErrs []error
-	for _, t := range ordered {
-		_, created, err := d.promoteSubject(ctx, t.author, t.key, "")
-		if err != nil {
-			promoteErrs = append(promoteErrs, fmt.Errorf("miner: promote subject %s: %w", t.key, err))
-			continue
-		}
-		if created {
-			res.Promoted++
-		}
-	}
-	if len(promoteErrs) > 0 {
-		return res, errors.Join(promoteErrs...)
 	}
 	// The cursor advances only after a clean scan. A crash or a returned
 	// error re-reads the bytes; same-Event replays return without bumping,
 	// so neither path loses a hit nor inflates evidence.
-	if err := memory.SaveCursor(d.minerCursorPath(id), next); err != nil {
+	if err := memory.SaveCursor(d.legacyMinerCursorPath(id), next); err != nil {
 		return res, err
 	}
 	return res, nil

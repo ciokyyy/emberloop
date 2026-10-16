@@ -162,6 +162,22 @@ func (f *Fake) SetMemoryStatus(_ context.Context, id int64, status string) error
 	}
 	return fmt.Errorf("%w: memory %d", ErrNotFound, id)
 }
+
+func (f *Fake) SetMemorySuperseded(_ context.Context, id, supersededBy int64) error {
+	if id <= 0 || supersededBy <= 0 || id == supersededBy {
+		return fmt.Errorf("%w: invalid Memory supersession", ErrInvalid)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for i := range f.mems {
+		if f.mems[i].ID == id {
+			f.mems[i].Status = StatusSuperseded
+			f.mems[i].SupersededBy = supersededBy
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: memory %d", ErrNotFound, id)
+}
 func (f *Fake) PinMemory(_ context.Context, id int64, pinned int) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()

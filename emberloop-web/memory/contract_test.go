@@ -607,6 +607,17 @@ func TestMemoriesAndEpisodes(t *testing.T) {
 			if err != nil || epGot.ID != epID {
 				t.Fatalf("get episode: %+v %v", epGot, err)
 			}
+			newID, err := m.AddMemory(ctx, MemoryItem{SessionID: "s2", EventID: "e2", Author: "u1", Kind: KindFact, Text: "new memory", Quote: "new memory"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := m.SetMemorySuperseded(ctx, id, newID); err != nil {
+				t.Fatal(err)
+			}
+			source, err := m.MemoryByID(ctx, id)
+			if err != nil || source.Status != StatusSuperseded || source.SupersededBy != newID {
+				t.Fatalf("superseded source=%+v err=%v", source, err)
+			}
 			if err := m.SetMemoryStatus(ctx, id, StatusActive); err != nil {
 				t.Fatal(err)
 			}
@@ -619,7 +630,7 @@ func TestMemoriesAndEpisodes(t *testing.T) {
 			if err := m.SetMemoryPinned(ctx, id, true); err != nil {
 				t.Fatal(err)
 			}
-			_, err = m.Purge(ctx, Selection{Memories: []int64{id}, Episodes: []int64{epID}})
+			_, err = m.Purge(ctx, Selection{Memories: []int64{id, newID}, Episodes: []int64{epID}})
 			if err != nil {
 				t.Fatal(err)
 			}
