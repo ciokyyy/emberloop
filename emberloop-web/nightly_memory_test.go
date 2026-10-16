@@ -307,3 +307,22 @@ func TestNightlySummaryIncludesMemoryLifecycleCounts(t *testing.T) {
 		}
 	}
 }
+
+func TestNightlyMemoryConsolidationNoneIsNoOp(t *testing.T) {
+	t.Parallel()
+	d, _ := nightlyTestDaemon(t, nil, nil)
+	bank, err := d.profileBankFor("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, text := range []string{"First memory text", "Second memory text"} {
+		if _, err := bank.AddMemory(context.Background(), memory.MemoryItem{SessionID: fmt.Sprintf("s%d", i), EventID: fmt.Sprintf("e%d", i), Author: "alice", Kind: memory.KindFact, Text: text, Quote: text}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	d.consolidateOneShot = func(_, _, _ string) (string, error) { return "none", nil }
+	res := d.nightlyConsolidateMemories(context.Background(), "none-run", []string{"alice"})
+	if res.Status != memory.LedgerNoData || res.Counts["failed"] != 0 {
+		t.Fatalf("none response was not a clean no-op: %+v", res)
+	}
+}

@@ -90,6 +90,9 @@ func (d *Daemon) nightlyConsolidateMemories(ctx context.Context, runID string, o
 			failed++
 			continue
 		}
+		if strings.EqualFold(strings.TrimSpace(reply), "none") {
+			continue
+		}
 		var result struct {
 			Proposals []memoryConsolidation `json:"proposals"`
 		}
