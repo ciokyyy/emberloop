@@ -395,6 +395,14 @@ func (d *Daemon) requestCompress(id, instructions string) (int, map[string]any) 
 		d.mu.Unlock()
 		return http.StatusAccepted, map[string]any{"ok": true, "waiting": "group"}
 	}
+	// Claim this immediate compress before releasing the lock. Otherwise a
+	// deferred compress can observe the old wait during resumeReleased and
+	// start a second Handoff alongside this request.
+	if !s.busy {
+		s.compressWait = false
+		s.compressAuto = false
+		s.compressInstr = ""
+	}
 	d.mu.Unlock()
 	if code, msg := d.resumeReleased(id); code != 0 {
 		return code, map[string]any{"error": msg}
