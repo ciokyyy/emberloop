@@ -127,7 +127,7 @@ type Memory interface {
 	GetMemory(ctx context.Context, id int64) (MemoryItem, error)
 	MemoryByID(ctx context.Context, id int64) (MemoryItem, error)
 	ListMemories(ctx context.Context, kind, status string, limit int) ([]MemoryItem, error)
-	RecallMemories(ctx context.Context, text string, limit int, includeSuperseded bool) ([]MemoryItem, error)
+	RecallMemoryItems(ctx context.Context, text string, limit int, includeSuperseded bool) ([]MemoryItem, error)
 	SetMemoryStatus(ctx context.Context, id int64, status string) error
 	PinMemory(ctx context.Context, id int64, pinned int) error
 	SetMemoryPinned(ctx context.Context, id int64, pinned bool) error
