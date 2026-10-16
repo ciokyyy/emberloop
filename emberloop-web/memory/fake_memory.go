@@ -221,11 +221,14 @@ func (f *Fake) RecallMemories(_ context.Context, text string, weights RecallWeig
 		if matched == 0 {
 			continue
 		}
-		score := m.Importance * kindDecay(m, f.now())
+		candidateWeights := normalizedWeights(weights, false)
+		lex := float64(matched) / float64(len(terms))
+		score := candidateWeights.FTS*lex + candidateWeights.Importance*m.Importance
+		score *= .7 + .3*kindDecay(m, f.now())
 		if m.Veracity == VeracityInferred {
 			score *= .8
 		}
-		out = append(out, MemoryHit{m, score + float64(matched)/float64(len(terms))})
+		out = append(out, MemoryHit{m, score})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
 	if limit <= 0 || limit > MaxRecall {
