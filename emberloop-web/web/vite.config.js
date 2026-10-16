@@ -61,11 +61,23 @@ export default defineConfig({
   plugins: [tailwindcss(), svelte()],
   base: '/',
   ssr: { noExternal: true },
-  build: {
-    outDir: 'dist',
-    emptyOutDir: true,
-    copyPublicDir: !process.argv.includes('--ssr'),
-  },
+  build: process.env.EL_SSR_HYDRATE_BUILD === '1'
+    ? {
+        outDir: 'dist/ssr',
+        emptyOutDir: false,
+        copyPublicDir: false,
+        lib: {
+          entry: join(webDir, 'src/ssr-hydrate.js'),
+          name: 'ELSSRHydrate',
+          formats: ['iife'],
+          fileName: 'hydrate',
+        },
+      }
+    : {
+        outDir: 'dist',
+        emptyOutDir: true,
+        copyPublicDir: !process.argv.includes('--ssr'),
+      },
   define: { __EL_UI_HASH__: JSON.stringify(uiSourceHash()) },
   // Tests mount real components in jsdom, so resolve the client build of Svelte.
   resolve: { conditions: ['browser', 'module', 'import', 'default'] },

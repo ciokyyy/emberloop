@@ -6,11 +6,15 @@ status: accepted
 
 The spike rendered the Dashboard Svelte 5 SSR bundle in-process with
 `modernc.org/quickjs` v0.25.0, a no-cgo QuickJS implementation. A reused VM
-rendered 1,000 warm requests at 208,749 ns/request (0.21ms), comfortably below
-the 50ms target. Chromium headless hydrated the generated Dashboard shell
-without a Svelte hydration/mismatch warning.
+rendered 1,000 warm requests at 94,185 ns/request (0.094ms), below the 50ms
+target. `TestDashboardSSRBrowserHydration` exercises the browser bundle with
+Chromium and asserts zero hydration/mismatch warnings.
 
-The SSR bundle is 188.15 kB. On Linux amd64, the built Daemon grew from 58,752,478 to 59,137,668 bytes (+385,190 bytes, 0.65%). `npm run build` creates `web/dist/ssr/ssr.js`, included by the existing embedded filesystem. This ADR chooses the engine for SSR integration; the spike does not yet invoke it during request handling.
+The SSR bundle is 188.15 kB and the test hydrator is 133.56 kB. On Linux amd64,
+the Daemon grew from 58,752,478 to 59,264,652 bytes (+512,174 bytes, 0.87%).
+`npm run build` creates both files under `web/dist/ssr/`, included by the
+embedded filesystem. This ADR chooses the engine for SSR integration; requests
+do not invoke it yet.
 
 ## Considered options
 

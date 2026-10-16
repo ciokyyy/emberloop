@@ -4,8 +4,9 @@ Svelte 5 + Vite 8 (with `@sveltejs/vite-plugin-svelte` 7) single-page app, built
 `web/` writes `web/dist/`; the Daemon embeds `web/dist` and serves `/`,
 `/index.html` and the bundle assets (JS, CSS, favicon, manifest, service
 worker, icons) at `/` with PWA headers (see Installable app). `dist/ssr/ssr.js`
-is the bundled Dashboard SSR entry used by the Go QuickJS spike; it is not yet
-invoked by request handling. The browser-only build remains standalone for Tauri.
+is the bundled Dashboard SSR entry; `dist/ssr/hydrate.iife.js` hydrates it in
+the browser test. Neither is invoked by request handling. The browser-only build
+remains standalone for Tauri.
 
 ## Design rules
 
