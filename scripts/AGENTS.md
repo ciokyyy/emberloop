@@ -12,6 +12,10 @@ reads), the compress probes (one script each for pig SDK, pig-over-ACP and
 claude: each plants a fact, compresses by Handoff restart, then asks for
 the fact from the new handle), and the Jev probe (the real decision
 endpoint through `TestLiveJevDecider`, behind `EL_LIVE_JEV=1`).
+The Designer browser live probe, `browser-probe.sh`, proves Session env,
+snapshot and screenshot `read` on Claude, Pig ACP and Pig SDK. It uses a
+temporary Daemon/worktree and is never part of checks; its gate and model
+variables are listed under Local Contracts.
 Run-upgrade live probes run by hand against real Backends, never in the check:
 `run-upgrade-reviewer-submit-probe.sh` observes a real Pig Reviewer's typed
 submit Event and fresh verdict; `run-upgrade-chain-probe.sh` exercises a real
@@ -58,8 +62,9 @@ Anything a script verifies in another package is owned there.
   `explore-replay.sh` needs only bash (no agents, no network) and `fakellm/`
   needs only its own module (no agents, no real model APIs). `acpbench/`
   self-tests against its in-repo fake agent; hand runs against real agents
-  need a fake LLM endpoint. No script is part of an automated check and none
-  runs inside ticket work.
+  need a fake LLM endpoint. `browser-probe.sh` needs `EL_LIVE_BROWSER=1` and
+  `EL_LIVE_CLAUDE_MODEL`, `EL_LIVE_PIG_ACP_MODEL` and `EL_LIVE_PIG_SDK_MODEL`;
+  it uses live real-agent sessions and is never part of the repo check.
 
 ## Work Guidance
 
