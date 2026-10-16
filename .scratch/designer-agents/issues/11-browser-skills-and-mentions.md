@@ -4,10 +4,10 @@
 
 **Blocked by:** 05-browser-live-probe, 09-designer-worker-routing, 10-design-reviewer-seat
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `designer` and `reviewer-design` skills appear in the Designer's and design Reviewer's first prompts, trimmed to the role like other skills, and are overridable through `run_skills` settings
-- [ ] Worker, spec Reviewer and standards Reviewer prompts and every web Session role prompt gain exactly one mention line; other prompt text is unchanged
-- [ ] The skills name the CLI by its real command shapes verified in the probe, and state the localhost-only rule and the missing-CLI fallback
-- [ ] Prompt tests pin the injected text for each role and the absence of the browser section on `code` Tickets beyond the mention line
-- [ ] `emberloop-web/AGENTS.md` records the injection contract; `.emberloop/check` passes
+- [x] `designer` and `reviewer-design` skills appear in the Designer's and design Reviewer's first prompts, trimmed to the role like other skills, and are overridable through `run_skills` settings
+- [x] Worker, spec Reviewer and standards Reviewer prompts and every web Session role prompt gain exactly one mention line; other prompt text is unchanged
+- [x] The skills name the CLI by its real command shapes verified in the probe, and state the localhost-only rule and the missing-CLI fallback
+- [x] Prompt tests pin the injected text for each role and the absence of the browser section on `code` Tickets beyond the mention line
+- [x] `emberloop-web/AGENTS.md` records the injection contract; `.emberloop/check` passes
