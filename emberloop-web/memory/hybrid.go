@@ -146,14 +146,15 @@ func (b *Bank) RecallMemories(ctx context.Context, text string, weights RecallWe
 				lex = (max - fts[id]) / (max - min)
 			}
 		}
-		imp := m.Importance * kindDecay(m, b.now())
-		if m.Veracity == VeracityInferred {
-			imp *= .8
-		}
+		imp := m.Importance
 		candidateWeights := normalizedWeights(weights, hasVec)
 		score := candidateWeights.FTS*lex + candidateWeights.Importance*imp
 		if hasVec {
 			score += candidateWeights.Vector * cos
+		}
+		score *= .7 + .3*kindDecay(m, b.now())
+		if m.Veracity == VeracityInferred {
+			score *= .8
 		}
 		out = append(out, MemoryHit{m, score})
 	}
@@ -189,8 +190,9 @@ func (b *Bank) queryVector(ctx context.Context, text string) ([]float32, string)
 	return vectors[0], b.embeddingModel
 }
 
-// RecallEpisodes searches episode text for the agent recall tool only. These
-// results are intentionally not used by the injection builder.
+// RecallEpisodes searches Episodes for the agent recall tool only. Results
+// use the same per-table FTS/vector/importance scoring as Memory recall and
+// are never passed to the injection builder.
 func (b *Bank) RecallEpisodes(ctx context.Context, text string, limit int) ([]EpisodeHit, error) {
 	q := Query(text)
 	if q == "" {
@@ -200,49 +202,104 @@ func (b *Bank) RecallEpisodes(ctx context.Context, text string, limit int) ([]Ep
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	var raw []struct {
-		e Episode
-		s float64
+	type rankedEpisode struct {
+		e    Episode
+		bm25 float64
 	}
+	fts := map[int64]rankedEpisode{}
 	for rows.Next() {
 		var e Episode
-		var consolidated, created string
-		var s float64
-		if err := rows.Scan(&e.ID, &e.SessionID, &e.EventRange, &e.Author, &e.Text, &e.Importance, &e.Embedding, &e.EmbeddingModel, &consolidated, &created, &s); err != nil {
+		var c, created string
+		var rank float64
+		if err := rows.Scan(&e.ID, &e.SessionID, &e.EventRange, &e.Author, &e.Text, &e.Importance, &e.Embedding, &e.EmbeddingModel, &c, &created, &rank); err != nil {
+			rows.Close()
 			return nil, err
 		}
-		e.ConsolidatedAt = parseTimeText(consolidated)
+		e.ConsolidatedAt = parseTimeText(c)
 		e.CreatedAt = parseTimeText(created)
-		raw = append(raw, struct {
-			e Episode
-			s float64
-		}{e, s})
+		fts[e.ID] = rankedEpisode{e, rank}
 	}
 	if err := rows.Err(); err != nil {
+		rows.Close()
 		return nil, err
 	}
-	var lo, hi float64
-	if len(raw) > 0 {
-		lo, hi = raw[0].s, raw[0].s
-		for _, r := range raw {
-			if r.s < lo {
-				lo = r.s
+	rows.Close()
+	lo, hi := 0.0, 0.0
+	first := true
+	for _, r := range fts {
+		if first || r.bm25 < lo {
+			lo = r.bm25
+		}
+		if first || r.bm25 > hi {
+			hi = r.bm25
+		}
+		first = false
+	}
+	vec, model := b.queryVector(ctx, text)
+	vector := map[int64]float64{}
+	if len(vec) > 0 {
+		vr, err := b.rdb.QueryContext(ctx, `SELECT id,embedding,embedding_model FROM episodes WHERE embedding IS NOT NULL`)
+		if err != nil {
+			return nil, err
+		}
+		var candidates []VectorCandidate
+		for vr.Next() {
+			var c VectorCandidate
+			if err := vr.Scan(&c.ID, &c.Vector, &c.Model); err != nil {
+				vr.Close()
+				return nil, err
 			}
-			if r.s > hi {
-				hi = r.s
-			}
+			candidates = append(candidates, c)
+		}
+		if err := vr.Err(); err != nil {
+			vr.Close()
+			return nil, err
+		}
+		vr.Close()
+		hits, _ := VectorSearch(ctx, candidates, vec, model, 40, EmbeddingQueryBudget, nil)
+		for _, h := range hits {
+			vector[h.ID] = h.Similarity
 		}
 	}
-	out := make([]EpisodeHit, 0, len(raw))
-	for _, r := range raw {
-		score := r.e.Importance
-		if hi != lo {
-			score += .35 * (hi - r.s) / (hi - lo)
+	ids := map[int64]bool{}
+	for id := range fts {
+		ids[id] = true
+	}
+	for id := range vector {
+		ids[id] = true
+	}
+	out := make([]EpisodeHit, 0, len(ids))
+	for id := range ids {
+		r, ok := fts[id]
+		if !ok {
+			e, err := b.GetEpisode(ctx, id)
+			if err != nil {
+				continue
+			}
+			r.e = e
+		}
+		cos, hasVec := vector[id]
+		lex := 0.0
+		if _, ok := fts[id]; ok {
+			if hi == lo {
+				lex = 1
+			} else {
+				lex = (hi - r.bm25) / (hi - lo)
+			}
+		}
+		w := normalizedWeights(RecallWeights{}, hasVec)
+		score := w.FTS*lex + w.Importance*r.e.Importance
+		if hasVec {
+			score += w.Vector * cos
 		}
 		out = append(out, EpisodeHit{r.e, score})
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Score > out[j].Score })
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Score == out[j].Score {
+			return out[i].Episode.ID < out[j].Episode.ID
+		}
+		return out[i].Score > out[j].Score
+	})
 	if limit <= 0 || limit > MaxRecall {
 		limit = MaxRecall
 	}
@@ -251,4 +308,3 @@ func (b *Bank) RecallEpisodes(ctx context.Context, text string, limit int) ([]Ep
 	}
 	return out, nil
 }
-

@@ -15,7 +15,6 @@ import (
 	"example.com/emberloop-web/memory"
 )
 
-
 // cannedPrompt builds a miner-readable user prompt Event.
 func cannedPrompt(seq int64, text string) Event {
 	return Event{Kind: "prompt", Sender: senderUser, User: "u1", Text: text, Seq: seq}
@@ -140,6 +139,35 @@ func TestNoRecallSkipsRecallBlock(t *testing.T) {
 	}
 }
 
+func TestRecallBlockInjectsOnlyActiveMemoriesAndTracksIDs(t *testing.T) {
+	t.Parallel()
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	bank, err := d.profileBankFor("u1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	add := func(text, status string) {
+		_, e := bank.AddMemory(context.Background(), memory.MemoryItem{SessionID: "s", EventID: text, Author: "u1", Kind: memory.KindPreference, Text: text, Quote: text, Status: status, Veracity: memory.VeracityStated})
+		if e != nil {
+			t.Fatal(e)
+		}
+	}
+	add("Prefer blue lanterns", memory.StatusActive)
+	add("Forgot blue lanterns", memory.StatusForgotten)
+	add("Parked blue lanterns", memory.StatusParked)
+	add("Superseded blue lanterns", memory.StatusSuperseded)
+	rb, refs, err := d.recallBlockFor(context.Background(), SessionMeta{Owner: "u1"}, "blue lanterns")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rb) != 1 || !strings.Contains(rb[0], "Prefer blue lanterns") || strings.Contains(rb[0], "Forgot blue lanterns") || strings.Contains(rb[0], "Parked blue lanterns") || strings.Contains(rb[0], "Superseded blue lanterns") {
+		t.Fatalf("block=%v", rb)
+	}
+	if len(refs) != 1 || refs[0].MemoryID == 0 {
+		t.Fatalf("memory refs=%+v", refs)
+	}
+}
+
 func TestRecallOffNIsARunSettingInTheRunFile(t *testing.T) {
 	t.Parallel()
 	repo, spec := initRunRepo(t, demoTickets())
@@ -171,7 +199,7 @@ func TestRecallOffNIsARunSettingInTheRunFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	var saved struct {
-		RecallOffN int            `json:"recallOffN"`
+		RecallOffN int             `json:"recallOffN"`
 		RecallOff  map[string]bool `json:"recallOff"`
 	}
 	if err := json.Unmarshal(raw, &saved); err != nil {

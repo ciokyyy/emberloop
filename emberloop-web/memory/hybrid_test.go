@@ -61,3 +61,27 @@ func TestRecallWeightsRenormalizeWithoutVector(t *testing.T) {
 		t.Fatalf("weights=%+v", w)
 	}
 }
+
+func TestMemoryRecallFindsSemanticParaphraseWithoutKeyword(t *testing.T) {
+	root := tempDir(t)
+	embedder := &FakeEmbedder{Vector: []float32{1, 0}}
+	b, err := openBank(filepath.Join(root, "u.db"), filepath.Join(root, "snapshots"), Options{Embedder: embedder, EmbeddingModel: "test-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer b.Close()
+	id, err := b.AddMemory(context.Background(), MemoryItem{SessionID: "s", EventID: "e", Author: "u", Kind: KindFact, Text: "The user rides a bicycle", Quote: "I ride a bicycle", Importance: .8, Veracity: VeracityStated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := b.SetMemoryEmbedding(context.Background(), id, EncodeVector([]float32{1, 0}), "test-model"); err != nil {
+		t.Fatal(err)
+	}
+	hits, err := b.RecallMemories(context.Background(), "two-wheeled commute", RecallWeights{}, 5)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(hits) != 1 || hits[0].Memory.ID != id {
+		t.Fatalf("semantic hits=%+v", hits)
+	}
+}

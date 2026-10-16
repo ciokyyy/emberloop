@@ -142,6 +142,14 @@ func TestMinerReadableOnlyUserPrompts(t *testing.T) {
 	}
 }
 
+func TestInjectionEventSeparatesMemoryIDs(t *testing.T) {
+	e := InjectionEvent{ProfileVersion: 2, Rules: []InjectedRule{{ID: "rule-1", Version: 3}, {MemoryID: 41}, {MemoryID: 42}}}
+	got, ok := parseInjectionEvent(e.text())
+	if !ok || len(got.Rules) != 1 || got.Rules[0].ID != "rule-1" || len(got.MemoryIDs) != 2 || got.MemoryIDs[0] != 41 || got.MemoryIDs[1] != 42 {
+		t.Fatalf("event=%+v raw=%s", got, e.text())
+	}
+}
+
 func TestFilterMinerEventsDropsEverythingButUserPrompts(t *testing.T) {
 	t.Parallel()
 	events := []Event{

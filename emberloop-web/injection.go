@@ -6,21 +6,34 @@ import "encoding/json"
 // The injection Event lists these so a Session replay can resolve exactly
 // what the agent saw.
 type InjectedRule struct {
-	ID      string `json:"id"`
-	Version int    `json:"version"`
+	ID       string `json:"id,omitempty"`
+	Version  int    `json:"version,omitempty"`
+	MemoryID int64  `json:"-"`
 }
 
 // InjectionEvent is the JSON Text of an "injection" Event. The Daemon
 // appends one on every injection (Profile, recall or both), with
 // sender=system. ProfileVersion is the injected Profile version, 0 when the
-// block carried no Profile. Rules lists the injected Rule versions, empty
-// when the block carried none.
+// block carried no Profile. MemoryIDs lists injected Memories.
 type InjectionEvent struct {
 	ProfileVersion int            `json:"profileVersion,omitempty"`
 	Rules          []InjectedRule `json:"rules"`
+	MemoryIDs      []int64        `json:"memoryIds"`
 }
 
 func (e InjectionEvent) text() string {
+	var rules []InjectedRule
+	if e.MemoryIDs == nil {
+		e.MemoryIDs = []int64{}
+	}
+	for _, ref := range e.Rules {
+		if ref.MemoryID > 0 {
+			e.MemoryIDs = append(e.MemoryIDs, ref.MemoryID)
+		} else {
+			rules = append(rules, ref)
+		}
+	}
+	e.Rules = rules
 	if e.Rules == nil {
 		e.Rules = []InjectedRule{}
 	}
