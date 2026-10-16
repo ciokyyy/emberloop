@@ -112,6 +112,19 @@ func (b *Bank) DedupAndStoreMemory(ctx context.Context, item MemoryItem) (result
 				return nil
 			}
 		}
+		for _, old := range active {
+			relation := memoryRelation(item, old)
+			if relation != RelDuplicate {
+				continue
+			}
+			now := b.now()
+			_, e = db.ExecContext(ctx, `UPDATE memories SET mention_count = mention_count + 1, last_seen_at = ?, importance = MIN(0.95, importance + 0.05) WHERE id = ? AND status = 'active'`, timeText(now), old.ID)
+			if e != nil {
+				return e
+			}
+			result = MemoryStoreResult{ID: old.ID, Relation: relation, Duplicate: true}
+			return nil
+		}
 		var supersedeID int64
 		for _, old := range active {
 			if old.Author == item.Author && memoryRelation(item, old) == RelContradicts {
@@ -123,15 +136,6 @@ func (b *Bank) DedupAndStoreMemory(ctx context.Context, item MemoryItem) (result
 		if !result.Superseded {
 			for _, old := range active {
 				relation := memoryRelation(item, old)
-				if relation == RelDuplicate {
-					now := b.now()
-					_, e = db.ExecContext(ctx, `UPDATE memories SET mention_count = mention_count + 1, last_seen_at = ?, importance = MIN(0.95, importance + 0.05) WHERE id = ? AND status = 'active'`, timeText(now), old.ID)
-					if e != nil {
-						return e
-					}
-					result = MemoryStoreResult{ID: old.ID, Relation: relation, Duplicate: true}
-					return nil
-				}
 				if result.Relation == "" && (relation == RelContradicts || relation == RelRefines) {
 					result.Relation = relation
 				}
@@ -181,9 +185,16 @@ func (f *Fake) DedupAndStoreMemory(_ context.Context, item MemoryItem) (MemorySt
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for i := range f.mems {
-		old := f.mems[i]
-		if old.Status == StatusActive && old.SessionID == item.SessionID && old.EventID == item.EventID {
-			return MemoryStoreResult{ID: old.ID, Relation: RelDuplicate, Duplicate: true}, nil
+		old := &f.mems[i]
+		if old.Status != StatusActive {
+			continue
+		}
+		r := memoryRelation(item, *old)
+		if r == RelDuplicate {
+			old.MentionCount++
+			old.LastSeenAt = f.now()
+			old.Importance = math.Min(0.95, old.Importance+0.05)
+			return MemoryStoreResult{ID: old.ID, Relation: r, Duplicate: true}, nil
 		}
 	}
 	supersedeIndex := -1
@@ -204,12 +215,6 @@ func (f *Fake) DedupAndStoreMemory(_ context.Context, item MemoryItem) (MemorySt
 				continue
 			}
 			r := memoryRelation(item, *old)
-			if r == RelDuplicate {
-				old.MentionCount++
-				old.LastSeenAt = f.now()
-				old.Importance = math.Min(0.95, old.Importance+0.05)
-				return MemoryStoreResult{ID: old.ID, Relation: r, Duplicate: true}, nil
-			}
 			if relation == "" && (r == RelContradicts || r == RelRefines) {
 				relation = r
 			}

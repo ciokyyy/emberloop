@@ -38,15 +38,6 @@ func TestDedupAndStoreMemoryTextAndSupersession(t *testing.T) {
 				t.Fatalf("duplicate inserted row: %d, %v", len(rows), err)
 			}
 
-			crossAuthor := put("s3", "e3", "bob", "never return wrapped errors")
-			if crossAuthor.Relation != RelContradicts || crossAuthor.Superseded {
-				t.Fatalf("cross-author contradiction = %+v", crossAuthor)
-			}
-			stored, _ = m.GetMemory(ctx, first.ID)
-			if stored.Status != StatusActive {
-				t.Fatalf("cross-author contradiction superseded row: %+v", stored)
-			}
-
 			newer := put("s4", "e4", "alice", "never return wrapped errors")
 			if newer.Relation != RelContradicts || !newer.Superseded {
 				t.Fatalf("same-author contradiction = %+v", newer)
@@ -58,6 +49,14 @@ func TestDedupAndStoreMemoryTextAndSupersession(t *testing.T) {
 			latest, _ := m.GetMemory(ctx, newer.ID)
 			if latest.Status != StatusActive || latest.SupersededBy != 0 {
 				t.Fatalf("new memory = %+v", latest)
+			}
+			crossAuthor := put("s5", "e5", "bob", "always return wrapped errors")
+			if crossAuthor.Relation != RelContradicts || crossAuthor.Superseded {
+				t.Fatalf("cross-author contradiction = %+v", crossAuthor)
+			}
+			latest, _ = m.GetMemory(ctx, newer.ID)
+			if latest.Status != StatusActive {
+				t.Fatalf("cross-author contradiction superseded row: %+v", latest)
 			}
 		})
 	}
@@ -115,5 +114,39 @@ func TestNormalizedTextDuplicateWinsOverVectorDifference(t *testing.T) {
 	b := MemoryItem{Text: "always return wrapped errors!", Embedding: EncodeVector([]float32{0, 1}), EmbeddingModel: "m"}
 	if got := memoryRelation(a, b); got != RelDuplicate {
 		t.Fatalf("normalized duplicate = %q", got)
+	}
+}
+
+func TestBankWideDuplicatePrecedesSameAuthorSupersession(t *testing.T) {
+	for _, fac := range factories() {
+		t.Run(fac.name, func(t *testing.T) {
+			m := fac.open(t, newTestClock())
+			ctx := context.Background()
+			put := func(session, event, author, text string) MemoryStoreResult {
+				result, err := m.DedupAndStoreMemory(ctx, MemoryItem{SessionID: session, EventID: event, Author: author, Kind: KindInstruction, Text: text, Quote: text, Importance: .7, Veracity: VeracityStated})
+				if err != nil {
+					t.Fatal(err)
+				}
+				return result
+			}
+			alice := put("s1", "e1", "alice", "always return wrapped errors")
+			bob := put("s2", "e2", "bob", "never return wrapped errors")
+			incoming := put("s3", "e3", "alice", "never return wrapped errors")
+			if !incoming.Duplicate || incoming.ID != bob.ID || incoming.Superseded {
+				t.Fatalf("bank-wide duplicate = %+v, want duplicate id %d", incoming, bob.ID)
+			}
+			aliceItem, err := m.GetMemory(ctx, alice.ID)
+			if err != nil || aliceItem.Status != StatusActive {
+				t.Fatalf("contradiction target changed: %+v, %v", aliceItem, err)
+			}
+			bobItem, err := m.GetMemory(ctx, bob.ID)
+			if err != nil || bobItem.MentionCount != 2 {
+				t.Fatalf("duplicate not bumped: %+v, %v", bobItem, err)
+			}
+			rows, err := m.ListMemories(ctx, "", "", 10)
+			if err != nil || len(rows) != 2 {
+				t.Fatalf("duplicate inserted row: %d, %v", len(rows), err)
+			}
+		})
 	}
 }
