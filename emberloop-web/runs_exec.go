@@ -94,9 +94,22 @@ const (
 	reviewerDesignType    = "reviewer-design"
 )
 
-// requiredReviewerTypes is the gate every finish needs: both reviewers
-// passed at the worker's current tip.
-var requiredReviewerTypes = []string{reviewerStandardsType, reviewerSpecType}
+// requiredReviewerTypes returns the gate for the effective Ticket type.
+func requiredReviewerTypes(ticketType string) []string {
+	if ticketType == "design" {
+		return []string{reviewerStandardsType, reviewerSpecType, reviewerDesignType}
+	}
+	return []string{reviewerStandardsType, reviewerSpecType}
+}
+
+func requiredReviewerTypesFor(rs *runState, ticketID string) []string {
+	for _, ticket := range rs.Tickets {
+		if ticket.ID == ticketID {
+			return requiredReviewerTypes(ticket.Type)
+		}
+	}
+	return requiredReviewerTypes("code")
+}
 
 // storedReview is one reviewer type's verdict on a Ticket: the status it
 // reported and the branch tip it was given at, plus the findings and the
@@ -290,11 +303,12 @@ type runState struct {
 	// never sets it.
 	// IdlePaused marks a Run the driver paused because every open Ticket is
 	// paused by the user; resuming one of those Tickets resumes the Run.
-	IdlePaused      bool                    `json:"idlePaused,omitempty"`
-	ResumeOnRestart bool                    `json:"resumeOnRestart,omitempty"`
-	Rows            map[string]savedRow     `json:"rows,omitempty"`
-	Chains          map[string][]chainEntry `json:"chains,omitempty"`
-	ChainExhausted  map[string]bool         `json:"chainExhausted,omitempty"`
+	IdlePaused             bool                    `json:"idlePaused,omitempty"`
+	ResumeOnRestart        bool                    `json:"resumeOnRestart,omitempty"`
+	Rows                   map[string]savedRow     `json:"rows,omitempty"`
+	Chains                 map[string][]chainEntry `json:"chains,omitempty"`
+	DesignReviewerFallback bool                    `json:"designReviewerFallback,omitempty"`
+	ChainExhausted         map[string]bool         `json:"chainExhausted,omitempty"`
 	// ChainPendingSubmit invalidates an old Worker done submit on a provider
 	// Chain failure until the replacement Worker submits done.
 	ChainPendingSubmit map[string]bool `json:"chainPendingSubmit,omitempty"`
@@ -825,52 +839,53 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rs := &runState{
-		ID:                 newID(),
-		Spec:               specRun.Spec,
-		Repo:               repo,
-		Status:             runStatusRunning,
-		Harness:            harness,
-		Model:              model,
-		Effort:             effort,
-		RecallOffN:         req.RecallOffN,
-		NoStopAfterSubmit:  req.NoStopAfterSubmit,
-		CreatedAt:          time.Now().UTC(),
-		Owner:              creator.ID,
-		SpecBranch:         specRun.Branch,
-		SpecBase:           specBase,
-		Sessions:           map[string]string{},
-		Branches:           map[string]string{},
-		Worktrees:          map[string]string{},
-		Targets:            map[string]string{},
-		Bases:              map[string]string{},
-		Merged:             map[string]string{},
-		Reviewers:          map[string]map[string]string{},
-		Reviews:            map[string]map[string]storedReview{},
-		ReviewTips:         map[string]map[string]string{},
-		ReviewPending:      map[string]map[string][]string{},
-		Reprompted:         map[string]int{},
-		ReviewStarted:      map[string]map[string]time.Time{},
-		FormatReprompt:     map[string]map[string]bool{},
-		Rounds:             map[string][]ticketRound{},
-		NeedsYouReason:     map[string]string{},
-		Followups:          map[string]string{},
-		Rows:               map[string]savedRow{},
-		Chains:             d.daemonConfiguredRunChains(harness, model, effort),
-		ChainExhausted:     map[string]bool{},
-		ChainPendingSubmit: map[string]bool{},
-		StartBlocked:       map[string]string{},
-		SpecRun:            specRun,
-		Driver:             el.NewDriverRun(nil),
-		Parked:             map[string]bool{},
-		TicketPaused:       map[string]bool{},
-		TicketPauseHolds:   map[string]bool{},
-		PausedRoles:        map[string]map[string]bool{},
-		RunPausedRoles:     map[string]map[string]bool{},
-		WorkerOverrides:    map[string]chainEntry{},
-		ReviewerOverrides:  map[string]map[string]chainEntry{},
-		Discarded:          map[string]bool{},
-		RetryGen:           map[string]int{},
-		RecallOff:          map[string]bool{},
+		ID:                     newID(),
+		Spec:                   specRun.Spec,
+		Repo:                   repo,
+		Status:                 runStatusRunning,
+		Harness:                harness,
+		Model:                  model,
+		Effort:                 effort,
+		RecallOffN:             req.RecallOffN,
+		NoStopAfterSubmit:      req.NoStopAfterSubmit,
+		CreatedAt:              time.Now().UTC(),
+		Owner:                  creator.ID,
+		SpecBranch:             specRun.Branch,
+		SpecBase:               specBase,
+		Sessions:               map[string]string{},
+		Branches:               map[string]string{},
+		Worktrees:              map[string]string{},
+		Targets:                map[string]string{},
+		Bases:                  map[string]string{},
+		Merged:                 map[string]string{},
+		Reviewers:              map[string]map[string]string{},
+		Reviews:                map[string]map[string]storedReview{},
+		ReviewTips:             map[string]map[string]string{},
+		ReviewPending:          map[string]map[string][]string{},
+		Reprompted:             map[string]int{},
+		ReviewStarted:          map[string]map[string]time.Time{},
+		FormatReprompt:         map[string]map[string]bool{},
+		Rounds:                 map[string][]ticketRound{},
+		NeedsYouReason:         map[string]string{},
+		Followups:              map[string]string{},
+		Rows:                   map[string]savedRow{},
+		Chains:                 d.daemonConfiguredRunChains(harness, model, effort),
+		DesignReviewerFallback: len(d.daemonChainFor(reviewerDesignType)) == 0,
+		ChainExhausted:         map[string]bool{},
+		ChainPendingSubmit:     map[string]bool{},
+		StartBlocked:           map[string]string{},
+		SpecRun:                specRun,
+		Driver:                 el.NewDriverRun(nil),
+		Parked:                 map[string]bool{},
+		TicketPaused:           map[string]bool{},
+		TicketPauseHolds:       map[string]bool{},
+		PausedRoles:            map[string]map[string]bool{},
+		RunPausedRoles:         map[string]map[string]bool{},
+		WorkerOverrides:        map[string]chainEntry{},
+		ReviewerOverrides:      map[string]map[string]chainEntry{},
+		Discarded:              map[string]bool{},
+		RetryGen:               map[string]int{},
+		RecallOff:              map[string]bool{},
 
 		notify:  make(chan struct{}),
 		unpause: make(chan struct{}),
@@ -1150,8 +1165,9 @@ func (d *Daemon) webDriverWorld(rs *runState, files map[string]string, max int) 
 		Finish: func(ticketID string) (el.DriverFinish, error) {
 			return d.runFinishWorker(rs.ID, ticketID)
 		},
-		Required: append([]string(nil), requiredReviewerTypes...),
-		Run:      rs.Driver,
+		Required:    append([]string(nil), requiredReviewerTypes("code")...),
+		RequiredFor: func(ticketID string) []string { return requiredReviewerTypesFor(rs, ticketID) },
+		Run:         rs.Driver,
 		// Sleep caps the driver's poll, writes the pass to the Run file
 		// first (state, tip, refusal and times per Ticket), then waits out
 		// a pause with no lock held, so Resume never blocks on the driver.
@@ -1686,7 +1702,7 @@ func (d *Daemon) runSubmitCount(runID, ticketID string) int {
 // workerReviewNote tells a Worker who reviews its work. The Daemon starts the
 // spec and standards Reviewers itself after the first done submit, so a Worker
 // never spawns reviewers of its own.
-const workerReviewNote = "Do not spawn reviewers: after you submit done, the Daemon starts the spec and standards reviewers itself and sends you every recorded finding, including minors, marked blocking or non-blocking. When you receive findings, answer every blocker/major in your next done submit using dispositions with the exact findingId and disposition; declined also needs reason, deferred also needs ticket (the Ticket number). Minor dispositions are optional. Spawn scouts only for read-only research."
+const workerReviewNote = "Do not spawn reviewers: after you submit done, the Daemon starts every required reviewer itself and sends you every recorded finding, including minors, marked blocking or non-blocking. When you receive findings, answer every blocker/major in your next done submit using dispositions with the exact findingId and disposition; declined also needs reason, deferred also needs ticket (the Ticket number). Minor dispositions are optional. Spawn scouts only for read-only research."
 
 // webStallNudge is the fixed nudge for a Worker that went idle with no submit.
 const webStallNudge = "Nudge: you have not submitted. Finish the ticket and submit done with the completed checkboxes; the reviewers start after your submit."
@@ -1699,6 +1715,8 @@ func reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip string) string
 	axis := "correctness and this repo's standards"
 	if reviewerType == reviewerSpecType {
 		axis = "fit to the ticket and the spec"
+	} else if reviewerType == reviewerDesignType {
+		axis = "visual quality, hierarchy, spacing, responsiveness, states, copy, and fit to the Ticket's intent; judge the rendered page at this tip, not the diff"
 	}
 	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker. Do not re-raise any declined finding unless its cited lines have changed since the finding was declined. "+reviewerScopeRule, ticketID, spec, reviewerType, axis, branch, tip)
 }
@@ -1746,6 +1764,8 @@ func reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip string
 // travels with the prompt. The axes stay separate on purpose: code that
 // follows every standard can still miss the ticket, and the reverse.
 const standardsBrief = `Standards axis. Read the repo's documented standards first (AGENTS.md files on the route to each changed path, CLAUDE.md, CONTRIBUTING.md, CODING_STANDARDS.md). Report (a) each place the diff breaks a documented standard, citing the file and rule, and (b) bugs, missed edge cases, callers the change broke and new logic with no test. DOX check: report a diff that changes a documented contract or layout without updating the owning AGENTS.md, or leaves a Child DOX Index stale. Smell baseline, always a judgement call and always overridden by a documented repo standard: Mysterious Name, Duplicated Code, Feature Envy, Data Clumps, Primitive Obsession, Repeated Switches, Shotgun Surgery, Divergent Change, Speculative Generality, Message Chains, Middle Man, Refused Bequest. Name a smell as "possible <smell>" and quote the hunk. Skip anything tooling already enforces. Whether the change matches the ticket is the spec reviewer's job, not yours.`
+
+const designBrief = `Design review axis. Judge the rendered result at the Ticket tip, not the diff: visual quality, hierarchy, spacing, responsiveness, states, copy, and fit to the Ticket's intent. Use the local browser skill when available. Do not edit files; report findings through the same typed submit verdict.`
 
 const specBrief = `Spec axis. Read the ticket file and the spec. Report (a) requirements the ticket or spec asked for that are missing or only partly done, (b) behaviour in the diff nobody asked for (scope creep), and (c) requirements that look done but are implemented wrong. Quote the ticket or spec line for each finding. Check every acceptance checkbox against the diff, not against the worker's claim. The spec's hard limits bind the worker: never ask for an edit they forbid. Code style and repo standards are the standards reviewer's job, not yours.`
 
@@ -2265,7 +2285,7 @@ func appendRoundLocked(rs *runState, ticketID, tip string, now time.Time, reuse 
 			}
 		}
 	}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		if reuse[typ] {
 			continue
 		}
@@ -2302,7 +2322,7 @@ func closeRoundIfCompleteLocked(rs *runState, ticketID string, now time.Time) {
 		rs.Rounds[ticketID] = rounds
 		return
 	}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		if _, ok := last.Reviews[typ]; !ok {
 			rs.Rounds[ticketID] = rounds
 			return
@@ -2401,7 +2421,7 @@ func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 	}
 	missing := []string{}
 	existing := map[string]string{}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		if sess := rs.Reviewers[ticketID][typ]; sess == "" {
 			missing = append(missing, typ)
 		} else {
@@ -2456,7 +2476,7 @@ func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 	// carried to the new tip so the gate reads fresh; the round still
 	// records the carry as held, and no prompt goes out for these types.
 	reuse := map[string]bool{}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		r, ok := rs.Reviews[ticketID][typ]
 		if !ok || r.Verdict == "" {
 			continue
@@ -2518,7 +2538,7 @@ func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 				last.Reviews[typ] = rv
 			}
 		}
-		for _, typ := range requiredReviewerTypes {
+		for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 			if _, ok := last.Reviews[typ]; ok {
 				continue
 			}
@@ -2539,7 +2559,7 @@ func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 		closeRoundIfCompleteLocked(rs, ticketID, now)
 		rs.Rounds[ticketID] = rounds
 	}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		if !need[typ] {
 			continue
 		}
@@ -2555,7 +2575,7 @@ func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 	// need not rerun the full suite), the scope warning and the round-4+
 	// note. All three are non-blocking additions to the gate prompt.
 	evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, tip)
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		if !need[typ] {
 			continue
 		}
@@ -2597,7 +2617,7 @@ func (d *Daemon) repairOwedReviewerPrompts(runID, ticketID string) {
 		d.mu.Unlock()
 		return
 	}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		sess := rs.Reviewers[ticketID][typ]
 		if sess == "" || rs.ReviewTips[ticketID][typ] != tip {
 			continue
@@ -3480,14 +3500,15 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 	if gerr != nil || tip == "" {
 		return el.DriverFinish{}, fmt.Errorf("ticket %s has no tip; start its worker again", ticketID)
 	}
-	if !reviewGateReady(sessions, verdicts) {
+	required := requiredReviewerTypesFor(rs, ticketID)
+	if !reviewGateReady(sessions, verdicts, required) {
 		return el.DriverFinish{}, nil
 	}
-	if why := reviewGateDetail(verdicts, tip); why != "" {
+	if why := reviewGateDetail(verdicts, tip, required); why != "" {
 		// No verdict judged the current tip: the Ticket is under review,
 		// not refused, so there is no new refusal to tell. A fresh
 		// changes verdict is still told unchanged below.
-		if noneFreshAtTip(verdicts, tip) {
+		if noneFreshAtTip(verdicts, tip, required) {
 			return el.DriverFinish{}, nil
 		}
 		// A round still open at this tip means a reviewer has not judged it
@@ -3513,8 +3534,8 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 		if open {
 			return el.DriverFinish{}, nil
 		}
-		why = reviewGateDetail(verdicts, tip)
-		if why == "" || noneFreshAtTip(verdicts, tip) {
+		why = reviewGateDetail(verdicts, tip, required)
+		if why == "" || noneFreshAtTip(verdicts, tip, required) {
 			// The gate passes now (the next pass merges) or no verdict
 			// judged the tip yet: nothing to tell.
 			return el.DriverFinish{}, nil
@@ -3532,7 +3553,7 @@ func (d *Daemon) runFinishWorker(runID, ticketID string) (el.DriverFinish, error
 				}
 				if idx >= 0 {
 					var declined []string
-					for _, typ := range requiredReviewerTypes {
+					for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 						if r, ok := verdicts[typ]; ok && r.Verdict != "pass" && r.At == tip {
 							for _, f := range r.Findings {
 								declined = append(declined, f.File+":"+fmt.Sprintf("%d", f.Line)+" "+f.Severity+": "+strings.ReplaceAll(f.Problem, "\n", " / "))
@@ -4021,8 +4042,8 @@ func (d *Daemon) checkSpecOverlap(runID string) {
 
 // reviewGateReady says the finish may judge the gate: every required
 // reviewer type has a Session and a submitted verdict.
-func reviewGateReady(sessions map[string]string, verdicts map[string]storedReview) bool {
-	for _, typ := range requiredReviewerTypes {
+func reviewGateReady(sessions map[string]string, verdicts map[string]storedReview, required []string) bool {
+	for _, typ := range required {
 		if sessions[typ] == "" {
 			return false
 		}
@@ -4039,9 +4060,9 @@ func reviewGateReady(sessions map[string]string, verdicts map[string]storedRevie
 // passed. Fresh findings ride along verbatim, so the Tell reaches the Worker
 // unchanged; stale findings stay behind (at only, never the old report),
 // since the re-prompt asked for a new judgement.
-func reviewGateDetail(verdicts map[string]storedReview, tip string) string {
+func reviewGateDetail(verdicts map[string]storedReview, tip string, required []string) string {
 	var missing []string
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range required {
 		r, ok := verdicts[typ]
 		switch {
 		case !ok || r.Verdict == "":
@@ -4067,8 +4088,8 @@ func reviewGateDetail(verdicts map[string]storedReview, tip string) string {
 
 // noneFreshAtTip says no reviewer judged the current tip yet: every verdict
 // predates it, so the re-prompt for this tip is still in flight.
-func noneFreshAtTip(verdicts map[string]storedReview, tip string) bool {
-	for _, typ := range requiredReviewerTypes {
+func noneFreshAtTip(verdicts map[string]storedReview, tip string, required []string) bool {
+	for _, typ := range required {
 		if r, ok := verdicts[typ]; ok && r.At == tip {
 			return false
 		}
@@ -4254,7 +4275,7 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 			blockers = []string{}
 		}
 		verdicts := map[string]any{}
-		for _, typ := range requiredReviewerTypes {
+		for _, typ := range requiredReviewerTypes(t.Type) {
 			if r, ok := rs.Reviews[t.ID][typ]; ok {
 				verdicts[typ] = map[string]any{
 					"verdict": r.Verdict, "at": r.At,
@@ -4267,7 +4288,7 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 			reviewers[typ] = sess
 		}
 		gate := map[string]any{
-			"required": append([]string(nil), requiredReviewerTypes...),
+			"required": append([]string(nil), requiredReviewerTypes(t.Type)...),
 			"verdicts": verdicts,
 		}
 		body := d.runTicketBody(rs, t.ID)
@@ -4280,6 +4301,10 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 		if rounds == nil {
 			rounds = []ticketRound{}
 		}
+		ticketWarnings := []string{}
+		if t.Type == "design" && rs.DesignReviewerFallback {
+			ticketWarnings = append(ticketWarnings, "Design reviewer Chain is empty; using reviewer-standards Chain.")
+		}
 		tickets = append(tickets, map[string]any{
 			"id": t.ID, "num": t.Num, "title": title, "blockers": blockers,
 			"type":          effectiveRunTicketType(rs, t),
@@ -4291,7 +4316,8 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 			"branch": rs.Branches[t.ID], "body": body, "boxes": boxes,
 			"effort": rs.Effort, "lastRefusal": lastRefusal, "needsYou": needsYou,
 			"followups": rs.Followups[t.ID], "agents": d.ticketAgentsLocked(rs, t.ID),
-			"rounds": rounds, "recallOff": rs.RecallOff[t.ID], "chain": ticketChainEntries(rs, t.ID),
+			"warnings": ticketWarnings,
+			"rounds":   rounds, "recallOff": rs.RecallOff[t.ID], "chain": ticketChainEntries(rs, t.ID),
 		})
 	}
 	warnings := rs.Warnings
@@ -4331,7 +4357,7 @@ func (d *Daemon) ticketAgentsLocked(rs *runState, ticketID string) []ticketAgent
 	}
 	add(worker, "worker")
 	reviewers := map[string]bool{}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		sessionID := rs.Reviewers[ticketID][typ]
 		if sessionID != "" {
 			reviewers[sessionID] = true
@@ -4482,11 +4508,11 @@ func refuseNotDoneText(report, summary string) string {
 // after a changes verdict, or empty when the Worker committed since. Any
 // changes verdict at the current tip means no commit followed it, so the
 // submit is refused with the tip named.
-func refuseEmptyResubmit(reviews map[string]storedReview, tip string) string {
+func refuseEmptyResubmit(reviews map[string]storedReview, tip string, required []string) string {
 	if tip == "" {
 		return ""
 	}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range required {
 		if r, ok := reviews[typ]; ok && r.Verdict == "changes" && r.At == tip {
 			return "done refused: no new commit since the last changes verdict at " + shortSHA(tip) + "; commit your fixes and submit done again"
 		}
@@ -4593,7 +4619,7 @@ func recordWorkerFindingsSentLocked(rs *runState, ticketID, tip string) (string,
 		}
 		round := &rounds[i]
 		if len(round.SentFindings) == 0 {
-			round.SentFindings = workerFindingsForRound(*round)
+			round.SentFindings = workerFindingsForRound(*round, requiredReviewerTypesFor(rs, ticketID))
 		}
 		if len(round.SentFindings) == 0 {
 			return "", false
@@ -4675,7 +4701,8 @@ func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, 
 		writeJSON(w, http.StatusConflict, map[string]any{"error": msg})
 		return
 	}
-	for _, typ := range requiredReviewerTypes {
+	required := requiredReviewerTypesFor(rs, workerTicket)
+	for _, typ := range required {
 		if rev, ok := rs.Reviews[workerTicket][typ]; ok && rev.Verdict == "changes" {
 			tip := ""
 			if branch := rs.Branches[workerTicket]; branch != "" {
@@ -4683,7 +4710,7 @@ func (d *Daemon) handleWorkerDoneSubmit(w http.ResponseWriter, r *http.Request, 
 					tip = sha
 				}
 			}
-			if why := refuseEmptyResubmit(rs.Reviews[workerTicket], tip); why != "" {
+			if why := refuseEmptyResubmit(rs.Reviews[workerTicket], tip, required); why != "" {
 				d.mu.Unlock()
 				writeJSON(w, http.StatusConflict, map[string]any{"error": why})
 				return

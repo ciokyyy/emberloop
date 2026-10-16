@@ -17,6 +17,9 @@ func configuredRunChains(harness, model, effort string) map[string][]chainEntry 
 	chains := make(map[string][]chainEntry, len(runRoles))
 	for _, role := range runRoles {
 		entries := chainFor(role)
+		if role == reviewerDesignType && len(entries) == 0 {
+			entries = chainFor(reviewerStandardsType)
+		}
 		if len(entries) == 0 {
 			entries = []chainEntry{{Backend: harness, Model: model, Effort: effort}}
 		}
@@ -32,6 +35,9 @@ func (d *Daemon) daemonConfiguredRunChains(harness, model, effort string) map[st
 	chains := make(map[string][]chainEntry, len(runRoles))
 	for _, role := range runRoles {
 		entries := d.daemonChainFor(role)
+		if role == reviewerDesignType && len(entries) == 0 {
+			entries = d.daemonChainFor(reviewerStandardsType)
+		}
 		if len(entries) == 0 {
 			entries = []chainEntry{{Backend: harness, Model: model, Effort: effort}}
 		}

@@ -358,7 +358,7 @@ func selectiveRereviewNeeded(repo, target, recorded, t1, t2 string, cited []Revi
 // same-tip and patch-id short-circuits, are never listed. Git runs unlocked;
 // state reads are locked.
 func (d *Daemon) selectiveCarryFor(runID, ticketID, tip string) map[string]string {
-	if len(requiredReviewerTypes) != 2 || tip == "" {
+	if tip == "" {
 		return nil
 	}
 	d.mu.Lock()
@@ -368,6 +368,7 @@ func (d *Daemon) selectiveCarryFor(runID, ticketID, tip string) map[string]strin
 		return nil
 	}
 	repo, target, recorded := rs.Repo, rs.Targets[ticketID], rs.Bases[ticketID]
+	required := requiredReviewerTypesFor(rs, ticketID)
 	reviews := map[string]storedReview{}
 	for typ, r := range rs.Reviews[ticketID] {
 		reviews[typ] = r
@@ -375,17 +376,22 @@ func (d *Daemon) selectiveCarryFor(runID, ticketID, tip string) map[string]strin
 	d.mu.Unlock()
 
 	out := map[string]string{}
-	for i, typ := range requiredReviewerTypes {
+	for _, typ := range required {
 		r, ok := reviews[typ]
 		if !ok || r.Verdict != "pass" || r.At == "" || r.At == tip {
 			continue
 		}
-		other := requiredReviewerTypes[1-i]
-		c, ok := reviews[other]
-		if !ok || c.Verdict != "changes" || c.At != r.At {
+		var changes []ReviewFinding
+		for _, other := range required {
+			c, ok := reviews[other]
+			if ok && c.Verdict == "changes" && c.At == r.At {
+				changes = append(changes, c.Findings...)
+			}
+		}
+		if len(changes) == 0 {
 			continue
 		}
-		if selectiveRereviewNeeded(repo, target, recorded, r.At, tip, c.Findings) {
+		if selectiveRereviewNeeded(repo, target, recorded, r.At, tip, changes) {
 			continue
 		}
 		out[typ] = shortSHA(r.At)

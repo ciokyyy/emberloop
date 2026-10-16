@@ -762,6 +762,7 @@ type runTicketJSON struct {
 	LastRefusal      string                       `json:"lastRefusal"`
 	Branch           string                       `json:"branch"`
 	NeedsYou         string                       `json:"needsYou"`
+	Warnings         []string                     `json:"warnings"`
 	Chain            map[string]ticketChainEntry  `json:"chain"`
 }
 

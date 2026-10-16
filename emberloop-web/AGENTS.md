@@ -113,10 +113,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `ai.FileModelsStore`, because pig's own overlay host (pi-in-go.dev) serves
   none. Providers are the keys of `models-store.json` and `auth.json`.
   `catalogsync_test.go` runs it against a local server.
-- Run driver: `runs_driver_test.go` uses a fake Backend and fake git;
-  `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip
-  check, selective re-review, scope warning), `runs_persist_test.go`,
-  `runs_chain_test.go`, `runs_pause_switch_test.go`,
+- Run driver: `runs_driver_test.go` uses a fake Backend and fake git. Code Tickets require spec and standards Reviewers; design Tickets add the persistent design Reviewer. An empty design-review Chain falls back to standards with a Ticket warning, and every required verdict must pass at the current tip. `runs_reviewers_test.go`, `runs_reviewer_gates_test.go` (submit gate, tip check, selective re-review, scope warning), `runs_persist_test.go`, `runs_chain_test.go`, `runs_pause_switch_test.go`,
   `runs_specbranch_test.go`, `runs_worktree_test.go`,
   `runs_toolactive_test.go` (in-flight tool calls date worker activity up to
   a cap), `runs_starttree_test.go` (stale branch and worktree reuse or

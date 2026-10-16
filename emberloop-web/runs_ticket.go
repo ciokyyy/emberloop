@@ -118,9 +118,9 @@ func workerFindingID(round int, reviewer string, index int) string {
 
 // workerFindingsForRound creates the ordered, stable set delivered to the
 // Worker: every finding, including non-blocking minors, from recorded verdicts.
-func workerFindingsForRound(round ticketRound) []workerReviewFinding {
+func workerFindingsForRound(round ticketRound, required []string) []workerReviewFinding {
 	var out []workerReviewFinding
-	for _, reviewer := range requiredReviewerTypes {
+	for _, reviewer := range required {
 		review, ok := round.Reviews[reviewer]
 		if !ok || review.Verdict == "" {
 			continue

@@ -37,6 +37,8 @@ func canonicalSkillRole(role string) string {
 		return reviewerSpecType
 	case reviewerStandardsType, "code-review":
 		return reviewerStandardsType
+	case reviewerDesignType:
+		return reviewerDesignType
 	default:
 		return role
 	}
@@ -52,6 +54,8 @@ func skillAliases(canonical string) []string {
 		return []string{reviewerSpecType, "spec-review"}
 	case reviewerStandardsType:
 		return []string{reviewerStandardsType, "code-review"}
+	case reviewerDesignType:
+		return []string{reviewerDesignType}
 	default:
 		return []string{canonical}
 	}
@@ -68,6 +72,8 @@ func defaultRunSkills(canonical string) []string {
 		return []string{specBrief}
 	case reviewerStandardsType:
 		return []string{standardsBrief}
+	case reviewerDesignType:
+		return []string{designBrief}
 	default:
 		return nil
 	}

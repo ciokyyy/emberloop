@@ -477,7 +477,7 @@ func TestRunWorkerFallbackResetsReviewerRepromptCount(t *testing.T) {
 	if pendingSubmit {
 		t.Fatal("replacement done submit did not clear its pending-submit marker")
 	}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypes("code") {
 		id := oldReviewers[typ]
 		review := waitSessionCond(t, srv.URL, id, func(s sessionBody) bool {
 			count := 0
@@ -559,7 +559,7 @@ func TestRunWorkerFallbackDoneReusesSameTipReviewerPasses(t *testing.T) {
 	if ticketByID(r, "01-first").WorkerSession != fallbackID {
 		t.Fatalf("merged Worker = %q, want replacement %q", ticketByID(r, "01-first").WorkerSession, fallbackID)
 	}
-	for _, typ := range requiredReviewerTypes {
+	for _, typ := range requiredReviewerTypes("code") {
 		s := getSession(t, srv.URL, reviewers[typ])
 		count := 0
 		for _, e := range s.Events {
