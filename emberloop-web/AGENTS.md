@@ -263,5 +263,6 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - `emberloop-web/el/AGENTS.md` — the el library, its file map, and its Go workflow; indexes tools, MCP server, state database, and test data
 - `emberloop-web/spike/README.md` — the Backend spike probes
 - `emberloop-web/web/README.md` — the Svelte source and embedded build
+- `emberloop-web/web/DESIGN.md` — the UI design system: tokens, type, spacing, elevation, motion, icon map, primitives and the icon, disclosure and responsive rules
 - `emberloop-web/cmd/emberloop-web/main.go` — the loopback-only Daemon binary
 - `emberloop-web/memory/AGENTS.md` — memory engine, tests, embeddings, hybrid Memory and Episode recall scoring, and injection contracts

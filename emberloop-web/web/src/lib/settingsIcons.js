@@ -1,10 +1,11 @@
-import { Bell, Bot, Brain, Layers, ShieldCheck, Ticket, UserRound, Volume2 } from '@lucide/svelte';
+import { Bell, ShieldCheck, UserRound, Volume2 } from '@lucide/svelte';
+import { icons } from './icons.js';
 
 export const settingsIcons = {
-  bot: Bot,
-  ticket: Ticket,
-  layers: Layers,
-  brain: Brain,
+  bot: icons.subagent,
+  ticket: icons.ticket,
+  layers: icons.run,
+  brain: icons.memory,
   'shield-check': ShieldCheck,
   'user-round': UserRound,
   bell: Bell,
