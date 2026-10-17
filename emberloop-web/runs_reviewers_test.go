@@ -774,6 +774,42 @@ func TestReviewerSubmitStaleTipRecordedNotCounted(t *testing.T) {
 	}
 }
 
+// A tip that is no SHA (a model putting its summary there) counts as the tip
+// the Reviewer was asked to judge, so the verdict is fresh instead of a
+// stuck "could not parse" needs-you.
+func TestReviewerSubmitNonSHATipUsesReviewTip(t *testing.T) {
+	t.Parallel()
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	fb.Delay = 30 * time.Second
+	d := runTestDaemon(t, tempDir(t), fb)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	commitTicketWork(t, repo, "01-first")
+	submitSession(t, srv.URL, ticketByID(r, "01-first").WorkerSession, "done", []string{"alpha"})
+	revs := waitReviewers(t, srv.URL, run.ID, "01-first")
+	tip := strings.TrimSpace(testGit(t, repo, "rev-parse", "implement/01-first"))
+	code, out := submitReview(t, srv.URL, revs["reviewer-spec"], map[string]any{
+		"verdict": "pass", "tip": "Add a scripted sign-in check or split the checkbox.",
+		"ran":      []any{map[string]any{"command": "go vet ./...", "exitCode": 0}},
+		"findings": []any{},
+	})
+	if code != http.StatusAccepted {
+		t.Fatalf("non-SHA tip submit status = %d (%v), want 202", code, out)
+	}
+	got := ticketByID(getRun(t, srv.URL, run.ID), "01-first").Verdicts["reviewer-spec"]
+	if got.Verdict != "pass" || got.At != tip || !got.Fresh {
+		t.Fatalf("verdict = %+v, want a fresh pass at the review tip %q", got, tip)
+	}
+}
+
 // A `pass` with minors through the tool does not block: both reviewers pass
 // with minors and `ran`, and the ticket merges.
 func TestReviewerSubmitPassWithMinorsMerges(t *testing.T) {

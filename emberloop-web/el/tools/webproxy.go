@@ -91,7 +91,7 @@ func WebProxyTool(name string) Tool {
 			"completed":    map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
 			"report":       map[string]any{"type": "string"},
 			"verdict":      map[string]any{"type": "string", "enum": []string{"pass", "changes"}},
-			"tip":          map[string]any{"type": "string"},
+			"tip":          map[string]any{"type": "string", "description": "Reviewer only: the full 40-character commit SHA you judged. Never a summary or finding text; put those in findings."},
 			"ran":          map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"command": map[string]any{"type": "string"}, "exitCode": map[string]any{"type": "integer"}}, "required": []string{"command"}}},
 			"findings":     map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"file": map[string]any{"type": "string"}, "line": map[string]any{"type": "integer"}, "severity": map[string]any{"type": "string", "enum": []string{"blocker", "major", "minor"}}, "problem": map[string]any{"type": "string"}}, "required": []string{"file", "severity", "problem"}}},
 			"dispositions": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{"findingId": map[string]any{"type": "string"}, "disposition": map[string]any{"type": "string", "enum": []string{"fixed", "declined", "deferred"}}, "reason": map[string]any{"type": "string"}, "ticket": map[string]any{"type": "string"}}, "required": []string{"findingId", "disposition"}}},

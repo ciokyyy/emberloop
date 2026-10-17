@@ -4882,6 +4882,14 @@ func (d *Daemon) handleReviewerSubmit(w http.ResponseWriter, r *http.Request, id
 		return
 	}
 	repo, branch := rs.Repo, rs.Branches[ticketID]
+	// A tip that is no SHA at all (a model putting its summary there) judged
+	// the tip this Reviewer was asked to review, per the prompt, so use that
+	// tip instead of recording a verdict that can never count.
+	if strings.TrimSpace(sub.Tip) != "" && !looksLikeSHA(sub.Tip) {
+		if reviewTip := strings.TrimSpace(rs.ReviewTips[ticketID][typ]); reviewTip != "" {
+			sub.Tip = reviewTip
+		}
+	}
 	lastPrompt := int64(0)
 	for _, e := range sess.events {
 		if e.Kind == "prompt" && e.Seq > lastPrompt {
@@ -5727,6 +5735,13 @@ var leadingTipSHA = regexp.MustCompile(`^[0-9a-fA-F]{40}($|[^0-9a-zA-Z])`)
 // or odd values included, comes back trimmed and otherwise unchanged. A tip
 // with trailing text never equals the branch tip, so the verdict would sit
 // stale and the gate would wait forever with no error.
+var shaLikeRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}$`)
+
+// looksLikeSHA reports a hex string of abbreviated or full SHA length.
+func looksLikeSHA(tip string) bool {
+	return shaLikeRe.MatchString(strings.TrimSpace(tip))
+}
+
 func cleanTipSHA(tip string) string {
 	tip = strings.TrimSpace(tip)
 	if leadingTipSHA.MatchString(tip) {
