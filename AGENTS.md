@@ -47,10 +47,10 @@ Index paths are repo-relative. Every doc below is listed here or in the
 child it belongs to, and every entry must resolve to a file.
 
 - `emberloop-web/AGENTS.md` — browser UI and Daemon seams: summary-only Runs,
-  git caching, Ticket-to-Session index and non-blocking boot; cache-only quota
-  API, subscriber-gated `quota` live refresher and percent-first provider cards;
-  provider status/connect flows; Project Dashboard and stable scope routes;
-  Jev draft Project picks; per-concern Settings and model/effort chains; admin-
+  per-message Session queue control, git caching, Ticket-to-Session index and
+  non-blocking boot; cache-only quota API, subscriber-gated `quota` refresher and
+  percent-first provider cards; provider status/connect flows; Project Dashboard
+  and stable scope routes; Jev draft Project picks; per-concern Settings and model/effort chains; admin-
   only host-global Memory settings, hybrid recall/injection and nightly stages;
   Profile patch push actions, inline Session approval, context-sensitive rejected-
   patch dedup, one-time 48-hour reminders and opt-in daily Memory digests; Memory

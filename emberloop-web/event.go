@@ -80,6 +80,7 @@ type QueuedMessage struct {
 	Text     string   `json:"text"`
 	ImageIDs []string `json:"imageIds"`
 	Degraded bool     `json:"degraded,omitempty"`
+	from     promptSender
 }
 
 // SessionMeta is the small metadata file per Session. ParentID names the

@@ -4,9 +4,12 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -344,8 +347,8 @@ func TestDeliveredQueueItemCannotBeEdited(t *testing.T) {
 	waitTurnEnd(t, srv.URL, id, seq)
 	firstPromptWhere(t, srv.URL, id, func(e Event) bool { return e.Text == "already delivered" })
 	waitDaemonIdle(t, d, id)
-	if code, body := queueItemRequest(t, srv.URL, id, queued[0].ID, http.MethodPatch, "too late"); code != http.StatusNotFound || !strings.Contains(body, "already have been delivered") {
-		t.Fatalf("edit delivered item = %d %s, want clear 404", code, body)
+	if code, body := queueItemRequest(t, srv.URL, id, queued[0].ID, http.MethodPatch, "too late"); code != http.StatusConflict || !strings.Contains(body, "already delivered") {
+		t.Fatalf("edit delivered item = %d %s, want clear 409", code, body)
 	}
 }
 
@@ -604,6 +607,12 @@ func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
 	if len(queued) != 2 || queued[0].Mode != "steer" || queued[1].Mode != "followup" || queued[0].ID == "" || queued[1].ID == "" {
 		t.Fatalf("native queue = %+v, want identified steer and follow-up", queued)
 	}
+	if again := getQueue(t, srv.URL, nativeID); len(again) != 2 || again[0].ID != queued[0].ID || again[1].ID != queued[1].ID {
+		t.Fatalf("native ids changed across reads: first=%+v second=%+v", queued, again)
+	}
+	if code, body := queueItemRequest(t, srv.URL, nativeID, "unknown-native", http.MethodDelete, ""); code != http.StatusNotFound || !strings.Contains(body, "queued message not found") {
+		t.Fatalf("unknown native remove = %d %s, want clear 404", code, body)
+	}
 	if code, body := queueItemRequest(t, srv.URL, nativeID, queued[0].ID, http.MethodPatch, "steer edited"); code != http.StatusOK {
 		t.Fatalf("native patch = %d %s", code, body)
 	}
@@ -620,9 +629,286 @@ func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
 	if got := pb.QueuedMessages(nativeID); len(got) != 0 {
 		t.Fatalf("native queue after clear = %+v, want empty", got)
 	}
+	deliveredID := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
+	pb.Steer(deliveredID, "native delivered")
+	delivered := getQueue(t, srv.URL, deliveredID)
+	if len(delivered) != 1 {
+		t.Fatalf("native queue before delivery = %+v, want one item", delivered)
+	}
+	if n := pb.ClearQueued(deliveredID); n != 1 {
+		t.Fatalf("simulated native delivery cleared = %d, want 1", n)
+	}
+	if code, body := queueItemRequest(t, srv.URL, deliveredID, delivered[0].ID, http.MethodPatch, "too late"); code != http.StatusConflict || !strings.Contains(body, "already delivered") {
+		t.Fatalf("edit delivered native item = %d %s, want clear 409", code, body)
+	}
+	if code, body := queueItemRequest(t, srv.URL, deliveredID, "unknown-native", http.MethodDelete, ""); code != http.StatusNotFound || !strings.Contains(body, "queued message not found") {
+		t.Fatalf("unknown native remove = %d %s, want clear 404", code, body)
+	}
 	// Release both stacks before TempDir cleanup.
+	pb.CloseSession(deliveredID)
 	pb.CloseSession(nativeID)
 	pb.CloseSession(id)
+}
+
+func TestReconcileNativeQueuePreservesIDsAfterFIFODrain(t *testing.T) {
+	previous := []QueuedMessage{
+		{ID: "steer-first", Mode: "steer", Text: "same"},
+		{ID: "steer-next", Mode: "steer", Text: "same"},
+		{ID: "followup", Mode: "followup", Text: "same"},
+	}
+	current := []QueuedMessage{{Mode: "steer", Text: "same"}, {Mode: "followup", Text: "same"}}
+	got := reconcileNativeQueue(previous, current)
+	if len(got) != 2 || got[0].ID != "steer-next" || got[1].ID != "followup" {
+		t.Fatalf("reconciled queue = %+v, want stable ids for the undelivered duplicate and follow-up", got)
+	}
+}
+
+type scriptedNativeQueueBackend struct {
+	Backend
+	mu        sync.Mutex
+	queue     []QueuedMessage
+	addCalls  int
+	failAddAt int
+	blockOp   string
+	started   chan struct{}
+	release   chan struct{}
+}
+
+func (b *scriptedNativeQueueBackend) block(op string) {
+	b.mu.Lock()
+	blocked := b.blockOp == op
+	started, release := b.started, b.release
+	if blocked {
+		b.blockOp = ""
+	}
+	b.mu.Unlock()
+	if blocked {
+		started <- struct{}{}
+		<-release
+	}
+}
+
+func (b *scriptedNativeQueueBackend) NativeQueue(string) ([]QueuedMessage, bool) {
+	b.block("read")
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return append([]QueuedMessage(nil), b.queue...), true
+}
+
+func (b *scriptedNativeQueueBackend) QueuedMessages(id string) []QueuedMessage {
+	queue, _ := b.NativeQueue(id)
+	return queue
+}
+
+func (b *scriptedNativeQueueBackend) ClearNativeQueue(string) ([]QueuedMessage, bool) {
+	b.block("clear")
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	queue := append([]QueuedMessage(nil), b.queue...)
+	b.queue = nil
+	return queue, true
+}
+
+func (b *scriptedNativeQueueBackend) ClearQueued(id string) int {
+	queue, _ := b.ClearNativeQueue(id)
+	return len(queue)
+}
+
+func (b *scriptedNativeQueueBackend) add(mode, text string) bool {
+	b.block("add")
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.addCalls++
+	if b.failAddAt != 0 && b.addCalls == b.failAddAt {
+		return false
+	}
+	b.queue = append(b.queue, QueuedMessage{Mode: mode, Text: text, ImageIDs: []string{}})
+	return true
+}
+
+func (b *scriptedNativeQueueBackend) Steer(_, text string) bool {
+	return b.add("steer", text)
+}
+
+func (b *scriptedNativeQueueBackend) FollowUp(_, text string) bool {
+	return b.add("followup", text)
+}
+
+func queueControlDaemon(backend *scriptedNativeQueueBackend) (*Daemon, string) {
+	id := "queue-control-test"
+	d := &Daemon{
+		sessions: map[string]*session{
+			id: {meta: SessionMeta{ID: id, Harness: "pig", Status: "working"}, live: true, busy: true},
+		},
+		backends: map[string]Backend{"pig": backend},
+	}
+	return d, id
+}
+
+func TestPigNativeReaddFailureRetainsQueueTail(t *testing.T) {
+	backend := &scriptedNativeQueueBackend{
+		queue: []QueuedMessage{
+			{Mode: "steer", Text: "first"},
+			{Mode: "followup", Text: "second"},
+			{Mode: "followup", Text: "third"},
+		},
+		failAddAt: 3,
+	}
+	d, id := queueControlDaemon(backend)
+	initial, code := d.listQueue(id)
+	if code != http.StatusOK || len(initial) != 3 {
+		t.Fatalf("initial native queue = %+v, %d", initial, code)
+	}
+	if code, msg := d.editQueueItem(id, initial[1].ID, "edited second", false); code != http.StatusOK {
+		t.Fatalf("edit with a failed native re-add = %d %s", code, msg)
+	}
+	got, code := d.listQueue(id)
+	if code != http.StatusOK || len(got) != 3 || got[0].ID != initial[0].ID || got[0].Text != "first" || got[1].ID != initial[1].ID || got[1].Text != "edited second" || got[2].ID != initial[2].ID || got[2].Text != "third" {
+		t.Fatalf("queue after failed re-add = %+v, %d; want all items in order", got, code)
+	}
+}
+
+func TestQueueBackendIPCDoesNotHoldDaemonLock(t *testing.T) {
+	for _, op := range []string{"read", "clear", "add"} {
+		t.Run(op, func(t *testing.T) {
+			backend := &scriptedNativeQueueBackend{
+				queue:   []QueuedMessage{{Mode: "followup", Text: "queued"}},
+				started: make(chan struct{}, 1),
+				release: make(chan struct{}),
+			}
+			d, id := queueControlDaemon(backend)
+			initial, code := d.listQueue(id)
+			if code != http.StatusOK || len(initial) != 1 {
+				t.Fatalf("initial queue = %+v, %d", initial, code)
+			}
+			backend.mu.Lock()
+			backend.blockOp = op
+			backend.mu.Unlock()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				switch op {
+				case "read", "add":
+					d.editQueueItem(id, initial[0].ID, "edited", false)
+				case "clear":
+					d.dropQueue(id)
+				}
+			}()
+			select {
+			case <-backend.started:
+			case <-time.After(2 * time.Second):
+				close(backend.release)
+				t.Fatal("queue backend call did not start")
+			}
+			free := d.mu.TryLock()
+			close(backend.release)
+			if !free {
+				t.Fatal("queue backend I/O held the Daemon lock")
+			}
+			d.mu.Unlock()
+			<-done
+		})
+	}
+}
+
+func TestPigACPQueueControlEditsThroughShimAndRetainsFailedTail(t *testing.T) {
+	sock := filepath.Join(tempDir(t), "queue.sock")
+	ln, err := net.Listen("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ln.Close()
+	var mu sync.Mutex
+	queue := pigQueue{Steering: []string{"first"}, FollowUp: []string{"second", "third", "fourth"}}
+	addCalls, failAddAt := 0, 0
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				defer conn.Close()
+				var req struct {
+					Op      string `json:"op"`
+					Message string `json:"message"`
+				}
+				if json.NewDecoder(conn).Decode(&req) != nil {
+					return
+				}
+				mu.Lock()
+				defer mu.Unlock()
+				success := true
+				var data any
+				switch req.Op {
+				case "queue":
+					data = queue
+				case "clear_queue":
+					data = queue
+					queue = pigQueue{}
+				case "steer", "follow_up":
+					addCalls++
+					if failAddAt != 0 && addCalls == failAddAt {
+						success = false
+						data = map[string]string{"disposition": "failed"}
+					} else {
+						if req.Op == "steer" {
+							queue.Steering = append(queue.Steering, req.Message)
+						} else {
+							queue.FollowUp = append(queue.FollowUp, req.Message)
+						}
+						data = map[string]string{"disposition": "queued"}
+					}
+				default:
+					success = false
+				}
+				_ = json.NewEncoder(conn).Encode(map[string]any{"success": success, "data": data})
+			}(conn)
+		}
+	}()
+
+	id := "pig-acp-queue-test"
+	backend := &PigACPBackend{ClaudeBackend: &ClaudeBackend{}, socks: map[string]string{id: sock}}
+	d := &Daemon{
+		sessions: map[string]*session{
+			id: {meta: SessionMeta{ID: id, Harness: "pig", Status: "working"}, live: true, busy: true},
+		},
+		backends: map[string]Backend{"pig": backend},
+	}
+	initial, code := d.listQueue(id)
+	if code != http.StatusOK || len(initial) != 4 {
+		t.Fatalf("initial ACP queue = %+v, %d", initial, code)
+	}
+	if code, msg := d.editQueueItem(id, initial[1].ID, "", true); code != http.StatusOK {
+		t.Fatalf("ACP native remove = %d %s", code, msg)
+	}
+	mu.Lock()
+	failAddAt = addCalls + 2
+	mu.Unlock()
+	if code, msg := d.editQueueItem(id, initial[2].ID, "edited third", false); code != http.StatusOK {
+		t.Fatalf("ACP edit with failed re-add = %d %s", code, msg)
+	}
+	got, code := d.listQueue(id)
+	if code != http.StatusOK || len(got) != 3 || got[0].ID != initial[0].ID || got[0].Text != "first" || got[1].ID != initial[2].ID || got[1].Text != "edited third" || got[2].ID != initial[3].ID || got[2].Text != "fourth" {
+		t.Fatalf("ACP queue after edit/remove/failure = %+v, %d; want retained order", got, code)
+	}
+	mu.Lock()
+	queue.Steering = nil // simulate the native queue delivering its known item
+	mu.Unlock()
+	if code, msg := d.editQueueItem(id, initial[0].ID, "too late", false); code != http.StatusConflict || !strings.Contains(msg, "already delivered") {
+		t.Fatalf("ACP delivered edit = %d %s, want 409", code, msg)
+	}
+	if code, msg := d.editQueueItem(id, "unknown-acp", "", true); code != http.StatusNotFound || !strings.Contains(msg, "queued message not found") {
+		t.Fatalf("ACP unknown remove = %d %s, want 404", code, msg)
+	}
+}
+
+func (f *failingSteerBackend) NativeQueue(sessionID string) ([]QueuedMessage, bool) {
+	return []QueuedMessage{}, true
+}
+
+func (f *failingSteerBackend) ClearNativeQueue(sessionID string) ([]QueuedMessage, bool) {
+	return []QueuedMessage{}, true
 }
 
 // A send racing a resume or release in flight answers 409 and the Session
@@ -792,6 +1078,13 @@ func TestClaudeDegradedSteerReportsFollowupMode(t *testing.T) {
 	queued := getQueue(t, srv.URL, id)
 	if len(queued) != 1 || queued[0].Mode != "followup" || !queued[0].Degraded {
 		t.Fatalf("degraded queue = %+v, want one degraded follow-up", queued)
+	}
+	if code, body := queueItemRequest(t, srv.URL, id, queued[0].ID, http.MethodPatch, "edited follow-up"); code != http.StatusOK {
+		t.Fatalf("patch degraded steer = %d %s, want queued follow-up edit", code, body)
+	}
+	edited := getQueue(t, srv.URL, id)
+	if len(edited) != 1 || edited[0].ID != queued[0].ID || edited[0].Mode != "followup" || !edited[0].Degraded || edited[0].Text != "edited follow-up" {
+		t.Fatalf("edited degraded queue = %+v, want same follow-up id and mode", edited)
 	}
 	if n := clearQueue(t, srv.URL, id); n != 1 {
 		t.Fatalf("cleared = %d, want 1", n)

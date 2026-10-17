@@ -241,13 +241,14 @@ type session struct {
 	active int
 	// busy marks a turn in flight. Messages arriving while busy queue
 	// in pending (fake and claude) or in the harness native queue (pig).
-	// Queue state and nativeQueue ids are protected by d.mu; the turn runner
-	// drains the Daemon-owned pending list.
-	busy          bool
-	pending       []queuedMsg
-	nativeQueue   []QueuedMessage
-	queueRevision uint64
-	// openTools holds the tool calls in flight by ToolCall id, opened on
+	// queueMu serializes this Session's queue API and message-routing work.
+	// It is never the Daemon-wide lock; backend queue calls release d.mu first.
+	queueMu        *sync.Mutex
+	busy           bool
+	pending        []queuedMsg
+	nativeQueue    []QueuedMessage
+	queueRevision  uint64
+	deliveredQueue map[string]struct{}
 	// tool_call_started and closed on a completed or failed
 	// tool_call_updated, stamped on the Daemon clock. The Run driver reads
 	// it beside the working status, so a long foreground tool call (a
@@ -311,6 +312,8 @@ type steerBackend interface {
 	FollowUp(sessionID, text string) bool
 	QueuedMessages(sessionID string) []QueuedMessage
 	ClearQueued(sessionID string) int
+	NativeQueue(sessionID string) ([]QueuedMessage, bool)
+	ClearNativeQueue(sessionID string) ([]QueuedMessage, bool)
 }
 
 // imageSteerBackend is the optional native-queue seam for steers and
@@ -800,34 +803,45 @@ func (d *Daemon) resumeViewLocked(s *session) (bool, string) {
 // the old turn's status still reads idle. An ended Session drops its pending
 // list: ending is terminal too.
 func (d *Daemon) finishTurn(id string) {
+	// The same session pointer survives turns; queueMu serializes pending
+	// delivery with queue edits while d.mu stays free during backend I/O.
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return
+	}
+	if s.queueMu == nil {
+		s.queueMu = &sync.Mutex{}
+	}
+	queueMu := s.queueMu
+	d.mu.Unlock()
 	for {
+		queueMu.Lock()
 		d.mu.Lock()
-		s, ok := d.sessions[id]
-		if !ok {
+		if d.sessions[id] != s {
 			d.mu.Unlock()
+			queueMu.Unlock()
 			return
 		}
 		if s.active > 0 {
 			s.active--
 		}
-		// The turn that set swapping has ended.
 		s.swapping = false
 		if s.meta.Status == "ended" {
 			s.pending = nil
 			s.busy = false
 			d.mu.Unlock()
+			queueMu.Unlock()
 			return
 		}
-		// A blocked Session holds its queue and its live handle until Retry or
-		// Dismiss: nothing drains and nothing releases.
 		if s.meta.CompressBlock != "" {
 			s.busy = false
 			d.mu.Unlock()
+			queueMu.Unlock()
 			return
 		}
 		if len(s.pending) > 0 && d.stopRestart[id] && s.meta.RestartStopped {
-			// A restart stopped this turn: nothing drains into a new turn.
-			// The queue rides in the Session record to the next Daemon.
 			for _, m := range s.pending {
 				s.meta.Carry += "- " + m.text + "\n"
 			}
@@ -835,8 +849,6 @@ func (d *Daemon) finishTurn(id string) {
 			d.persistMeta(s.meta)
 		}
 		if len(s.pending) > 0 {
-			// A Steer still held when the turn ends had no tool call to
-			// follow: it arrives as a Follow-up.
 			for i := range s.pending {
 				if s.pending[i].held {
 					s.pending[i].held = false
@@ -846,10 +858,14 @@ func (d *Daemon) finishTurn(id string) {
 			}
 			n := leadRun(s.pending)
 			next := mergePending(s.pending[:n])
+			for _, item := range s.pending[:n] {
+				markQueueDeliveredLocked(s, item.id)
+			}
 			s.pending = s.pending[n:]
 			s.active++
 			be := d.backendForLocked(s.meta.Harness)
 			d.mu.Unlock()
+			queueMu.Unlock()
 			d.appendPromptEvent(id, next.text, modeLabel(next.mode), len(next.images), next.imageIDs, next.from)
 			if be == nil {
 				continue
@@ -858,21 +874,15 @@ func (d *Daemon) finishTurn(id string) {
 			promptBackend(be, id, btext, bimages, func(kind, text, status string) {
 				d.appendEvent(id, kind, text, status)
 			})
-			// Drained turns run no gate and no turn-end auto check, so a
-			// Session fed by a constant queue could cook its context
-			// unchecked: arm the automatic wait here and let
-			// runDeferredCompress run it once the queue drains.
 			d.armAutoCompress(id)
 			continue
 		}
 		s.busy = false
 		if !s.live || s.active > 0 || (s.meta.Status != "idle" && s.meta.Status != "failed") {
 			d.mu.Unlock()
+			queueMu.Unlock()
 			return
 		}
-		// Flip live off and mark the release under one lock hold: a send
-		// in the release window answers 409 instead of resuming a process
-		// the stale ReleaseSession would then kill by id lookup.
 		s.live = false
 		s.releasing = true
 		be := d.backendForLocked(s.meta.Harness)
@@ -880,6 +890,7 @@ func (d *Daemon) finishTurn(id string) {
 			be = d.claude
 		}
 		d.mu.Unlock()
+		queueMu.Unlock()
 		if be == nil {
 			d.mu.Lock()
 			if rs, ok := d.sessions[id]; ok {
@@ -896,8 +907,6 @@ func (d *Daemon) finishTurn(id string) {
 			return
 		}
 		s.releasing = false
-		// A message that resumed meanwhile already flipped live back on; its
-		// ResumeSession owns the token now, so only store when still released.
 		if !s.live && tok != "" {
 			s.meta.ResumeToken = tok
 			d.persistMeta(s.meta)
@@ -1005,6 +1014,7 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 		keep := s.pending[:0:0]
 		for _, m := range s.pending {
 			if m.held {
+				markQueueDeliveredLocked(s, m.id)
 				held = append(held, m)
 			} else {
 				keep = append(keep, m)
@@ -1281,6 +1291,23 @@ func (d *Daemon) routeLiveOptID(id, mode, text string, images []Image, imageIDs 
 		d.mu.Unlock()
 		return sendResult{}, http.StatusNotFound
 	}
+	if s.queueMu == nil {
+		s.queueMu = &sync.Mutex{}
+	}
+	queueMu := s.queueMu
+	d.mu.Unlock()
+	queueMu.Lock()
+	queueLocked := true
+	defer func() {
+		if queueLocked {
+			queueMu.Unlock()
+		}
+	}()
+	d.mu.Lock()
+	if d.sessions[id] != s {
+		d.mu.Unlock()
+		return sendResult{}, http.StatusNotFound
+	}
 	if s.meta.Status == "ended" {
 		d.mu.Unlock()
 		return sendResult{}, http.StatusGone
@@ -1310,7 +1337,9 @@ func (d *Daemon) routeLiveOptID(id, mode, text string, images []Image, imageIDs 
 				queueID = newID()
 			}
 			s.pending = append(s.pending, queuedMsg{id: queueID, mode: "steer", text: text, images: images, imageIDs: imageIDs, held: true, from: from})
+			delete(s.deliveredQueue, queueID)
 			pos := len(s.pending)
+			s.queueRevision++
 			d.mu.Unlock()
 			return sendResult{queued: true, position: pos, mode: "steer"}, http.StatusAccepted
 		}
@@ -1330,32 +1359,39 @@ func (d *Daemon) routeLiveOptID(id, mode, text string, images []Image, imageIDs 
 			queueID = newID()
 		}
 		s.pending = append(s.pending, queuedMsg{id: queueID, mode: mode, text: text, images: images, imageIDs: imageIDs, degraded: degraded, from: from})
+		delete(s.deliveredQueue, queueID)
+		s.queueRevision++
 		pos := len(s.pending)
 		d.mu.Unlock()
 		return sendResult{queued: true, position: pos, mode: mode, degraded: degraded}, http.StatusAccepted
 	}
-	// A working pig Session steers text-only messages through the native
-	// queue, which delivers at the next tool boundary. Image messages stay in
-	// the Daemon pending list so a Handoff swap never drops their attachments
-	// (the SDK and shim queues carry text only). The native call and the prompt
-	// Event land under d.mu together, so the turn cannot end between
-	// them and strand the message until the turn after next. Lock order
-	// is d.mu before the backend lock; no Backend path takes them in
-	// the reverse order. The Event lands at once so the transcript shows
-	// what was queued, even if it is cleared before delivery.
+	// A working pig Session queues text-only messages in pig's native queue.
+	// d.mu is released around the shim call; queueMu keeps this Session's
+	// route, drain, and queue-control operations ordered.
 	if harness == "pig" && s.busy && !hasImages && (mode == "steer" || mode == "followup") {
 		if qb, ok := be.(steerBackend); ok {
+			d.mu.Unlock()
 			queued := false
 			if mode == "steer" {
 				queued = qb.Steer(id, text)
 			} else {
 				queued = qb.FollowUp(id, text)
 			}
+			d.mu.Lock()
+			if d.sessions[id] != s {
+				d.mu.Unlock()
+				return sendResult{}, http.StatusNotFound
+			}
+			if s.meta.Status == "ended" {
+				d.mu.Unlock()
+				return sendResult{}, http.StatusGone
+			}
 			if queued {
 				if queueID == "" {
 					queueID = newID()
 				}
-				s.nativeQueue = append(s.nativeQueue, QueuedMessage{ID: queueID, Mode: mode, Text: text, ImageIDs: []string{}})
+				delete(s.deliveredQueue, queueID)
+				s.nativeQueue = append(s.nativeQueue, QueuedMessage{ID: queueID, Mode: mode, Text: text, ImageIDs: []string{}, from: from})
 				s.queueRevision++
 				e := d.appendPromptEventLocked(id, text, mode, len(images), imageIDs, from)
 				d.mu.Unlock()
@@ -1371,6 +1407,8 @@ func (d *Daemon) routeLiveOptID(id, mode, text string, images []Image, imageIDs 
 			queueID = newID()
 		}
 		s.pending = append(s.pending, queuedMsg{id: queueID, mode: mode, text: text, images: images, imageIDs: imageIDs, degraded: degraded, from: from})
+		delete(s.deliveredQueue, queueID)
+		s.queueRevision++
 		pos := len(s.pending)
 		d.mu.Unlock()
 		return sendResult{queued: true, position: pos, mode: mode, degraded: degraded}, http.StatusAccepted
@@ -1382,6 +1420,9 @@ func (d *Daemon) routeLiveOptID(id, mode, text string, images []Image, imageIDs 
 	// Queued messages (above) never trigger recall.
 	needRecall := s.injectOp == handleCreate
 	recallMeta := s.meta
+	if queueID != "" {
+		markQueueDeliveredLocked(s, queueID)
+	}
 	s.busy = true
 	s.active++
 	if needRecall {
@@ -1416,6 +1457,8 @@ func (d *Daemon) routeLiveOptID(id, mode, text string, images []Image, imageIDs 
 	if be != nil {
 		go d.runTurn(id, be, btext, bimages)
 	} else {
+		queueLocked = false
+		queueMu.Unlock()
 		d.finishTurn(id)
 	}
 	return sendResult{seq: e.Seq, mode: modeLabel(mode), degraded: degraded}, http.StatusAccepted
@@ -1558,13 +1601,57 @@ func (d *Daemon) runTurnWith(id string, be Backend, text string, images []Image,
 	}
 }
 
+// markQueueDeliveredLocked records ids that left a queue for delivery. Callers hold d.mu.
+func markQueueDeliveredLocked(s *session, itemID string) {
+	if itemID == "" {
+		return
+	}
+	if s.deliveredQueue == nil {
+		s.deliveredQueue = make(map[string]struct{})
+	}
+	s.deliveredQueue[itemID] = struct{}{}
+}
+
+func queueDeliveredLocked(s *session, itemID string) bool {
+	_, ok := s.deliveredQueue[itemID]
+	return ok
+}
+
+func markMissingNativeDeliveredLocked(s *session, previous, current []QueuedMessage) {
+	present := make(map[string]struct{}, len(current))
+	for _, item := range current {
+		present[item.ID] = struct{}{}
+	}
+	for _, item := range previous {
+		if item.ID == "" {
+			continue
+		}
+		if _, ok := present[item.ID]; !ok {
+			markQueueDeliveredLocked(s, item.ID)
+		}
+	}
+}
+
 // listQueue reports not-yet-delivered messages, assigning stable ids to
 // entries in both the Daemon and pig native queues.
 func (d *Daemon) listQueue(id string) ([]QueuedMessage, int) {
+	d.mu.Lock()
+	s, ok := d.sessions[id]
+	if !ok {
+		d.mu.Unlock()
+		return nil, http.StatusNotFound
+	}
+	if s.queueMu == nil {
+		s.queueMu = &sync.Mutex{}
+	}
+	queueMu := s.queueMu
+	d.mu.Unlock()
+	queueMu.Lock()
+	defer queueMu.Unlock()
+
 	for {
 		d.mu.Lock()
-		s, ok := d.sessions[id]
-		if !ok {
+		if d.sessions[id] != s {
 			d.mu.Unlock()
 			return nil, http.StatusNotFound
 		}
@@ -1578,7 +1665,11 @@ func (d *Daemon) listQueue(id string) ([]QueuedMessage, int) {
 
 		var actual []QueuedMessage
 		if qb != nil {
-			actual = qb.QueuedMessages(id)
+			var available bool
+			actual, available = qb.NativeQueue(id)
+			if !available {
+				return nil, http.StatusServiceUnavailable
+			}
 		}
 
 		d.mu.Lock()
@@ -1592,7 +1683,9 @@ func (d *Daemon) listQueue(id string) ([]QueuedMessage, int) {
 		}
 		var native []QueuedMessage
 		if harness == "pig" {
-			native = reconcileNativeQueue(s.nativeQueue, actual)
+			previous := s.nativeQueue
+			native = reconcileNativeQueue(previous, actual)
+			markMissingNativeDeliveredLocked(s, previous, native)
 			s.nativeQueue = native
 		}
 		out := make([]QueuedMessage, 0, len(native)+len(s.pending))
@@ -1603,7 +1696,7 @@ func (d *Daemon) listQueue(id string) ([]QueuedMessage, int) {
 				p.id = newID()
 			}
 			imageIDs := append([]string{}, p.imageIDs...)
-			out = append(out, QueuedMessage{ID: p.id, Mode: p.mode, Text: p.text, ImageIDs: imageIDs, Degraded: p.degraded})
+			out = append(out, QueuedMessage{ID: p.id, Mode: p.mode, Text: p.text, ImageIDs: imageIDs, Degraded: p.degraded, from: p.from})
 		}
 		d.mu.Unlock()
 		return out, http.StatusOK
@@ -1633,6 +1726,8 @@ func reconcileNativeQueue(previous, current []QueuedMessage) []QueuedMessage {
 		if match >= 0 {
 			used[match] = true
 			item.ID = previous[match].ID
+			item.from = previous[match].from
+			item.Degraded = previous[match].Degraded
 		}
 		if item.ID == "" {
 			item.ID = newID()
@@ -1643,35 +1738,75 @@ func reconcileNativeQueue(previous, current []QueuedMessage) []QueuedMessage {
 	return out
 }
 
-// dropQueue clears not-yet-delivered messages before delivery.
-// It clears the Daemon pending list and pig native queues.
+// dropQueue clears not-yet-delivered messages without holding d.mu across pig I/O.
 func (d *Daemon) dropQueue(id string) (int, int) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	s, ok := d.sessions[id]
 	if !ok {
+		d.mu.Unlock()
 		return 0, http.StatusNotFound
 	}
-	n := len(s.pending)
-	s.pending = nil
-	s.nativeQueue = nil
+	if s.queueMu == nil {
+		s.queueMu = &sync.Mutex{}
+	}
+	queueMu := s.queueMu
+	d.mu.Unlock()
+	queueMu.Lock()
+	defer queueMu.Unlock()
+
+	d.mu.Lock()
+	if d.sessions[id] != s {
+		d.mu.Unlock()
+		return 0, http.StatusNotFound
+	}
+	var qb steerBackend
 	if s.meta.Harness == "pig" {
-		if qb, ok := d.backendForLocked(s.meta.Harness).(steerBackend); ok {
-			n += qb.ClearQueued(id)
+		qb, _ = d.backendForLocked(s.meta.Harness).(steerBackend)
+	}
+	d.mu.Unlock()
+
+	var nativeCleared []QueuedMessage
+	if qb != nil {
+		var available bool
+		nativeCleared, available = qb.ClearNativeQueue(id)
+		if !available {
+			return 0, http.StatusServiceUnavailable
 		}
 	}
+
+	d.mu.Lock()
+	if d.sessions[id] != s {
+		d.mu.Unlock()
+		return len(nativeCleared), http.StatusNotFound
+	}
+	n := len(s.pending) + len(nativeCleared)
+	s.pending = nil
+	s.nativeQueue = nil
 	s.queueRevision++
+	d.mu.Unlock()
 	return n, http.StatusOK
 }
 
 // editQueueItem replaces one queued item's text, or removes it when remove is
-// true. The caller holds no locks; this method serializes queue changes with
-// Daemon delivery under d.mu.
+// true. It serializes queue work per Session and never holds d.mu during pig I/O.
 func (d *Daemon) editQueueItem(id, itemID, text string, remove bool) (int, string) {
 	d.mu.Lock()
-	defer d.mu.Unlock()
 	s, ok := d.sessions[id]
 	if !ok {
+		d.mu.Unlock()
+		return http.StatusNotFound, "session not found"
+	}
+	if s.queueMu == nil {
+		s.queueMu = &sync.Mutex{}
+	}
+	queueMu := s.queueMu
+	d.mu.Unlock()
+	queueMu.Lock()
+	defer queueMu.Unlock()
+
+	d.mu.Lock()
+	if d.sessions[id] != s {
+		d.mu.Unlock()
 		return http.StatusNotFound, "session not found"
 	}
 	for i := range s.pending {
@@ -1685,39 +1820,92 @@ func (d *Daemon) editQueueItem(id, itemID, text string, remove bool) (int, strin
 		} else {
 			s.pending[i].text = text
 		}
+		s.queueRevision++
+		d.mu.Unlock()
 		return http.StatusOK, ""
 	}
+	if queueDeliveredLocked(s, itemID) {
+		d.mu.Unlock()
+		return http.StatusConflict, "queued message was already delivered"
+	}
 	if s.meta.Harness != "pig" {
-		return http.StatusNotFound, "queued message not found; it may already have been delivered"
+		d.mu.Unlock()
+		return http.StatusNotFound, "queued message not found"
 	}
 	qb, ok := d.backendForLocked(s.meta.Harness).(steerBackend)
 	if !ok {
-		return http.StatusNotFound, "queued message not found; it may already have been delivered"
+		d.mu.Unlock()
+		return http.StatusNotFound, "queued message not found"
 	}
-	current := qb.QueuedMessages(id)
-	s.nativeQueue = reconcileNativeQueue(s.nativeQueue, current)
+	revision := s.queueRevision
+	previous := append([]QueuedMessage(nil), s.nativeQueue...)
+	known := false
+	for _, item := range previous {
+		if item.ID == itemID {
+			known = true
+			break
+		}
+	}
+	d.mu.Unlock()
+
+	current, available := qb.NativeQueue(id)
+	if !available {
+		return http.StatusServiceUnavailable, "pig's native queue is unavailable; retry"
+	}
+	d.mu.Lock()
+	if d.sessions[id] != s {
+		d.mu.Unlock()
+		return http.StatusNotFound, "session not found"
+	}
+	if s.queueRevision != revision {
+		d.mu.Unlock()
+		return http.StatusConflict, "queued messages changed; reload the queue"
+	}
+	native := reconcileNativeQueue(previous, current)
+	markMissingNativeDeliveredLocked(s, previous, native)
+	s.nativeQueue = native
 	index := -1
-	for i := range s.nativeQueue {
-		if s.nativeQueue[i].ID == itemID {
+	for i := range native {
+		if native[i].ID == itemID {
 			index = i
 			break
 		}
 	}
 	if index < 0 {
-		return http.StatusNotFound, "queued message not found; it may already have been delivered"
+		if known {
+			markQueueDeliveredLocked(s, itemID)
+		}
+		if queueDeliveredLocked(s, itemID) {
+			d.mu.Unlock()
+			return http.StatusConflict, "queued message was already delivered"
+		}
+		d.mu.Unlock()
+		return http.StatusNotFound, "queued message not found"
 	}
-	delivered := len(current) - qb.ClearQueued(id)
-	if delivered < 0 || delivered > len(current) {
-		s.nativeQueue = nil
-		s.queueRevision++
-		return http.StatusConflict, "queued messages changed during the update; reload the queue"
+	queued := append([]QueuedMessage(nil), native...)
+	d.mu.Unlock()
+
+	clearedNative, available := qb.ClearNativeQueue(id)
+	if !available {
+		return http.StatusServiceUnavailable, "pig's native queue is unavailable; retry"
 	}
-	remaining := append([]QueuedMessage(nil), s.nativeQueue[delivered:]...)
-	if delivered == len(current) && len(current) > 0 && len(qb.QueuedMessages(id)) > 0 {
-		s.nativeQueue = reconcileNativeQueue(remaining, qb.QueuedMessages(id))
-		s.queueRevision++
-		return http.StatusInternalServerError, "could not clear pig's native queue"
+	remaining := reconcileNativeQueue(queued, clearedNative)
+	clearedIDs := make(map[string]struct{}, len(remaining))
+	for _, item := range remaining {
+		clearedIDs[item.ID] = struct{}{}
 	}
+	d.mu.Lock()
+	if d.sessions[id] != s {
+		d.mu.Unlock()
+		return http.StatusNotFound, "session not found"
+	}
+	for _, item := range queued {
+		if _, ok := clearedIDs[item.ID]; !ok {
+			markQueueDeliveredLocked(s, item.ID)
+		}
+	}
+	d.mu.Unlock()
+
 	target := -1
 	for i := range remaining {
 		if remaining[i].ID == itemID {
@@ -1727,36 +1915,99 @@ func (d *Daemon) editQueueItem(id, itemID, text string, remove bool) (int, strin
 	}
 	targetDelivered := target < 0
 	desired := append([]QueuedMessage(nil), remaining...)
-	if targetDelivered {
-		// The target left the queue after the snapshot; retain the other items
-		// and report the conflict after restoring them below.
-	} else if remove {
+	if !targetDelivered && remove {
 		desired = append(desired[:target], desired[target+1:]...)
-	} else {
+	} else if !targetDelivered {
 		desired[target].Text = text
 	}
+
 	restored := make([]QueuedMessage, 0, len(desired))
-	for _, mode := range []string{"steer", "followup"} {
-		for _, item := range desired {
-			if item.Mode != mode {
+	for i, item := range desired {
+		var queuedOK bool
+		if item.Mode == "steer" {
+			queuedOK = qb.Steer(id, item.Text)
+		} else {
+			queuedOK = qb.FollowUp(id, item.Text)
+		}
+		if queuedOK {
+			restored = append(restored, item)
+			continue
+		}
+
+		// If native restoration stops part-way, move the unacknowledged tail
+		// into the Daemon queue instead of losing it with the cleared batch.
+		actual, available := qb.NativeQueue(id)
+		updated := append([]QueuedMessage(nil), restored...)
+		if available {
+			updated = reconcileNativeQueue(desired, actual)
+		}
+		present := make(map[string]struct{}, len(updated))
+		for _, live := range updated {
+			present[live.ID] = struct{}{}
+		}
+		var fallback []queuedMsg
+		for j := i; j < len(desired); j++ {
+			if _, ok := present[desired[j].ID]; ok {
 				continue
 			}
-			var queued bool
-			if mode == "steer" {
-				queued = qb.Steer(id, item.Text)
-			} else {
-				queued = qb.FollowUp(id, item.Text)
-			}
-			if !queued {
-				s.nativeQueue = restored
-				s.queueRevision++
-				return http.StatusInternalServerError, "could not restore pig's native queue"
-			}
-			restored = append(restored, item)
+			fallback = append(fallback, queuedMsg{
+				id: desired[j].ID, mode: desired[j].Mode, text: desired[j].Text,
+				imageIDs: append([]string(nil), desired[j].ImageIDs...),
+				degraded: desired[j].Degraded, from: desired[j].from,
+			})
 		}
+		d.mu.Lock()
+		if d.sessions[id] != s {
+			d.mu.Unlock()
+			return http.StatusNotFound, "session not found"
+		}
+		for j := 0; j < i; j++ {
+			if _, ok := present[desired[j].ID]; !ok {
+				markQueueDeliveredLocked(s, desired[j].ID)
+			}
+		}
+		s.nativeQueue = updated
+		if len(fallback) > 0 {
+			pending := make([]queuedMsg, 0, len(fallback)+len(s.pending))
+			pending = append(pending, fallback...)
+			pending = append(pending, s.pending...)
+			s.pending = pending
+			for _, item := range fallback {
+				delete(s.deliveredQueue, item.id)
+			}
+		}
+		s.queueRevision++
+		d.mu.Unlock()
+		if targetDelivered {
+			return http.StatusConflict, "queued message was delivered during the update"
+		}
+		return http.StatusOK, ""
 	}
-	s.nativeQueue = restored
+
+	actual, available := qb.NativeQueue(id)
+	updated := append([]QueuedMessage(nil), desired...)
+	if available {
+		updated = reconcileNativeQueue(desired, actual)
+	}
+	updatedIDs := make(map[string]struct{}, len(updated))
+	for _, item := range updated {
+		updatedIDs[item.ID] = struct{}{}
+	}
+	d.mu.Lock()
+	if d.sessions[id] != s {
+		d.mu.Unlock()
+		return http.StatusNotFound, "session not found"
+	}
+	if available {
+		markMissingNativeDeliveredLocked(s, desired, updated)
+	}
+	s.nativeQueue = updated
 	s.queueRevision++
+	_, targetStillQueued := updatedIDs[itemID]
+	d.mu.Unlock()
+	if !remove && !targetDelivered && !targetStillQueued {
+		return http.StatusConflict, "queued message was delivered during the update"
+	}
 	if targetDelivered {
 		return http.StatusConflict, "queued message was delivered during the update"
 	}
@@ -1915,31 +2166,6 @@ func writeSendResult(res sendResult) map[string]any {
 	return out
 }
 
-// requireQueueOwner allows only a Session's owner or an admin to inspect or
-// change its queued prompts. Machine callers may send prompts but cannot edit
-// a User's queue.
-func (d *Daemon) requireQueueOwner(w http.ResponseWriter, r *http.Request, id string) bool {
-	rq, authenticated := d.requesterOf(r)
-	if !authenticated || rq.user == nil {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "only the Session owner or an admin can manage its queue"})
-		return false
-	}
-	d.mu.Lock()
-	s, ok := d.sessions[id]
-	if !ok {
-		d.mu.Unlock()
-		http.NotFound(w, r)
-		return false
-	}
-	owner := s.meta.Owner
-	d.mu.Unlock()
-	if !rq.user.Admin && rq.user.ID != owner {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "only the Session owner or an admin can manage its queue"})
-		return false
-	}
-	return true
-}
-
 func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, "/api/sessions/")
 	parts := strings.SplitN(rest, "/", 2)
@@ -2048,29 +2274,28 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 	case sub == "compress/dismiss" && r.Method == "POST":
 		d.handleCompressDismiss(w, r, id)
 	case sub == "queue" && r.Method == http.MethodGet:
-		if !d.requireQueueOwner(w, r, id) {
-			return
-		}
 		q, code := d.listQueue(id)
 		if code != http.StatusOK {
-			http.NotFound(w, r)
+			if code == http.StatusNotFound {
+				http.NotFound(w, r)
+			} else {
+				writeJSON(w, code, map[string]any{"error": "pig's native queue is unavailable; retry"})
+			}
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"queue": q})
 	case sub == "queue" && r.Method == http.MethodDelete:
-		if !d.requireQueueOwner(w, r, id) {
-			return
-		}
 		n, code := d.dropQueue(id)
 		if code != http.StatusOK {
-			http.NotFound(w, r)
+			if code == http.StatusNotFound {
+				http.NotFound(w, r)
+			} else {
+				writeJSON(w, code, map[string]any{"error": "pig's native queue is unavailable; retry"})
+			}
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{"cleared": n})
 	case strings.HasPrefix(sub, "queue/") && (r.Method == http.MethodPatch || r.Method == http.MethodDelete):
-		if !d.requireQueueOwner(w, r, id) {
-			return
-		}
 		itemID := strings.TrimPrefix(sub, "queue/")
 		if itemID == "" || strings.Contains(itemID, "/") {
 			writeJSON(w, http.StatusNotFound, map[string]any{"error": "queued message not found"})

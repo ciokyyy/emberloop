@@ -46,7 +46,7 @@ func TestCreatePromptStreamsOrderedEvents(t *testing.T) {
 	}
 }
 
-func TestQueueRequiresSessionOwnerOrAdmin(t *testing.T) {
+func TestQueueAuthorizationMatchesSessionActions(t *testing.T) {
 	t.Parallel()
 	fake := NewFakeBackend()
 	fake.Delay = 500 * time.Millisecond
@@ -58,9 +58,11 @@ func TestQueueRequiresSessionOwnerOrAdmin(t *testing.T) {
 	adminServer := httptest.NewServer(withCookie(h, admin))
 	ownerServer := httptest.NewServer(withCookie(h, owner))
 	otherServer := httptest.NewServer(withCookie(h, other))
+	machineServer := httptest.NewServer(withBearer(h, d.machineToken))
 	defer adminServer.Close()
 	defer ownerServer.Close()
 	defer otherServer.Close()
+	defer machineServer.Close()
 
 	id := createSession(t, ownerServer.URL, "fake", "fake-model", tempDir(t))
 	seq := sendPrompt(t, ownerServer.URL, id, "slow job")
@@ -72,16 +74,17 @@ func TestQueueRequiresSessionOwnerOrAdmin(t *testing.T) {
 	if got := getQueue(t, adminServer.URL, id); len(got) != 1 || got[0].ID != item.ID {
 		t.Fatalf("admin queue = %+v, want owner item %q", got, item.ID)
 	}
-	resp, err := http.Get(otherServer.URL + "/api/sessions/" + id + "/queue")
-	if err != nil {
-		t.Fatal(err)
+	if got := getQueue(t, otherServer.URL, id); len(got) != 1 || got[0].ID != item.ID {
+		t.Fatalf("other User queue = %+v, want shared Session item %q", got, item.ID)
 	}
-	resp.Body.Close()
-	if resp.StatusCode != http.StatusForbidden {
-		t.Fatalf("other User queue read = %d, want 403", resp.StatusCode)
+	if got := getQueue(t, machineServer.URL, id); len(got) != 1 || got[0].ID != item.ID {
+		t.Fatalf("machine queue = %+v, want shared Session item %q", got, item.ID)
 	}
-	if code, body := queueItemRequest(t, otherServer.URL, id, item.ID, http.MethodPatch, "intrusion"); code != http.StatusForbidden || !strings.Contains(body, "Session owner or an admin") {
-		t.Fatalf("other User queue edit = %d %s, want owner/admin 403", code, body)
+	if code, body := queueItemRequest(t, machineServer.URL, id, item.ID, http.MethodPatch, "machine edit"); code != http.StatusOK {
+		t.Fatalf("machine queue edit = %d %s, want Session-action access", code, body)
+	}
+	if code, body := queueItemRequest(t, otherServer.URL, id, item.ID, http.MethodPatch, "other edit"); code != http.StatusOK {
+		t.Fatalf("other User queue edit = %d %s, want Session-action access", code, body)
 	}
 	if code, body := queueItemRequest(t, adminServer.URL, id, item.ID, http.MethodPatch, "admin edit"); code != http.StatusOK {
 		t.Fatalf("admin queue edit = %d %s", code, body)
@@ -89,6 +92,12 @@ func TestQueueRequiresSessionOwnerOrAdmin(t *testing.T) {
 	updated := getQueue(t, ownerServer.URL, id)
 	if len(updated) != 1 || updated[0].ID != item.ID || updated[0].Text != "admin edit" {
 		t.Fatalf("owner queue after admin edit = %+v", updated)
+	}
+	if code, body := queueItemRequest(t, machineServer.URL, id, item.ID, http.MethodDelete, ""); code != http.StatusOK {
+		t.Fatalf("machine queue remove = %d %s, want Session-action access", code, body)
+	}
+	if got := getQueue(t, ownerServer.URL, id); len(got) != 0 {
+		t.Fatalf("owner queue after machine remove = %+v, want empty", got)
 	}
 	clearQueue(t, ownerServer.URL, id)
 	waitTurnEnd(t, ownerServer.URL, id, seq)

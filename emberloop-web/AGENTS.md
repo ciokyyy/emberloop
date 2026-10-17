@@ -28,10 +28,11 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   `text` and `imageIds`; `PATCH /queue/<itemId>` edits text and
   `DELETE /queue/<itemId>` removes one item, while `DELETE /queue` still clears
   all. IDs stay stable while queued; the API controls both Daemon-pending and
-  pig-native entries. Only the Session owner or an admin may read or change
-  its queue. Missing or delivered items return a clear 404/409; degraded
-  claude Steers report `followup`. `web/src/lib/api.js` wraps each operation;
-  `steer_test.go` and `api_test.go` cover the queue and authorization seams.
+  pig-native entries. Queue access follows other Session actions: all callers
+  authenticated by the API gate, including machine clients, may inspect or
+  change it. Unknown ids return 404; delivered ids return 409. Degraded claude
+  Steers report `followup`. `web/src/lib/api.js` wraps each operation;
+  `steer_test.go` and `api_test.go` cover queue and access behavior.
 - SSR spike and request rendering: `ssr_test.go` exercises the embedded Dashboard bundle in `modernc.org/quickjs` (no cgo), tests Chromium hydration when installed, and benchmarks warm renders. Signed-in `/` requests render the Dashboard with prefetched payload under a 200ms deadline only when the accepted ticket 03 SSR bundle is embedded; errors log and serve the shell. Run `npm run build` in `web/` first.
 
 - UI routing: `ui.go` matches route patterns from `router.js` before serving the shell; unmatched page paths get an HTML 404, while missing assets and `/api/*` remain 404s. `ui_assets_test.go` pins route coverage and fallback status.

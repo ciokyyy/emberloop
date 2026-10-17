@@ -1306,15 +1306,19 @@ func (b *PigBackend) FollowUp(sessionID, text string) bool {
 	return false
 }
 
-// QueuedMessages lists the pig native queues oldest-first, steering ahead
-// of follow-ups. The Daemon merges this with its own pending list.
-func (b *PigBackend) QueuedMessages(sessionID string) []QueuedMessage {
+// NativeQueue returns the pig native queues oldest-first, steering ahead of
+// follow-ups. A released or not-yet-started handle has an empty native queue.
+func (b *PigBackend) NativeQueue(sessionID string) ([]QueuedMessage, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	ps, ok := b.sessions[sessionID]
 	if !ok {
-		return nil
+		return []QueuedMessage{}, true
 	}
+	return pigQueuedMessages(ps), true
+}
+
+func pigQueuedMessages(ps *pigSession) []QueuedMessage {
 	var out []QueuedMessage
 	for _, text := range ps.sess.GetSteeringMessages() {
 		out = append(out, QueuedMessage{Mode: "steer", Text: text})
@@ -1325,17 +1329,37 @@ func (b *PigBackend) QueuedMessages(sessionID string) []QueuedMessage {
 	return out
 }
 
-// ClearQueued drops the pig native queues before delivery and reports how
-// many messages were dropped.
-func (b *PigBackend) ClearQueued(sessionID string) int {
+// QueuedMessages is the legacy view of NativeQueue; the Daemon uses the
+// availability bit to distinguish an empty queue from an unreachable shim.
+func (b *PigBackend) QueuedMessages(sessionID string) []QueuedMessage {
+	queued, _ := b.NativeQueue(sessionID)
+	return queued
+}
+
+// ClearNativeQueue returns the exact messages removed. A handle that is no
+// longer live has no native queue to clear.
+func (b *PigBackend) ClearNativeQueue(sessionID string) ([]QueuedMessage, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	ps, ok := b.sessions[sessionID]
 	if !ok {
-		return 0
+		return []QueuedMessage{}, true
 	}
 	steering, followUp := ps.sess.ClearQueue()
-	return len(steering) + len(followUp)
+	var out []QueuedMessage
+	for _, text := range steering {
+		out = append(out, QueuedMessage{Mode: "steer", Text: text})
+	}
+	for _, text := range followUp {
+		out = append(out, QueuedMessage{Mode: "followup", Text: text})
+	}
+	return out, true
+}
+
+// ClearQueued drops the pig native queues and reports how many messages were dropped.
+func (b *PigBackend) ClearQueued(sessionID string) int {
+	queued, _ := b.ClearNativeQueue(sessionID)
+	return len(queued)
 }
 
 // CloseSession cancels the turn, closes the SDK session and its runtime,
