@@ -420,9 +420,57 @@ func TestPushDuplicateNotifySendsOnce(t *testing.T) {
 	}
 }
 
-// A settling child or scout sends no push of its own: only the parent's
-// grouped-result turn notifies. Driven through spawn and real turn settles.
-func TestPushChildAndScoutTurnsStaySilent(t *testing.T) {
+func TestSessionReportsExposeUnreadSeqAndReportHistory(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	report := d.appendEvent(id, "prompt", "Subagents group-1 finished:\n- child-1 (worker): completed", "")
+
+	res, err := http.Get(srv.URL + "/api/sessions")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var sessions []SessionMeta
+	if err := json.NewDecoder(res.Body).Decode(&sessions); err != nil {
+		res.Body.Close()
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	var found bool
+	for _, session := range sessions {
+		if session.ID == id {
+			found = true
+			if session.ReportSeq != report.Seq {
+				t.Fatalf("session report seq = %d, want %d", session.ReportSeq, report.Seq)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("Session %q missing from list", id)
+	}
+
+	res, err = http.Get(srv.URL + "/api/sessions/" + id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var snapshot struct {
+		Session SessionMeta `json:"session"`
+		Reports []Event     `json:"reports"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Session.ReportSeq != report.Seq || len(snapshot.Reports) != 1 || snapshot.Reports[0].Seq != report.Seq {
+		t.Fatalf("report snapshot = %+v, want latest seq %d and one stored report", snapshot, report.Seq)
+	}
+}
+
+// Child and scout Sessions stay silent; group-mode completion sends its
+// specific push from the parent turn, once.
+func TestPushGroupCompletionUsesOneParentNotice(t *testing.T) {
 	t.Parallel()
 	d := NewDaemon(tempDir(t), NewFakeBackend())
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -448,12 +496,46 @@ func TestPushChildAndScoutTurnsStaySilent(t *testing.T) {
 	// The last child to settle steers the parent, whose turn then notifies.
 	waitParentIdle(t, srv.URL, parent)
 	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
-	if m.SessionID != parent || !strings.HasPrefix(m.Key, "turn:"+parent+":") {
-		t.Fatalf("push = %+v, want the parent's turn-done only", m)
+	if m.SessionID != parent || m.Body != "Subagents finished" || !strings.HasPrefix(m.Key, "subagents:"+parent+":") {
+		t.Fatalf("push = %+v, want one grouped Subagents finished push for the parent", m)
 	}
 	time.Sleep(300 * time.Millisecond)
 	if n := len(cap.all()); n != 1 {
 		t.Fatalf("pushes = %d, want exactly 1: child and scout settles stay silent", n)
+	}
+}
+
+// Each-mode deliveries are individual child messages, not a group-completion
+// notice. The parent's ordinary turn-complete push remains unchanged.
+func TestPushEachModeDoesNotSendGroupCompletionBody(t *testing.T) {
+	t.Parallel()
+	d := NewDaemon(tempDir(t), NewFakeBackend())
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	cap, decrypt := capturePush(t, d)
+
+	code, out := postSpawn(t, srv.URL, parent, map[string]any{
+		"agents": []map[string]any{{"prompt": "job A"}}, "deliver": "each",
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("spawn status = %d (%v)", code, out)
+	}
+	raw, _ := json.Marshal(out["sessions"])
+	var kids []SessionMeta
+	_ = json.Unmarshal(raw, &kids)
+	if len(kids) != 1 {
+		t.Fatalf("spawn sessions = %v, want 1", out["sessions"])
+	}
+	waitStatus(t, srv.URL, kids[0].ID, "idle", 10*time.Second)
+	waitParentIdle(t, srv.URL, parent)
+	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
+	if m.Body == "Subagents finished" || strings.HasPrefix(m.Key, "subagents:") {
+		t.Fatalf("each-mode push = %+v, must not use the group completion notice", m)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := len(cap.all()); n != 1 {
+		t.Fatalf("each-mode pushes = %d, want only the parent's ordinary turn push", n)
 	}
 }
 

@@ -104,6 +104,9 @@ type SessionMeta struct {
 	// Subagents and Workers whose WorkDir is a worktree.
 	ProjectID string `json:"projectId,omitempty"`
 	Status    string `json:"status"`
+	// ReportSeq is the newest grouped Subagent report in this Session. The
+	// browser compares it with its per-User read cursor to mark unread Sessions.
+	ReportSeq int64 `json:"reportSeq,omitempty"`
 	// Capped marks a failed turn classified as a provider session limit. It
 	// is exposed to the Session list while Status remains failed internally.
 	Capped    bool      `json:"capped,omitempty"`

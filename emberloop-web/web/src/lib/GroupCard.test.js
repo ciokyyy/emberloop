@@ -22,6 +22,18 @@ describe('GroupCard', () => {
     expect(container.querySelector('[data-child="c1"]').textContent).toContain('worker');
     expect(getSession).toHaveBeenCalledWith('c1');
   });
+  it('shows final worker and scout counts for a completed group', async () => {
+    getSession.mockImplementation(async (id) => ({
+      session: { id, name: id === 'c1' ? 'Alpha' : 'Scout', harness: 'pig', status: id === 'c1' ? 'ended' : 'failed', scout: id === 'c2' },
+      events: id === 'c1' ? [{ kind: 'assistant_chunk', text: 'done' }] : [],
+    }));
+    const { container } = render(GroupCard, {
+      props: { block: group([{ id: 'c1', name: 'Alpha', harness: 'pig' }, { id: 'c2', name: 'Scout', harness: 'pig', scout: true }]) },
+    });
+    await within(container).findByText('Alpha');
+    await vi.waitFor(() => expect(container.querySelector('[data-card="group"]')?.textContent).toMatch(/1 done · 0 running\s*· 1 failed/));
+    expect(container.querySelector('[data-card="group"]')?.textContent).toContain('2 subagents');
+  });
   it('tints the pig row edge teal and the claude row terracotta', async () => {
     const { container } = render(GroupCard, {
       props: {

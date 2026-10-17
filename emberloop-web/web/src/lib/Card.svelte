@@ -5,7 +5,7 @@
   import Markdown from './Markdown.svelte';
   import GroupCard from './GroupCard.svelte';
   import ToolStrip from './ToolStrip.svelte';
-  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
+  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
   import { getCurrentUserId, decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import Button from './ui/button.svelte';
   import IconButton from './ui/icon-button.svelte';
@@ -18,7 +18,7 @@
   import { people, personFor } from './people.svelte.js';
   import { ownerTone } from './owners.js';
   import { appendText } from './appendText.js';
-  let { block, sessionId = null, sessions = [], onOpenSession = () => {}, queuedItem = null, cancelled = false, onQueueChange = () => {} } = $props();
+  let { block, sessionId = null, sessions = [], onOpenSession = () => {}, onDismissReport = () => {}, queuedItem = null, cancelled = false, onQueueChange = () => {} } = $props();
   let actionsOpen = $state(false);
   let longPressTimer = 0;
   let longPressY = 0;
@@ -115,6 +115,13 @@
   }
   // One-line hint of what the tool was asked: first line of the input.
   const firstReply = $derived(String(block.members?.[0]?.reply ?? block.body ?? '').replace(/\s+/g, ' ').slice(0, 110));
+  const reportCounts = $derived(block.report?.counts ?? {});
+  const reportCountLabel = $derived([
+    `${reportCounts.total ?? block.members?.length ?? 0} agent${(reportCounts.total ?? block.members?.length ?? 0) === 1 ? '' : 's'}`,
+    reportCounts.workers ? `${reportCounts.workers} worker${reportCounts.workers === 1 ? '' : 's'}` : '',
+    reportCounts.scouts ? `${reportCounts.scouts} scout${reportCounts.scouts === 1 ? '' : 's'}` : '',
+    reportCounts.failed ? `${reportCounts.failed} failed` : '',
+  ].filter(Boolean).join(' · '));
   const preview = $derived(String(block.input ?? '').replace(/\s+/g, ' ').trim().slice(0, 120));
   const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n ?? 0));
   const compaction = $derived(block.compaction ?? {});
@@ -339,25 +346,37 @@
     </div>
   </details>
 {:else if block.card === 'report'}
+  {@const ReportIcon = icons.report}
+  {@const DismissIcon = icons.dismiss}
   <div role="group" aria-label="Subagent report" class="group relative" onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
-  <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="report">
-    <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
-      <Bot class="size-4 shrink-0 text-muted-foreground" />
-      <span class="font-medium">{block.title}</span>
-      <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{firstReply}</span>
-      <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
-    </summary>
-    <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
-      {#each block.members?.length ? block.members : [{ id: '', kind: 'agent', reply: block.body }] as m}
-        <div>
-          <div class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            {m.kind}{#if m.id}<span class="font-mono normal-case">{m.id}</span>{/if}
+    <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="report" data-report-seq={block.report?.seq} open={!block.collapsed}>
+      <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+        <ReportIcon class="size-4 shrink-0 text-muted-foreground" />
+        {#if block.report}
+          <span class="shrink-0 font-medium">Subagents {block.report.groupName} finished</span>
+          <span class="shrink-0 text-caption text-fg-3">{reportCountLabel}</span>
+        {:else}
+          <span class="font-medium">{block.title}</span>
+        {/if}
+        <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{firstReply}</span>
+        {#if block.report}
+          <Button variant="ghost" size="sm" class="h-8 shrink-0 px-2" aria-label="Dismiss report" onclick={(event) => { event.preventDefault(); event.stopPropagation(); onDismissReport(block.report.seq); }}>
+            <DismissIcon class="size-3.5" /> Dismiss
+          </Button>
+        {/if}
+        <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+      </summary>
+      <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
+        {#each block.members?.length ? block.members : [{ id: '', kind: 'agent', reply: block.body }] as m}
+          <div>
+            <div class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
+              {m.kind}{#if m.id}<span class="font-mono normal-case">{m.id}</span>{/if}
+            </div>
+            <div class="max-h-96 overflow-auto rounded-xl bg-muted/60 p-3"><Markdown text={m.reply} /></div>
           </div>
-          <div class="max-h-96 overflow-auto rounded-xl bg-muted/60 p-3"><Markdown text={m.reply} /></div>
-        </div>
-      {/each}
-    </div>
-  </details>
+        {/each}
+      </div>
+    </details>
     <MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} />
   </div>
 {:else if block.card === 'thinking'}

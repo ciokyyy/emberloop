@@ -40,7 +40,7 @@
   import ProjectSettingsPage from './lib/ProjectSettingsPage.svelte';
   import DrawerNav from './lib/DrawerNav.svelte';
   import { modelLabel } from './lib/harnesses.js';
-  import { groupTranscriptCached, createTranscriptCache, latestUsageCached, createUsageCache, withImageNote, compressBlockReason } from './lib/events.js';
+  import { groupTranscriptCached, createTranscriptCache, latestUsageCached, createUsageCache, withImageNote, compressBlockReason, parseReport } from './lib/events.js';
   import { parsePath, buildPath } from './lib/router.js';
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
@@ -48,6 +48,7 @@
   import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, suggestProject, addProject, renameProject, removeProject, updateProject, getGit, getDisk } from './lib/api.js';
   import { people, refreshPeople, personFor } from './lib/people.svelte.js';
   import { runsStore } from './lib/runsStore.js';
+  import { readReportState, writeReportState, rememberReports, setReportDismissed, markReportsRead } from './lib/reportState.js';
 
   // The signed-in User and the sign-out action, both supplied by Root.svelte.
   let { user = null, onSignOut = () => {} } = $props();
@@ -64,6 +65,7 @@
   let currentId = $state(null);
   let meta = $state(null);
   let events = $state([]);
+  let reportState = $state({ reports: [], dismissed: [], readSeq: 0, latestSeq: 0 });
   let lastSeq = $state(0);
   let connected = $state(true);
   let projects = $state([]);
@@ -270,7 +272,7 @@
   // the deriveds on purpose: regroups stay driven by events/sessions/status.
   let transcriptCache = createTranscriptCache();
   let usageCache = createUsageCache();
-  const blocks = $derived([
+  const rawBlocks = $derived([
     ...groupTranscriptCached(events, sessionsById, { working: meta?.status === 'working' }, transcriptCache).map((b) =>
       b.card === 'user' && swappedTexts.some((t) => b.body === t || String(b.body ?? '').startsWith(`${t}\n`))
         ? { ...b, noAnim: true }
@@ -286,6 +288,43 @@
       events: [],
     })),
   ]);
+  const blocks = $derived(rawBlocks.filter((block) => !block.report || !reportState.dismissed.includes(Number(block.report.seq))));
+  const sidebarSessions = $derived(sessions.map((session) => {
+    const state = session.id === currentId ? reportState : readReportState(user?.id, session.id);
+    return {
+      ...session,
+      reportUnread: Math.max(Number(session.reportSeq) || 0, state.latestSeq) > state.readSeq,
+    };
+  }));
+  function syncReportState(id, eventList, readThrough = 0) {
+    if (!id || !user?.id) return;
+    const reports = eventList
+      .filter((event) => event.kind === 'prompt')
+      .map((event) => {
+        const report = parseReport(event.text);
+        return report ? { ...report, seq: event.seq } : null;
+      })
+      .filter(Boolean);
+    let next = rememberReports(readReportState(user.id, id), reports);
+    const latest = Math.max(Number(readThrough) || 0, next.latestSeq, ...reports.map((report) => Number(report.seq) || 0));
+    if (latest) next = markReportsRead(next, latest);
+    writeReportState(user.id, id, next);
+    if (currentId === id) reportState = next;
+  }
+  function noteIncomingReport(id, event) {
+    if (!id || !user?.id) return;
+    const report = parseReport(event.text);
+    if (!report) return;
+    const next = rememberReports(readReportState(user.id, id), [{ ...report, seq: event.seq }]);
+    writeReportState(user.id, id, next);
+    if (currentId === id) reportState = next;
+    sessions = sessions.map((session) => session.id === id ? { ...session, reportSeq: event.seq } : session);
+  }
+  function changeReportDismissal(seq, dismissed) {
+    if (!currentId || !user?.id) return;
+    reportState = setReportDismissed(reportState, seq, dismissed);
+    writeReportState(user.id, currentId, reportState);
+  }
   const usage = $derived(latestUsageCached(events, usageCache));
   const status = $derived(meta?.status ?? 'idle');
   // Height of the floating composer stack: the transcript pads by it so the last block never hides.
@@ -306,7 +345,10 @@
 
   const goSession = (id) => navigate(buildPath({ name: 'session', id }));
   const openRow = (row) => {
-    if (row.kind !== 'run') return goSession(row.id);
+    if (row.kind !== 'run') {
+      if (currentId === row.id) syncReportState(row.id, [], reportState.latestSeq);
+      return goSession(row.id);
+    }
     const path = scopedProjectRouteId
       ? buildPath({ name: 'project-run', projectId: scopedProjectRouteId, runId: row.id })
       : buildPath({ name: 'run', runId: row.id });
@@ -350,6 +392,7 @@
     atSeq = 0;
     resumable = true;
     resumeNote = '';
+    reportState = { reports: [], dismissed: [], readSeq: 0, latestSeq: 0 };
   }
 
   function resolveProjectScope(projectId) {
@@ -605,6 +648,7 @@
     pendingSends = [];
     view = 'chat';
     currentId = id;
+    reportState = readReportState(user?.id, id);
     draftOpen = false;
     draftPickGeneration++;
     draftPick = null;
@@ -628,6 +672,7 @@
       if (token !== openToken || currentId !== id) return;
       meta = body.session;
       events = body.events ?? [];
+      syncReportState(id, body.reports ?? events, body.session?.reportSeq ?? 0);
       resumable = body.resumable ?? true;
       compressible = body.compressible ?? false;
       compressNote = body.compressNote ?? '';
@@ -667,6 +712,7 @@
       const body = await getSession(id, { before: firstSeq, turns: TAIL_TURNS });
       if (id !== currentId) return;
       events = [...(body.events ?? []), ...events];
+      syncReportState(id, body.events ?? []);
       hasMore = body.hasMore ?? false;
       firstSeq = body.firstSeq ?? firstSeq;
     } catch {
@@ -711,6 +757,7 @@
       if (e.seq <= lastSeq) return;
       lastSeq = e.seq;
       batch.push(e);
+      if (e.kind === 'prompt' && parseReport(e.text)) noteIncomingReport(id, e);
       if (isChunkEvent(e)) scheduleChunk();
       else flushBatch();
       if (e.kind === 'prompt') {
@@ -1054,7 +1101,7 @@
           <OwnerGroups
             users={people.list}
             me={user}
-            {sessions}
+            sessions={sidebarSessions}
             {runs}
             {projects}
             {currentId}
@@ -1214,6 +1261,10 @@
           sessionId={currentId}
           {sessions}
           onOpenSession={goSession}
+          reports={reportState.reports}
+          dismissedReports={reportState.dismissed}
+          onDismissReport={(seq) => changeReportDismissal(seq, true)}
+          onRestoreReport={(seq) => changeReportDismissal(seq, false)}
         />
         {/if}
         <div bind:clientHeight={overlayH} class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/90 to-transparent px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-10 sm:px-4">

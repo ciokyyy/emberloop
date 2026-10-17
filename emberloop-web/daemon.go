@@ -231,8 +231,10 @@ type session struct {
 	// titleTried is set once a title was attempted, so a failure is not retried.
 	titleTried bool
 	events     []Event
-	notify     chan struct{}
-	last       time.Time
+	// reportSeqKnown avoids rescanning an old Session log on each list request.
+	reportSeqKnown bool
+	notify         chan struct{}
+	last           time.Time
 	// live tells whether the backend holds an agent process. Released
 	// and never-started Sessions keep history only.
 	live bool
@@ -990,7 +992,11 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 	if kind == "prompt" && e.Sender == "" {
 		systemSender.stamp(&e)
 	}
+	ensureGroupReportSeq(s)
 	s.events = append(s.events, e)
+	if kind == "prompt" && isGroupReportPrompt(text) {
+		s.meta.ReportSeq = e.Seq
+	}
 	s.last = d.now()
 	trackSessionToolEvent(s, kind, text, s.last)
 	if kind == "status" && status != "" {
@@ -998,7 +1004,18 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 		s.meta.Status = status
 		s.meta.Capped = status == "failed" && sessionLimitFailureInTurn(s.events)
 		if prev == "working" && (status == "idle" || status == "failed") {
-			d.pushTurnDone(s.meta, status, e.Seq)
+			groupedReport := false
+			for i := len(s.events) - 1; i >= 0; i-- {
+				if s.events[i].Kind == "prompt" {
+					groupedReport = isGroupReportPrompt(s.events[i].Text)
+					break
+				}
+			}
+			if groupedReport {
+				d.pushSubagentsFinished(s.meta, e.Seq)
+			} else {
+				d.pushTurnDone(s.meta, status, e.Seq)
+			}
 		}
 	}
 	notify := s.notify
@@ -2048,6 +2065,26 @@ func (d *Daemon) interrupt(id string) (bool, int) {
 	return stopped, http.StatusOK
 }
 
+// latestGroupReportSeq is the list-page unread cursor for older Sessions that
+// predate the ReportSeq metadata field.
+func latestGroupReportSeq(events []Event) int64 {
+	for i := len(events) - 1; i >= 0; i-- {
+		if events[i].Kind == "prompt" && isGroupReportPrompt(events[i].Text) {
+			return events[i].Seq
+		}
+	}
+	return 0
+}
+
+func ensureGroupReportSeq(s *session) {
+	if s == nil || s.reportSeqKnown {
+		return
+	}
+	if s.meta.ReportSeq == 0 {
+		s.meta.ReportSeq = latestGroupReportSeq(s.events)
+	}
+	s.reportSeqKnown = true
+}
 func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -2058,6 +2095,7 @@ func (d *Daemon) handleSessions(w http.ResponseWriter, r *http.Request) {
 			if s.meta.Owner == "" {
 				continue
 			}
+			ensureGroupReportSeq(s)
 			metas = append(metas, s.meta)
 			lasts[s.meta.ID] = s.last
 		}
@@ -2196,8 +2234,15 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 			http.NotFound(w, r)
 			return
 		}
+		ensureGroupReportSeq(s)
 		meta := s.meta
 		events := append([]Event(nil), s.events...)
+		reports := make([]Event, 0)
+		for _, event := range events {
+			if event.Kind == "prompt" && isGroupReportPrompt(event.Text) {
+				reports = append(reports, event)
+			}
+		}
 		live := s.live
 		resumable, note := d.resumeViewLocked(s)
 		be := d.backendForLocked(meta.Harness)
@@ -2218,7 +2263,7 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		}
 		window, firstSeq, hasMore := snapshotWindow(events, start, end)
 		writeJSON(w, http.StatusOK, map[string]any{
-			"session": meta, "events": window,
+			"session": meta, "events": window, "reports": reports,
 			"hasMore": hasMore, "firstSeq": firstSeq,
 			"live": live, "resumable": resumable, "resumeNote": note,
 			"compressible": compressible,

@@ -55,6 +55,28 @@ describe('Card renders every Event kind', () => {
     const { container } = render(Card, { props: { block: block('user', 'Follow-up', 'after that') } });
     expect(container.querySelector('[data-card="user"]')?.textContent).toContain('Follow-up');
   });
+  it('renders report counts and preview, expands details, and dismisses without Steer identity', async () => {
+    const onDismissReport = vi.fn();
+    const report = {
+      ...block('report', '2 subagent reports', 'full report text'),
+      report: { seq: 9, groupId: 'group-7', groupName: 'group-7', counts: { total: 2, workers: 1, scouts: 1, failed: 0 } },
+      members: [{ id: 'a1', kind: 'worker', reply: 'fixed the bug' }, { id: 'b2', kind: 'scout', reply: 'checked callers' }],
+      collapsed: true,
+    };
+    const { container } = render(Card, { props: { block: report, onDismissReport } });
+    const card = container.querySelector('[data-card="report"]');
+    expect(card.textContent).toContain('Subagents group-7 finished');
+    expect(card.textContent).toContain('2 agents · 1 worker · 1 scout');
+    expect(card.textContent).toContain('fixed the bug');
+    expect(card.hasAttribute('open')).toBe(false);
+    expect(card.querySelector('[data-testid="sender-badge"]')).toBeNull();
+    expect(card.textContent).not.toContain('Steer');
+    const { fireEvent } = await import('@testing-library/svelte');
+    await fireEvent.click(within(card).getByText('Subagents group-7 finished'));
+    expect(card.hasAttribute('open')).toBe(true);
+    await fireEvent.click(within(card).getByRole('button', { name: 'Dismiss report' }));
+    expect(onDismissReport).toHaveBeenCalledWith(9);
+  });
   it('an echoed prompt (swap) skips the entrance animation', () => {
     const { container } = render(Card, { props: { block: { ...block('user', 'You', 'hello'), noAnim: true } } });
     const card = container.querySelector('[data-card="user"]');

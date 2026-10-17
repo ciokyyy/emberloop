@@ -43,7 +43,7 @@
     statusWord={false}
     attention={state === 'needs'}
     current={s.id === currentId}
-    unread={Boolean(s.unread)}
+    unread={Boolean(s.unread || s.reportUnread)}
     badges={chips}
     onclick={() => onSelect(s)}
     data-session-id={s.id}

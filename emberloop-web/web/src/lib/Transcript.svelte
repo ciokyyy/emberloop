@@ -6,7 +6,7 @@
   import { tick, untrack } from 'svelte';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import Button from './ui/button.svelte';
-  import Card from './Card.svelte';
+  import ReportsTray from './ReportsTray.svelte';
   import { isNearBottom, applyAnchor, blockIndexForSeq } from './transcript.js';
   import { getQueue } from './api.js';
 
@@ -24,6 +24,10 @@
     sessionId = null,
     sessions = [],
     onOpenSession = null,
+    reports = [],
+    dismissedReports = [],
+    onDismissReport = () => {},
+    onRestoreReport = () => {},
   } = $props();
   let queueItems = $state([]);
   let queueAssignments = $state({});
@@ -461,6 +465,12 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div bind:this={scrollEl} data-testid="transcript-scroll" role="region" aria-label="Transcript" tabindex="0" onscroll={onScroll} onwheel={onWheel} ontouchstart={onTouchStart} ontouchmove={onTouchMove} onkeydown={onKey} class="transcript-scroll flex flex-1 scroll-auto flex-col overflow-auto px-3 pt-4 sm:px-4" style="padding-bottom: {bottomPad}px">
+
+  {#if reports.length}
+    <div class="sticky top-0 z-20 self-end w-full max-w-sm">
+      <ReportsTray {reports} dismissed={dismissedReports} onRestore={onRestoreReport} />
+    </div>
+  {/if}
   <div bind:this={contentEl} data-testid="transcript-content" class="mx-auto flex w-full max-w-3xl flex-col gap-4">
     {#if hasMore}
       <div bind:this={sentinel} class="flex justify-center py-1" data-testid="load-earlier">
@@ -486,7 +496,7 @@
           {#if b}
             <div data-index={row.index} data-block-key={b.key} use:measure class="w-full shrink-0">
               <div class="pb-4">
-                <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
+                <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} {onDismissReport} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
               </div>
             </div>
           {/if}
@@ -498,7 +508,7 @@
     {:else}
       {#each blocks as b (b.key)}
         <div data-block-key={b.key} style="content-visibility: auto; contain-intrinsic-size: auto 320px;">
-          <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
+          <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} {onDismissReport} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
         </div>
       {:else}
         <p class="py-24 text-center text-2xl font-semibold tracking-tight text-muted-foreground">{emptyHint}</p>

@@ -200,6 +200,15 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   Browser Session wiring injects the environment into Claude and Pig ACP/SDK tool paths when `agent-browser` exists in the el bin directory and browser support is enabled. It scopes Session and screenshot values, defaults allowed domains to localhost (admin `browser.allowed_domains` widens the allowlist), adds the el bin directory to `PATH`, and uses a discovered Chromium/Chrome executable; absent binaries or disabled support inject nothing. Session end closes the named browser, shutdown closes all browsers in the Daemon namespace, and the disk janitor removes stale inactive screenshot directories.
   Design Worker and design Reviewer tool servers receive a Daemon-reserved `PORT`, unique among live and restored design Sessions; other roles do not. The assignment persists in Session metadata. `.emberloop/preview` reads `PORT`, starts the worktree dev server and prints its URL. Session end stops processes carrying that Session's `EL_PREVIEW_SESSION` marker whose cwd is inside its worktree; pause, merge-end and abandon use Session end before worktree removal. Failed starts release their reservation. `preview_process_test.go` covers role scoping, persistence, port uniqueness, failed starts and Session-isolated process cleanup.
   Profile, notification and device preference components retain their existing behavior. `model_efforts_test.go`, `settings_test.go`, `SettingsPage.test.js`, `SettingsHub.test.js`, `SettingsRoutes.test.js` and `router.test.js` cover model capabilities, editing, migration, grouping, routes, phone navigation and the save bar.
+- Grouped Subagent result prompts remain Steers for the parent, but `events.js`
+  maps them to report notices before User-message classification. `GET
+  /api/sessions` exposes the latest `reportSeq`; a Session snapshot includes all
+  grouped report Events for tray hydration. Dismissal and cached report contents
+  are per-User/Session browser state keyed by Event seq; the Reports tray restores
+  them, and Session rows retain an unread dot until opened. The parent gets a
+  “Subagents finished” push after a grouped report is processed; the service
+  worker shows it only without a visible client. Each-mode child prompts do not
+  use the group-completion push.
 - Browser boot: the Dashboard and global pages do not wait for Session or Run
   lists. Project scope loads Sessions asynchronously; `/runs` and
   `/p/<id>/runs` load summaries in `RunsSidebar`. `runsStore` shares one summary

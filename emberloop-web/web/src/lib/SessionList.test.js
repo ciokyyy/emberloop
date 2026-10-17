@@ -75,6 +75,11 @@ describe('SessionList rows', () => {
     const { getByRole } = mount([{ id: 's1', harness: 'claude', status: 'idle', title: 'Find callers', scout: true }]);
     expect(within(getByRole('button', { name: /Find callers/ })).getByText('scout')).toBeTruthy();
   });
+  it('marks a Session with unread subagent reports until opened', () => {
+    const { getByRole } = mount([{ id: 'reported', harness: 'pig', status: 'idle', title: 'Reported session', reportUnread: true }]);
+    const row = getByRole('button', { name: /Reported session/ });
+    expect(row.querySelector('[data-unread]')).not.toBeNull();
+  });
 
   it('passes the whole row to onSelect on click, so a Run opens its own page', async () => {
     const onSelect = vi.fn();

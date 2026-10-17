@@ -47,13 +47,23 @@ export function splitMcpName(raw = '') {
 export function parseReport(text = '') {
   const m = /^Subagents (\S+) finished:\n?([\s\S]*)$/.exec(String(text));
   if (!m) return null;
-  const members = [...m[2].matchAll(/^- (\S+) \((\w+)\): ([\s\S]*?)(?=^- \S+ \(\w+\): |$(?![\s\S]))/gm)].map((x) => ({
+  const members = [...m[2].matchAll(/^- (\S+) \((worker|scout)\): ([\s\S]*?)(?=^- \S+ \((?:worker|scout)\): |$(?![\s\S]))/gm)].map((x) => ({
     id: x[1],
     kind: x[2],
     reply: x[3].trim(),
   }));
-  const n = members.length || 1;
-  return { title: n === 1 ? 'Subagent report' : `${n} subagent reports`, body: m[2].trim(), members };
+  const workers = members.filter((member) => member.kind === 'worker').length;
+  const scouts = members.length - workers;
+  const failed = members.filter((member) => /\[(?:failed|stopped without submitting)\]/.test(member.reply)).length;
+  const total = members.length;
+  return {
+    groupId: m[1],
+    groupName: m[1],
+    title: total === 1 ? 'Subagent report' : `${total} subagent reports`,
+    body: m[2].trim(),
+    members,
+    counts: { total, workers, scouts, failed },
+  };
 }
 
 // parseSudoResult reads the TOON message the Daemon sends after a sudo
@@ -139,7 +149,7 @@ export function cardForEvent(e) {
       const sr = parseSudoResult(text);
       if (sr) return { card: 'sudoresult', title: 'Sudo result', body: sr.output, collapsed: true, sudo: sr };
       const r = parseReport(text);
-      if (r) return { card: 'report', title: r.title, body: r.body, collapsed: true, members: r.members };
+      if (r) return { card: 'report', title: r.title, body: r.body, collapsed: true, members: r.members, report: { ...r, seq: e.seq } };
       // imageIds are Session-stored attachments: the Card renders them as
       // thumbnails, replacing the literal note.
       const imageIds = e.imageIds ?? [];
