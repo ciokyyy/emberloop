@@ -178,6 +178,11 @@
     }
   }
 }
+/* Let native scroll anchoring preserve the reader's position on height changes. */
+.transcript-scroll {
+  overflow-anchor: auto;
+}
+
 
 .diff-add {
   @apply bg-green-500/10;
@@ -254,9 +259,6 @@
   details[open]::details-content {
     height: auto;
     opacity: 1;
-  }
-  html {
-    scroll-behavior: smooth;
   }
 }
 

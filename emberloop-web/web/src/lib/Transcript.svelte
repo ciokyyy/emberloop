@@ -164,6 +164,7 @@
     return size;
   }
 
+  const noScrollAdjustment = () => false;
   const virtualizer = createVirtualizer({
     count: blocks.length,
     getScrollElement: () => scrollEl,
@@ -171,6 +172,9 @@
     overscan: OVERSCAN,
     getItemKey: (i) => blocks[i]?.key ?? i,
     measureElement: throttledMeasure,
+    // Height changes are anchored by the browser; only history prepends use
+    // the explicit correction in loadEarlier().
+    shouldAdjustScrollPositionOnItemSizeChange: noScrollAdjustment,
   });
 
   // Rebind count, keys and scroll element after mount and on every list change.
@@ -186,6 +190,7 @@
           getScrollElement: () => el,
           getItemKey: (i) => blocks[i]?.key ?? i,
           measureElement: throttledMeasure,
+          shouldAdjustScrollPositionOnItemSizeChange: noScrollAdjustment,
         });
       } catch {
         // Unmounted scroll element (or jsdom): the next run rebinds.
@@ -268,9 +273,9 @@
     glideFrame = requestAnimationFrame(step);
   }
 
-  // Glide only ever moves down, so any upward scroll is the user: unpin at
-  // once. A downward scroll never unpins (mid-glide the gap is large); it
-  // re-pins once near the bottom. No flag to leak when a step fires no event.
+  // Input releases the pin synchronously, before a queued follow frame can
+  // write a new scroll position. Browser anchoring remains responsible for
+  // height changes while the reader is away from the bottom.
   let lastTop = 0;
   let lastHeight = 0;
   let jumpUntil = 0;
@@ -293,16 +298,22 @@
     // Wheel, touch and key input still unpin.
     if (movedUp && !shrunk && !nearBottom && performance.now() > jumpUntil) {
       stuck = false;
+      cancelGlide();
       return;
     }
     if (!stuck && nearBottom && !movedUp) stuck = true;
   }
 
-  // Wheel, touch and key input away from the bottom unpin before the next
-  // glide frame can pull the view back.
+  function cancelGlide() {
+    if (!glideFrame) return;
+    if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(glideFrame);
+    glideFrame = 0;
+  }
+
   function onUserUp() {
     jumpUntil = 0;
     stuck = false;
+    cancelGlide();
   }
   function onWheel(e) {
     if (e.deltaY < 0) onUserUp();
@@ -317,7 +328,8 @@
     touchY = y;
   }
   function onKey(e) {
-    if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) onUserUp();
+    const spaceUp = e.shiftKey && (e.key === ' ' || e.code === 'Space' || e.key === 'Spacebar');
+    if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) || spaceUp) onUserUp();
   }
 
   // Follow the transcript while pinned, including while the last card grows
@@ -333,19 +345,32 @@
     untrack(() => glideToBottom());
   });
 
-  // A card that animates its height (the tool strip) or a composer that
-  // resizes grows the content with no block change. Follow every frame of it
-  // while pinned, so the view glides down instead of lagging behind.
+  // The live tool stage can keep growing after its Event is rendered. Observe
+  // only that final stage: disclosures elsewhere rely on browser anchoring and
+  // must not trigger another follow-to-bottom pass.
   $effect(() => {
-    const node = contentEl;
+    const content = contentEl;
     const el = scrollEl;
-    if (!node || !el || typeof ResizeObserver === 'undefined') return;
+    const lastIndex = blocks.length - 1;
+    const last = blocks[lastIndex];
+    const lastRun = last?.runs?.[last.runs.length - 1];
+    last?.body;
+    last?.events?.length;
+    lastRun?.output;
+    lastRun?.status;
+    virtualRows.rows;
+    const pinned = stuck;
+    if (!content || !el || !pinned || lastIndex < 0 || last?.card !== 'toolstrip' || typeof ResizeObserver === 'undefined') return;
+    const key = String(last.key ?? lastIndex);
+    const row = Array.from(content.querySelectorAll('[data-block-key]')).find((candidate) => candidate.getAttribute('data-block-key') === key);
+    const stage = row?.querySelector('[data-testid="toolstrip-stage"]');
+    if (!stage) return;
     const ro = new ResizeObserver(() => {
       lastHeight = el.scrollHeight;
       nearBottom = isNearBottom(el);
       if (stuck) glideToBottom();
     });
-    ro.observe(node);
+    ro.observe(stage);
     return () => ro.disconnect();
   });
 
@@ -353,11 +378,21 @@
     if (!hasMore || loadingEarlier || !onLoadEarlier) return;
     const el = scrollEl;
     const before = el ? { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop } : null;
-    await onLoadEarlier();
-    await tick();
-    await new Promise((r) => requestAnimationFrame(r));
-    if (el && before) applyAnchor(el, before);
+    const previousOverflowAnchor = el?.style.overflowAnchor ?? '';
+    if (el) el.style.overflowAnchor = 'none';
+    try {
+      await onLoadEarlier();
+      await tick();
+      await new Promise((resolve) => {
+        if (typeof requestAnimationFrame === 'undefined') resolve();
+        else requestAnimationFrame(resolve);
+      });
+      if (el && before) applyAnchor(el, before);
+    } finally {
+      if (el) el.style.overflowAnchor = previousOverflowAnchor;
+    }
   }
+
 
   // Auto-load on scroll up; the button covers observers-less browsers and tests.
   $effect(() => {
@@ -406,6 +441,7 @@
   function jumpLatest() {
     const el = scrollEl;
     if (!el) return;
+    cancelGlide();
     stuck = true;
     jumpUntil = performance.now() + 1500;
     // Render and measure the last row first, so the end is real, not estimated.
@@ -418,8 +454,11 @@
   }
 </script>
 
-<div bind:this={scrollEl} onscroll={onScroll} onwheel={onWheel} ontouchstart={onTouchStart} ontouchmove={onTouchMove} onkeydown={onKey} class="flex flex-1 scroll-auto flex-col overflow-auto px-3 pt-4 sm:px-4" style="padding-bottom: {bottomPad}px">
-  <div bind:this={contentEl} class="mx-auto flex w-full max-w-3xl flex-col gap-4">
+<!-- Keyboard-focusable scroll region; arrow keys release stick-to-bottom. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div bind:this={scrollEl} data-testid="transcript-scroll" role="region" aria-label="Transcript" tabindex="0" onscroll={onScroll} onwheel={onWheel} ontouchstart={onTouchStart} ontouchmove={onTouchMove} onkeydown={onKey} class="transcript-scroll flex flex-1 scroll-auto flex-col overflow-auto px-3 pt-4 sm:px-4" style="padding-bottom: {bottomPad}px">
+  <div bind:this={contentEl} data-testid="transcript-content" class="mx-auto flex w-full max-w-3xl flex-col gap-4">
     {#if hasMore}
       <div bind:this={sentinel} class="flex justify-center py-1" data-testid="load-earlier">
         <Button variant="ghost" size="sm" disabled={loadingEarlier} onclick={loadEarlier}>
@@ -459,7 +498,7 @@
       <Card block={queuedBlock} {sessionId} queuedItem={item} onQueueChange={queueChanged} />
     {/each}
   </div>
-  {#if !stuck && !nearBottom && blocks.length}
+  {#if !stuck && blocks.length}
     <div class="sticky bottom-2 flex justify-center">
       <Button variant="secondary" size="sm" class="shadow-lg" onclick={jumpLatest}>↓ Latest</Button>
     </div>
