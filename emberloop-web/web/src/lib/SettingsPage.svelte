@@ -1,6 +1,7 @@
-<!-- Settings page: harness, model and effort per role, grouped like Apple Settings. -->
+<!-- Settings page: one concern per page as Sections of Panels of SettingRows. Help text
+     sits behind InfoHint; only the one-line page description shows. -->
 <script>
-  import { ArrowDown, ArrowUp, Check, ChevronDown, Trash2 } from '@lucide/svelte';
+  import { Check, ChevronDown, LockKeyhole, ShieldCheck } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { HARNESSES, modelsForHarness, modelItems } from './harnesses.js';
   import { getModels, getSettings, putSettings } from './api.js';
@@ -9,6 +10,12 @@
   import PageHeader from './ui/page-header.svelte';
   import FloatingInput from './ui/floating-input.svelte';
   import Combobox from './ui/combobox.svelte';
+  import Panel from './ui/panel.svelte';
+  import Section from './ui/section.svelte';
+  import SettingRow from './ui/setting-row.svelte';
+  import Skeleton from './ui/skeleton.svelte';
+  import ChainEditor from './ChainEditor.svelte';
+  import { icons } from './icons.js';
   import Notifications from './Notifications.svelte';
   import InstallApp from './InstallApp.svelte';
   import ProfileSettings from './ProfileSettings.svelte';
@@ -20,10 +27,10 @@
 
   const DATA_SECTIONS = ['agents', 'runs', 'context', 'memory', 'access'];
   const descriptions = {
-    agents: 'Configure one ordered chain per Session and Run agent role.',
+    agents: 'One ordered chain per role: a Primary and up to two fallbacks.',
     runs: 'Set the global ticket concurrency cap for each Run.',
     context: 'Keep long Sessions small and readable.',
-    memory: 'Configure automatic memory extraction, embeddings, and recall.',
+    memory: 'Redacted user turns leave this host for the extractor and embedder when these features are on.',
     access: 'Manage who can sign in to this Daemon.',
     profile: 'Standing instructions agents can use about you.',
     notifications: 'Choose whether this device receives push notifications.',
@@ -213,6 +220,8 @@
   const pigTitleItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', pigTitle === 'none' ? '' : pigTitle)];
   const compressModelItems = () => [{ value: 'none', label: 'None' }, ...itemsFor('pig', compress.model === 'none' ? '' : compress.model)];
 
+  const EFFORT_OPTIONS = ['off', 'low', 'medium'].map((value) => ({ value, label: value }));
+
   const deciderModeItems = [
     { value: 'heuristic', label: 'Heuristic' },
     { value: 'llm', label: 'LLM' },
@@ -367,182 +376,145 @@
   }
 </script>
 
+{#snippet segmented(label, options, current, pick)}
+  <div role="group" aria-label={label} class="flex w-full gap-0.5 rounded-full bg-muted p-1 md:w-auto">
+    {#each options as option (option.value)}
+      <button
+        type="button"
+        class="motion-standard min-h-9 flex-1 rounded-full px-3 text-caption outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 max-md:min-h-11 max-md:text-body md:flex-none {current === option.value ? 'bg-surface-3 text-fg-1 shadow-elev-1' : 'text-fg-2 hover:text-fg-1'}"
+        aria-pressed={current === option.value}
+        onclick={() => pick(option.value)}
+      >{option.label}</button>
+    {/each}
+  </div>
+{/snippet}
+
 <div class="relative flex min-h-0 flex-1 flex-col" data-testid="settings-page">
-  <div class="flex-1 overflow-auto px-4 pt-6 pb-32">
-    <div class="mx-auto flex w-full max-w-3xl flex-col gap-8">
+  <div class="flex-1 overflow-auto px-4 pt-6 pb-32 md:px-6">
+    <div class="mx-auto flex w-full max-w-3xl flex-col gap-6">
       <div class="flex flex-col gap-2">
         <PageHeader title={page.label} icon={Icon} scope={page.scope} scopeAttrs={{ 'data-testid': 'settings-scope' }} onBack={onBack} backLabel="Settings" backOn="phone" class="animate-rise" />
         {#if pageDescription}<p class="text-caption text-fg-3">{pageDescription}</p>{/if}
       </div>
       {#if DATA_SECTIONS.includes(section) && error}
-        <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</p>
+        <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>
       {/if}
 
       {#if !admin && (section === 'memory' || section === 'access')}
-        <p role="status" class="rounded-xl bg-muted px-4 py-3 text-sm text-muted-foreground">Only admins can change these settings.</p>
+        <div class="flex items-start gap-2 rounded-xl bg-muted p-3 text-caption text-fg-3">
+          <LockKeyhole class="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+          <p role="status">Only admins can change these settings.</p>
+        </div>
       {/if}
       {#if DATA_SECTIONS.includes(section) && loading}
-        <div class="flex flex-col gap-3">
+        <div role="status" aria-label="Loading settings" class="flex flex-col gap-3">
           {#each [0, 1, 2] as i (i)}
-            <div class="h-20 animate-pulse rounded-2xl bg-card"></div>
+            <Skeleton class="h-20 rounded-2xl" />
           {/each}
         </div>
       {:else}
         {#if section === 'runs'}
-        <section class="animate-rise flex flex-col gap-2">
-          <div class="px-1">
-            <h2 class="text-sm font-semibold">Concurrency</h2>
-            <p class="text-xs text-muted-foreground">Global max_tickets caps concurrent tickets in each Run. A spec's max_tickets value can only lower this cap, never raise it. Sessions and subagents are uncapped.</p>
-          </div>
-          <div class="flex flex-col gap-2 rounded-2xl border bg-card p-4">
-            <FloatingInput
-              id="max-tickets"
-              label="Maximum tickets per Run (spec)"
-              type="number"
-              min="1"
-              step="1"
-              class="max-w-56"
-              bind:value={maxTickets}
-              disabled={locked}
-            />
-            {#if locked}
-              <p class="text-xs text-muted-foreground">Set by the EL_MAX_TICKETS environment variable. Unset it to edit here.</p>
-            {:else}
-              <p class="text-xs text-muted-foreground">Applies immediately, no restart.</p>
-            {/if}
-            {#if admin}
+        <Section title="Concurrency" icon={icons.run} class="animate-rise">
+          <Panel>
+            <SettingRow
+              label="Tickets per Run"
+              hint="Global max_tickets caps concurrent tickets in each Run. A spec's max_tickets value can only lower this cap, never raise it. Sessions and subagents are uncapped. Applies immediately, no restart."
+              note={locked ? 'Set by the EL_MAX_TICKETS environment variable. Unset it to edit here.' : ''}
+              width="narrow"
+            >
               <FloatingInput
-                id="disk-cap"
-                label="Go build cache cap (GiB, 0 disables trimming)"
+                id="max-tickets"
+                label="Maximum tickets per Run (spec)"
                 type="number"
-                min="0"
+                min="1"
                 step="1"
-                class="max-w-56"
-                bind:value={diskCap}
+                bind:value={maxTickets}
+                disabled={locked}
               />
-              <p class="text-xs text-muted-foreground">The janitor trims the cache past this size, oldest first. 0 turns trimming off.</p>
+            </SettingRow>
+            {#if admin}
+              <SettingRow label="Go build cache cap" hint="The janitor trims the cache past this size, oldest first, in GiB. 0 turns trimming off." width="narrow">
+                <FloatingInput
+                  id="disk-cap"
+                  label="Go build cache cap (GiB, 0 disables trimming)"
+                  type="number"
+                  min="0"
+                  step="1"
+                  bind:value={diskCap}
+                />
+              </SettingRow>
             {/if}
-          </div>
-        </section>
+          </Panel>
+        </Section>
         {/if}
         {#if section === 'agents'}
-        <section class="animate-rise flex flex-col gap-2" data-testid="agent-chains-settings">
-          <div class="px-1">
-            <h2 class="text-sm font-semibold">Agents</h2>
-            <p class="text-xs text-muted-foreground">Each role has one ordered chain. The primary and up to two fallbacks each set a harness, model and supported thinking effort.</p>
-          </div>
+        <div class="flex flex-col gap-6" data-testid="agent-chains-settings">
           {#each GROUPS as group (group.title)}
-            <section class="animate-rise flex flex-col gap-2" data-testid={`agent-group-${group.title.toLowerCase().replaceAll(' ', '-')}`}>
-              <div class="px-1">
-                <h3 class="text-sm font-semibold">{group.title}</h3>
-                <p class="text-xs text-muted-foreground">{group.note}</p>
-              </div>
-              <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
+            <Section title={group.title} hint={group.note} class="animate-rise" data-testid={`agent-group-${group.title.toLowerCase().replaceAll(' ', '-')}`}>
+              <Panel>
                 {#each group.roles as role (role.id)}
-                  <section class="p-4" data-testid={`agent-chain-${role.id}`}>
-                    <div class="mb-3 flex items-center justify-between gap-3">
-                      <div class="min-w-0">
-                        <h4 class="text-sm font-medium">{role.label}</h4>
-                        <p class="text-xs text-muted-foreground">{role.hint}</p>
-                      </div>
-                      <Button size="sm" variant="outline" aria-label={`Add ${role.label} entry`} onclick={() => addChainEntry(role.id)} disabled={saving || chains[role.id].length >= 3}>Add entry</Button>
-                    </div>
-                    {#if !chains[role.id].length}
-                      <p class="border-t py-3 text-xs text-muted-foreground">No entries configured.</p>
-                    {/if}
-                    {#each chains[role.id] as entry, index (index)}
-                      <div class="grid items-center gap-2 border-t py-3 first:border-t-0 md:grid-cols-[minmax(7rem,0.7fr)_minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1fr)_auto]" data-testid={`chain-entry-${role.id}-${index + 1}`}>
-                        <span class="text-xs font-medium text-muted-foreground">{index === 0 ? 'Primary' : `Fallback ${index}`}</span>
-                        <Combobox
-                          class="md:h-10"
-                          aria-label={`${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} harness`}
-                          value={entry.backend}
-                          items={harnessItems}
-                          onValueChange={(value) => pickChainBackend(role.id, index, value)}
-                        />
-                        <Combobox
-                          class="md:h-10"
-                          aria-label={`${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} model`}
-                          value={entry.model}
-                          items={itemsFor(entry.backend, entry.model)}
-                          placeholder="Select a model"
-                          onValueChange={(value) => pickChainModel(role.id, index, value)}
-                        />
-                        <Combobox
-                          class="md:h-10"
-                          aria-label={`${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} effort`}
-                          value={entry.effort ?? ''}
-                          items={effortItemsFor(entry.backend, entry.model)}
-                          onValueChange={(value) => (entry.effort = value)}
-                        />
-                        <div class="flex items-center justify-end gap-1">
-                          <Button size="icon-sm" variant="ghost" aria-label={`Move ${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} up`} disabled={saving || index === 0} onclick={() => moveChainEntry(role.id, index, -1)}><ArrowUp /></Button>
-                          <Button size="icon-sm" variant="ghost" aria-label={`Move ${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`} down`} disabled={saving || index === chains[role.id].length - 1} onclick={() => moveChainEntry(role.id, index, 1)}><ArrowDown /></Button>
-                          <Button size="icon-sm" variant="ghost" aria-label={`Remove ${role.label} ${index === 0 ? 'Primary' : `Fallback ${index}`}`} disabled={saving} onclick={() => removeChainEntry(role.id, index)}><Trash2 /></Button>
-                        </div>
-                      </div>
-                      {#if lacksImageInput(role.id, entry)}
-                        <p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200" data-testid={`image-input-warning-${role.id}-${index}`}>
-                          This model does not accept image input. This advisory warning does not prevent saving the Chain.
-                        </p>
-                      {/if}
-                    {/each}
-                  </section>
+                  <ChainEditor
+                    {role}
+                    entries={chains[role.id]}
+                    {harnessItems}
+                    {itemsFor}
+                    {effortItemsFor}
+                    {saving}
+                    lacksImages={(entry) => lacksImageInput(role.id, entry)}
+                    onadd={() => addChainEntry(role.id)}
+                    onremove={(index) => removeChainEntry(role.id, index)}
+                    onmove={(index, delta) => moveChainEntry(role.id, index, delta)}
+                    onbackend={(index, value) => pickChainBackend(role.id, index, value)}
+                    onmodel={(index, value) => pickChainModel(role.id, index, value)}
+                    oneffort={(index, value) => (chains[role.id][index].effort = value)}
+                  />
                 {/each}
-              </div>
-            </section>
+              </Panel>
+            </Section>
           {/each}
-        </section>
+        </div>
         {/if}
         {#if section === 'context'}
-        <section class="animate-rise flex flex-col gap-2" data-testid="compress-settings">
-          <div class="px-1">
-            <h2 class="text-sm font-semibold">Context compression</h2>
-            <p class="text-xs text-muted-foreground">Compress writes the Handoff for a Session with the compress model: one pig call, no tools. Use the Compress button under the chat to run it by hand.</p>
-          </div>
-          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Compress model</div>
-                <div class="text-xs text-muted-foreground">Writes the Handoff. Only authed pig models are listed.</div>
-                {#if compressNote}<div class="text-xs text-amber-300">{compressNote}</div>{/if}
-              </div>
+        <Section
+          title="Context compression"
+          icon={icons.compress}
+          hint="Compress writes the Handoff for a Session with the compress model: one pig call, no tools. Run it by hand from the context ring in the chat header."
+          class="animate-rise"
+          data-testid="compress-settings"
+        >
+          <Panel>
+            <SettingRow
+              label="Compress model"
+              hint="Writes the Handoff. Only authed pig models are listed."
+              note={compressNote}
+              noteTone="warn"
+              width="field"
+            >
               <Combobox class="md:h-10" aria-label="Compress model" bind:value={compress.model} items={compressModelItems()} placeholder="Select a model" />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Auto-compress</div>
-                <div class="text-xs text-muted-foreground">Runs after a turn when the context passes the threshold.</div>
-                {#if compress.auto === 'on' && compressNote}<div class="text-xs text-amber-300">Auto-compress needs a compress model.</div>{/if}
-              </div>
+            </SettingRow>
+            <SettingRow
+              label="Auto-compress"
+              hint="Runs after a turn when the context passes the threshold."
+              note={compress.auto === 'on' && compressNote ? 'Auto-compress needs a compress model.' : ''}
+              noteTone="warn"
+              inline
+            >
               <Switch aria-label="Auto-compress" checked={compress.auto === 'on'} onCheckedChange={(v) => (compress.auto = v ? 'on' : 'off')} />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Threshold</div>
-                <div class="text-xs text-muted-foreground">Percent of the model's context window, 10 to 99.</div>
-              </div>
+            </SettingRow>
+            <SettingRow label="Threshold" hint="Percent of the model's context window, 10 to 99." width="narrow">
               <FloatingInput id="compress-threshold" label="Threshold %" type="number" min="10" max="99" step="1" bind:value={compress.threshold} disabled={compress.auto === 'off'} />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Threshold tokens</div>
-                <div class="text-xs text-muted-foreground">Absolute token count that also triggers auto-compress; 0 means off. The percent gate never fires on 1M-window models, so keep this near 300000 for those.</div>
-              </div>
+            </SettingRow>
+            <SettingRow
+              label="Threshold tokens"
+              hint="Absolute token count that also triggers auto-compress; 0 means off. The percent gate never fires on 1M-window models, so keep this near 300000 for those."
+              width="narrow"
+            >
               <FloatingInput id="compress-threshold-tokens" label="Threshold tokens" type="number" min="0" step="1000" inputClass="text-base sm:text-sm" bind:value={compress.tokens} disabled={compress.auto === 'off'} />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Cooldown</div>
-                <div class="text-xs text-muted-foreground">Turns to wait after a compression before the next automatic one.</div>
-              </div>
+            </SettingRow>
+            <SettingRow label="Cooldown" hint="Turns to wait after a compression before the next automatic one." width="narrow">
               <FloatingInput id="compress-cooldown" label="Turns" type="number" min="0" step="1" bind:value={compress.cooldown} disabled={compress.auto === 'off'} />
-            </div>
-            <div class="grid items-start gap-3 p-4">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Summary focus</div>
-                <div class="text-xs text-muted-foreground">Optional instructions for every summary, such as what to always keep.</div>
-              </div>
+            </SettingRow>
+            <SettingRow label="Summary focus" hint="Optional instructions for every summary, such as what to always keep." stack width="full">
               <textarea
                 aria-label="Summary focus"
                 name="compress_instructions"
@@ -552,214 +524,168 @@
                 placeholder="Keep file paths, open decisions and failing tests."
                 class="w-full resize-y rounded-xl border border-input bg-transparent px-3.5 py-2.5 text-base shadow-xs outline-none transition-[color,box-shadow] placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/30 md:text-sm"
               ></textarea>
-            </div>
-          </div>
-        </section>
+            </SettingRow>
+          </Panel>
+        </Section>
         {/if}
         {#if section === 'memory' && admin}
-        <section class="animate-rise flex flex-col gap-2" data-testid="decider-settings">
-          <div class="px-1">
-            <h2 class="text-sm font-semibold">Memory deciders</h2>
-            <p class="text-xs text-muted-foreground">The heuristic proposes mined notes; the confirming decider judges them. Ensemble confirms with the memory model, or with Jev when a custom endpoint is configured, against the thresholds.</p>
-          </div>
-        <section class="animate-rise flex flex-col gap-2" data-testid="memory-retention-settings">
-          <div class="px-1">
-            <h2 class="text-sm font-semibold">Automatic memory</h2>
-            <p class="text-xs text-muted-foreground">Redacted user turns leave this host for the extractor and embedder when these features are enabled.</p>
-          </div>
-          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div><div class="text-sm font-medium">Automatic extraction</div><div class="text-xs text-muted-foreground">Extract durable memories after settled turns. Defaults on when an OpenRouter key is configured.</div></div>
+        <Section title="Automatic memory" icon={icons.memory} class="animate-rise" data-testid="memory-retention-settings">
+          <Panel>
+            <SettingRow
+              label="Automatic extraction"
+              hint="Extract durable memories after settled turns. Defaults on when an OpenRouter key is configured."
+              inline
+            >
               <Switch aria-label="Automatic memory extraction" checked={memoryAutoExtract} onCheckedChange={(value) => (memoryAutoExtract = value)} />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div><div class="text-sm font-medium">Extractor model</div><div class="text-xs text-muted-foreground">Empty disables model extraction.</div></div>
+            </SettingRow>
+            <SettingRow label="Extractor model" hint="Empty disables model extraction." width="field">
               <FloatingInput id="memory-extract-model" label="Model" bind:value={memoryExtractModel} placeholder="inclusionai/ling-3.0-flash" />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div><div class="text-sm font-medium">Extractor effort</div><div class="text-xs text-muted-foreground">Controls the reasoning effort for each extraction.</div></div>
-              <div role="group" aria-label="Memory extractor effort" class="flex gap-1">
-                {#each ['off', 'low', 'medium'] as effort}
-                  <Button size="sm" variant={memoryExtractEffort === effort ? 'secondary' : 'ghost'} aria-pressed={memoryExtractEffort === effort} onclick={() => (memoryExtractEffort = effort)}>{effort}</Button>
-                {/each}
-              </div>
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div><div class="text-sm font-medium">Embedding model</div><div class="text-xs text-muted-foreground">Used for Memory and Episode vectors; empty disables embeddings.</div></div>
+            </SettingRow>
+            <SettingRow label="Extractor effort" hint="Controls the reasoning effort for each extraction.">
+              {@render segmented('Memory extractor effort', EFFORT_OPTIONS, memoryExtractEffort, (value) => (memoryExtractEffort = value))}
+            </SettingRow>
+            <SettingRow label="Embedding model" hint="Used for Memory and Episode vectors; empty disables embeddings." width="field">
               <FloatingInput id="memory-embedding-model" label="Model" bind:value={memoryEmbeddingModel} placeholder="qwen/qwen3-embedding-4b" />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_8rem_8rem_8rem]">
-              <div><div class="text-sm font-medium">Recall weights</div><div class="text-xs text-muted-foreground">Vector, full-text and importance scores; each weight is 0–1 and total must be positive.</div></div>
-              <FloatingInput id="memory-weight-vector" label="Vector" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.vector} />
-              <FloatingInput id="memory-weight-fts" label="Full text" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.fts} />
-              <FloatingInput id="memory-weight-importance" label="Importance" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.importance} />
-            </div>
-          </div>
-        </section>
-          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Decider mode</div>
-                <div class="text-xs text-muted-foreground">Heuristic is local. LLM uses the memory model; Ensemble uses the memory model or a custom Jev URL. Jev uses OpenRouter by default.</div>
+            </SettingRow>
+            <SettingRow
+              label="Recall weights"
+              hint="Vector, full-text and importance scores; each weight is 0 to 1 and the total must be positive."
+              stack
+              width="full"
+            >
+              <div class="grid grid-cols-3 gap-2">
+                <FloatingInput id="memory-weight-vector" label="Vector" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.vector} />
+                <FloatingInput id="memory-weight-fts" label="Full text" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.fts} />
+                <FloatingInput id="memory-weight-importance" label="Importance" type="number" min="0" max="1" step="0.05" bind:value={memoryRecallWeights.importance} />
               </div>
-              <div role="group" aria-label="Decider mode" class="inline-flex max-w-full items-center gap-0.5 rounded-xl border border-border bg-muted p-1">
-                {#each deciderModeItems as option (option.value)}
-                  <Button
-                    size="sm"
-                    variant={decider.mode === option.value ? 'secondary' : 'ghost'}
-                    class="h-8 rounded-lg px-3 max-md:h-11"
-                    aria-pressed={decider.mode === option.value}
-                    onclick={() => (decider.mode = option.value)}
-                  >{option.label}</Button>
-                {/each}
-              </div>
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Memory model</div>
-                <div class="text-xs text-muted-foreground">Confirms candidates. Only authed pig models are listed.</div>
-                {#if deciderNote}<div class="text-xs text-amber-300">{deciderNote}</div>{/if}
-              </div>
+            </SettingRow>
+          </Panel>
+        </Section>
+        <Section
+          title="Memory deciders"
+          hint="The heuristic proposes mined notes; the confirming decider judges them. Ensemble confirms with the memory model, or with Jev when a custom endpoint is configured, against the thresholds."
+          class="animate-rise"
+          data-testid="decider-settings"
+        >
+          <Panel>
+            <SettingRow
+              label="Decider mode"
+              hint="Heuristic is local. LLM uses the memory model; Ensemble uses the memory model or a custom Jev URL. Jev uses OpenRouter by default."
+            >
+              {@render segmented('Decider mode', deciderModeItems, decider.mode, (value) => (decider.mode = value))}
+            </SettingRow>
+            <SettingRow label="Memory model" hint="Confirms candidates. Only authed pig models are listed." note={deciderNote} noteTone="warn" width="field">
               <Combobox class="md:h-10" aria-label="Memory model" bind:value={decider.model} items={deciderModelItems()} placeholder="Select a model" />
-            </div>
-            <div class="group">
-              <Button
-                variant="ghost"
-                class="flex min-h-11 w-full items-center justify-between gap-3 rounded-none p-4 text-left"
+            </SettingRow>
+            <div>
+              <button
+                type="button"
+                class="motion-standard flex min-h-14 w-full items-center justify-between gap-3 p-4 text-left outline-none hover:bg-surface-3/60 focus-visible:ring-[3px] focus-visible:ring-inset focus-visible:ring-ring/40"
                 aria-expanded={jevOpen}
                 aria-controls="custom-jev-settings"
                 onclick={() => (jevOpen = !jevOpen)}
               >
-                <span class="min-w-0 text-left">
-                  <span class="block text-sm font-medium">Custom Jev endpoint</span>
-                  <span class="block text-xs text-muted-foreground">In Jev mode, leave blank to use OpenRouter. Set a URL to use a custom endpoint.</span>
+                <span class="flex min-w-0 flex-col">
+                  <span class="text-body text-fg-1">Custom Jev endpoint</span>
+                  <span class="text-caption text-fg-3">Blank uses OpenRouter in Jev mode.</span>
                 </span>
-                <ChevronDown class={`size-4 shrink-0 text-muted-foreground transition-transform ${jevOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
-              </Button>
+                <ChevronDown class={`motion-standard size-4 shrink-0 text-fg-3 ${jevOpen ? 'rotate-180' : ''}`} aria-hidden="true" />
+              </button>
               <div id="custom-jev-settings" class="divide-y divide-border border-t" hidden={!jevOpen}>
-                <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium">Jev endpoint</div>
-                    <div class="text-xs text-muted-foreground">Overrides the default OpenRouter endpoint.</div>
-                  </div>
+                <SettingRow label="Jev endpoint" hint="Overrides the default OpenRouter endpoint." width="field">
                   <FloatingInput id="jev-endpoint" label="Endpoint URL" bind:value={jev.baseURL} placeholder="https://jev-api.org/api/v1/decisions" />
-                </div>
-                <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium">Jev API key</div>
-                    {#if jevKeySet}
-                      <div class="text-xs text-muted-foreground">Custom endpoint key set. Type a new one to replace it; empty keeps it.</div>
-                    {:else}
-                      <div class="text-xs text-muted-foreground">Empty for a local server without one.</div>
-                    {/if}
-                  </div>
+                </SettingRow>
+                <SettingRow
+                  label="Jev API key"
+                  hint="Leave empty for a local server without one."
+                  note={jevKeySet ? 'Custom endpoint key set. Type a new one to replace it; empty keeps it.' : ''}
+                  width="field"
+                >
                   <FloatingInput id="jev-key" label="API key" type="password" bind:value={jev.apiKey} placeholder={jevKeySet ? '••••••' : 'Key'} />
-                </div>
-                <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-                  <div class="min-w-0">
-                    <div class="text-sm font-medium">Jev model</div>
-                    <div class="text-xs text-muted-foreground">Sent with every call. When on, redacted user turns leave this host for the endpoint.</div>
-                  </div>
+                </SettingRow>
+                <SettingRow
+                  label="Jev model"
+                  note="When on, redacted user turns leave this host for the endpoint."
+                  width="field"
+                >
                   <FloatingInput id="jev-model" label="Model" bind:value={jev.model} placeholder="jev-latest" />
-                </div>
+                </SettingRow>
               </div>
             </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Confirm low</div>
-                <div class="text-xs text-muted-foreground">Below this the candidate is dropped, 0 to 1.</div>
-              </div>
+            <SettingRow label="Confirm low" hint="Below this the candidate is dropped, 0 to 1." width="narrow">
               <FloatingInput id="decider-low" label="Low" type="number" min="0" max="1" step="0.05" bind:value={decider.low} />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Confirm high</div>
-                <div class="text-xs text-muted-foreground">At or above this the candidate is queue-eligible, 0 to 1.</div>
-              </div>
+            </SettingRow>
+            <SettingRow label="Confirm high" hint="At or above this the candidate is queue-eligible, 0 to 1." width="narrow">
               <FloatingInput id="decider-high" label="High" type="number" min="0" max="1" step="0.05" bind:value={decider.high} />
-            </div>
-          </div>
-        </section>
-        <section class="animate-rise flex flex-col gap-2" data-testid="find-settings">
-          <div class="px-1">
-            <h2 class="text-sm font-semibold">Find tool</h2>
-            <p class="text-xs text-muted-foreground">The decisions model that ranks `find` results. Pick a cheaper one to cut cost. Empty uses the pinned default.</p>
-          </div>
-          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Find decision model</div>
-                <div class="text-xs text-muted-foreground">
-                  {#if findInfo.fromEnv}Set by the EL_DECISION_MODEL environment variable. Unset it to edit here.{:else}Any OpenRouter decisions model id. Default {findInfo.default}.{/if}
-                </div>
-              </div>
+            </SettingRow>
+          </Panel>
+        </Section>
+        <Section
+          title="Find tool"
+          hint="The decisions model that ranks find results. Pick a cheaper one to cut cost. Empty uses the pinned default."
+          class="animate-rise"
+          data-testid="find-settings"
+        >
+          <Panel>
+            <SettingRow
+              label="Find decision model"
+              hint={findInfo.fromEnv ? '' : `Any OpenRouter decisions model id. Default ${findInfo.default}.`}
+              note={findInfo.fromEnv ? 'Set by the EL_DECISION_MODEL environment variable. Unset it to edit here.' : ''}
+              width="field"
+            >
               <FloatingInput id="find-decision-model" label="Model" bind:value={findModel} placeholder={findInfo.default} disabled={findInfo.fromEnv} />
-            </div>
+            </SettingRow>
             {#if findInfo.suggestions.length && !findInfo.fromEnv}
               <div class="flex flex-wrap gap-2 p-4" role="group" aria-label="Find model suggestions">
                 {#each findInfo.suggestions as id (id)}
                   <Button
                     size="sm"
-                    variant={findModel.trim() === id ? 'secondary' : 'ghost'}
-                    class="h-8 rounded-lg px-3 max-md:h-11"
+                    variant={findModel.trim() === id ? 'secondary' : 'outline'}
                     aria-pressed={findModel.trim() === id}
                     onclick={() => (findModel = id)}
                   >{id}</Button>
                 {/each}
               </div>
             {/if}
-          </div>
-        </section>
+          </Panel>
+        </Section>
         {/if}
         {#if section === 'profile'}
           <ProfileSettings />
         {:else if section === 'notifications'}
           <Notifications />
         {:else if section === 'sound-voice'}
-          <div class="flex flex-col gap-8"><SoundSettings /><VoiceSettings /><InstallApp /></div>
+          <div class="flex flex-col gap-6"><SoundSettings /><VoiceSettings /><InstallApp /></div>
         {/if}
         {#if section === 'context'}
-        <section class="animate-rise flex flex-col gap-2">
-          <div class="px-1">
-            <h2 class="text-sm font-semibold">Session names</h2>
-            <p class="text-xs text-muted-foreground">Each new Session gets a short title from its first prompt, in one cheap call with no tools.</p>
-          </div>
-          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Name claude Sessions</div>
-                <div class="text-xs text-muted-foreground">
-                  {#if titlesLocked}Set by the EL_SESSION_TITLES environment variable. Unset it to edit here.{:else}Titled by Haiku. Turn off to keep the harness and id label.{/if}
-                </div>
-              </div>
+        <Section title="Session names" icon={icons.session} class="animate-rise">
+          <Panel>
+            <SettingRow
+              label="Name claude Sessions"
+              hint="Each new Session gets a short title from its first prompt, in one cheap call with no tools. Titled by Haiku; turn off to keep the harness and id label."
+              note={titlesLocked ? 'Set by the EL_SESSION_TITLES environment variable. Unset it to edit here.' : ''}
+              inline
+            >
               <Switch aria-label="Name claude Sessions" checked={sessionTitles === 'on'} onCheckedChange={(v) => (sessionTitles = v ? 'on' : 'off')} disabled={titlesLocked} />
-            </div>
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Pig naming model</div>
-                <div class="text-xs text-muted-foreground">Pig Sessions stay unnamed until you pick a model.</div>
-              </div>
+            </SettingRow>
+            <SettingRow label="Pig naming model" hint="Pig Sessions stay unnamed until you pick a model." width="field">
               <Combobox class="md:h-10" aria-label="Pig naming model" bind:value={pigTitle} items={pigTitleItems()} placeholder="Select a model" />
-            </div>
-          </div>
-        </section>
+            </SettingRow>
+          </Panel>
+        </Section>
         {/if}
         {#if section === 'access' && admin}
-        <section class="animate-rise flex flex-col gap-2" data-testid="accounts-settings">
-          <div class="px-1">
-            <h2 class="text-sm font-semibold">Accounts</h2>
-            <p class="text-xs text-muted-foreground">Sign-up lets new people create accounts on the sign-in screen.</p>
-          </div>
-          <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-            <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_9rem]">
-              <div class="min-w-0">
-                <div class="text-sm font-medium">Allow sign-up</div>
-                <div class="text-xs text-muted-foreground">Off refuses new accounts. Existing accounts keep signing in.</div>
-              </div>
+        <Section title="Accounts" icon={ShieldCheck} class="animate-rise" data-testid="accounts-settings">
+          <Panel>
+            <SettingRow
+              label="Allow sign-up"
+              hint="Sign-up lets new people create accounts on the sign-in screen. Off refuses new accounts; existing accounts keep signing in."
+              inline
+            >
               <Switch aria-label="Allow sign-up" checked={signupOpen === 'on'} onCheckedChange={(v) => (signupOpen = v ? 'on' : 'off')} />
-            </div>
-          </div>
-        </section>
+            </SettingRow>
+          </Panel>
+        </Section>
         {/if}
       {/if}
     </div>
@@ -767,11 +693,11 @@
 
   {#if dirty || justSaved}
     <div class="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center px-4 pb-[max(1.25rem,env(safe-area-inset-bottom))]">
-      <div class="animate-rise pointer-events-auto flex items-center gap-3 rounded-full border bg-popover/90 py-2 pr-2 pl-5 shadow-2xl backdrop-blur-xl">
+      <div class="animate-rise pointer-events-auto flex items-center gap-3 rounded-full border bg-surface-2 py-2 pr-2 pl-5 shadow-elev-3">
         {#if justSaved && !dirty}
-          <span class="flex items-center gap-1.5 text-sm text-primary"><Check class="size-4" />Saved</span>
+          <span class="flex items-center gap-1.5 text-body text-status-done"><Check class="size-4" aria-hidden="true" />Saved</span>
         {:else}
-          <span class="text-sm text-muted-foreground">Unsaved changes</span>
+          <span class="text-body text-fg-2">Unsaved changes</span>
           <Button variant="ghost" size="sm" onclick={revert} disabled={saving}>Revert</Button>
           <Button size="sm" onclick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
         {/if}

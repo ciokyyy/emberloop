@@ -13,16 +13,16 @@
 <nav class="flex min-h-0 flex-1 flex-col gap-4 overflow-auto" aria-label="Settings navigation" data-testid="settings-nav">
   {#each SETTINGS_GROUPS as group (group.title)}
     <div class="flex flex-col gap-0.5">
-      <h2 class="px-2 pb-1 text-xs font-medium text-muted-foreground">{group.title}</h2>
+      <h2 class="px-2 pb-1 text-caption text-fg-3">{group.title}</h2>
       {#each group.items as item (item.id)}
         {@const Icon = settingsIcons[item.icon]}
         <a
           href={settingsPath(item.id)}
           aria-current={current === item.id ? 'page' : undefined}
-          class="flex min-h-11 items-center gap-2.5 rounded-xl px-2.5 text-sm transition-colors {current === item.id ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+          class="motion-standard flex min-h-11 items-center gap-2.5 rounded-xl px-2.5 text-body outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 {current === item.id ? 'bg-surface-3 text-fg-1' : 'text-fg-2 hover:bg-surface-3/60 hover:text-fg-1'}"
           onclick={(event) => visit(event, settingsPath(item.id))}
         >
-          <Icon class="size-4 shrink-0" />
+          <Icon class="size-4 shrink-0" aria-hidden="true" />
           <span class="min-w-0 flex-1 truncate">{item.label}</span>
         </a>
       {/each}

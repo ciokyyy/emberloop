@@ -12,6 +12,7 @@
   import EmptyState from './ui/empty-state.svelte';
   import ErrorState from './ui/error-state.svelte';
   import { icons, providerGlyph } from './icons.js';
+  import QuotaWindows from './QuotaWindows.svelte';
   import { refreshQuota } from './api.js';
   import { quotaStore } from './quotaStore.js';
   import {
@@ -21,9 +22,7 @@
     quotaState,
     quotaUpdatedLine,
     providerRowHref,
-    resetCountdown,
     thresholdClass,
-    wordLabel,
   } from './quota.js';
 
   let { onNavigate = null } = $props();
@@ -35,8 +34,6 @@
   let cardError = $state({});
   let refreshingAll = $state(false);
 
-  const BAR = { calm: 'bg-status-done', warm: 'bg-status-needs-you', hot: 'bg-status-failed' };
-  const PCT_TEXT = { calm: 'text-fg-1', warm: 'text-status-needs-you', hot: 'text-status-failed' };
   const STAT_TONE = { calm: null, warm: 'needs-you', hot: 'failed' };
 
   // Headline numbers: the busiest window anywhere, how many accounts are
@@ -238,33 +235,7 @@
                 {/if}
 
                 {#if windows.length}
-                  <div class={`grid gap-x-4 gap-y-5 ${windows.length === 2 ? 'grid-cols-2' : windows.length >= 3 ? 'sm:grid-cols-3' : ''}`} data-testid="quota-windows" data-dimmed={state === 'expired' ? 'true' : undefined}>
-                    {#each windows as w, i (`${w.label}-${i}`)}
-                      {@const label = wordLabel(w.label)}
-                      {@const tone = thresholdClass(w.pct)}
-                      {@const countdown = resetCountdown(w.resets_at, now)}
-                      <div class="flex min-w-0 flex-col gap-2" data-testid="quota-window">
-                        <div class="flex min-w-0 flex-col">
-                          <span class={`text-numeric tabular-nums ${state === 'expired' ? 'text-fg-3' : PCT_TEXT[tone]}`} data-testid="quota-pct">{w.pct}%</span>
-                          <span class="mt-1 truncate text-body text-fg-2">{label}</span>
-                        </div>
-                        <div
-                          class={`h-1.5 overflow-hidden rounded-full bg-muted ${state === 'expired' ? 'opacity-40' : ''}`}
-                          role="progressbar"
-                          aria-label={`${p.label} ${label}`}
-                          aria-valuenow={w.pct}
-                          aria-valuemin="0"
-                          aria-valuemax="100"
-                        >
-                          <div class={`motion-emphasis h-full rounded-full transition-[width] ${BAR[tone]}`} style={`width: ${Math.min(100, Math.max(0, Number(w.pct)))}%`}></div>
-                        </div>
-                        <div class="flex min-w-0 flex-col text-caption text-fg-3">
-                          {#if countdown}<span>{countdown === 'now' ? 'resets now' : `resets in ${countdown}`}</span>{/if}
-                          {#if w.detail}<span class="break-words">{w.detail}</span>{/if}
-                        </div>
-                      </div>
-                    {/each}
-                  </div>
+                  <QuotaWindows {windows} name={p.label} {now} dimmed={state === 'expired'} />
                 {:else if state === 'error' && !p.error && !cardError[p.key]}
                   <p class="text-caption text-fg-3">{p.error || 'No quota data available.'}</p>
                 {/if}

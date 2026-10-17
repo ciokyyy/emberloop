@@ -4,6 +4,10 @@
   import Button from './ui/button.svelte';
   import { pushUnsupported, pushEnabled, enablePush, disablePush } from './push.js';
   import { getMemoryDigestPreference, setMemoryDigestPreference } from './api.js';
+  import { Bell } from '@lucide/svelte';
+  import Panel from './ui/panel.svelte';
+  import Section from './ui/section.svelte';
+  import SettingRow from './ui/setting-row.svelte';
   import Switch from './ui/switch.svelte';
 
   let enabled = $state(false);
@@ -40,23 +44,18 @@
   }
 </script>
 
-<section class="animate-rise flex flex-col gap-2">
-  <div class="px-1">
-    <h2 class="text-sm font-semibold">Notifications</h2>
-    <p class="text-xs text-muted-foreground">Push a notification to this device when a chat turn finishes or fails.</p>
-  </div>
-  <div class="overflow-hidden rounded-2xl border bg-card">
-    <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_auto]">
-      <div class="min-w-0">
-        <div class="text-sm font-medium">Push on this device</div>
-        <div class="text-xs text-muted-foreground">{unsupported || (enabled ? 'On for this browser.' : 'Off for this browser.')}</div>
-        {#if error}<p role="alert" class="pt-1 text-xs text-destructive">{error}</p>{/if}
-      </div>
+<Section title="On this device" icon={Bell} class="animate-rise" hint="Push a notification to this device when a chat turn finishes or fails.">
+  <Panel>
+    <SettingRow
+      label="Push on this device"
+      note={unsupported || (enabled ? 'On for this browser.' : 'Off for this browser.')}
+      inline
+    >
       <Button variant={enabled ? 'outline' : 'default'} disabled={busy || !!unsupported} onclick={toggle}>{enabled ? 'Turn off' : 'Turn on'}</Button>
-    </div>
-  </div>
-    <div class="grid items-center gap-3 border-t p-4 md:grid-cols-[1fr_auto]">
-      <div class="min-w-0"><div class="text-sm font-medium">Daily Memory digest</div><div class="text-xs text-muted-foreground">A daily “learned N things today” notification. Off by default.</div></div>
+    </SettingRow>
+    <SettingRow label="Daily Memory digest" hint="A daily “learned N things today” notification. Off by default." inline>
       <Switch aria-label="Daily Memory digest" checked={digestEnabled} disabled={digestBusy} onCheckedChange={toggleDigest} />
-    </div>
-</section>
+    </SettingRow>
+  </Panel>
+  {#if error}<p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>{/if}
+</Section>

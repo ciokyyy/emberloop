@@ -8,8 +8,11 @@ import ErrorState from './error-state.svelte';
 import IconButton from './icon-button.svelte';
 import InfoHint from './info-hint.svelte';
 import PageHeader from './page-header.svelte';
+import Panel from './panel.svelte';
 import Row from './row.svelte';
 import Section from './section.svelte';
+import SettingRow from './setting-row.svelte';
+import BottomSheet from './bottom-sheet.svelte';
 import Skeleton from './skeleton.svelte';
 import StatCard from './stat-card.svelte';
 import { cn } from './cn.js';
@@ -233,5 +236,40 @@ describe('states', () => {
     const el = container.firstElementChild;
     expect(el.getAttribute('aria-hidden')).toBe('true');
     expect(el.className).toContain('motion-safe:animate-pulse');
+  });
+});
+
+describe('Panel and SettingRow', () => {
+  it('Panel is one divided card for rows', () => {
+    const { container } = render(Panel, { props: { children: text('rows') } });
+    const el = container.querySelector('[data-panel]');
+    expect(el.className).toContain('rounded-2xl');
+    expect(el.className).toContain('divide-y');
+    expect(el.className).toContain('shadow-elev-1');
+  });
+  it('SettingRow keeps help behind a hint and the note visible', async () => {
+    render(SettingRow, { props: { label: 'Cooldown', hint: 'Turns to wait', note: 'Set by the environment', children: text('control') } });
+    expect(screen.getByText('Cooldown')).toBeTruthy();
+    expect(screen.getByText('Set by the environment')).toBeTruthy();
+    expect(screen.getByText('control')).toBeTruthy();
+    expect(screen.queryByText('Turns to wait')).toBeNull();
+    await fireEvent.click(screen.getByRole('button', { name: 'About Cooldown' }));
+    expect(await screen.findByText('Turns to wait')).toBeTruthy();
+  });
+  it('SettingRow stacks the control under the label on phone unless inline', () => {
+    const stacked = render(SettingRow, { props: { label: 'A', children: text('x') } });
+    expect(stacked.container.querySelector('[data-setting-row]').className).toContain('flex-col');
+    stacked.unmount();
+    const inline = render(SettingRow, { props: { label: 'B', inline: true, children: text('x') } });
+    expect(inline.container.querySelector('[data-setting-row]').className).not.toContain('flex-col');
+  });
+});
+
+describe('BottomSheet', () => {
+  it('opens as a named dialog with a Close action', async () => {
+    render(BottomSheet, { props: { open: true, title: 'Worker · Primary', children: text('fields') } });
+    expect(await screen.findByRole('dialog', { name: 'Worker · Primary' })).toBeTruthy();
+    expect(screen.getByText('fields')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
   });
 });

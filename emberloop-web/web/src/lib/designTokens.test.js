@@ -40,7 +40,7 @@ describe('DESIGN.md', () => {
     for (const word of ['surface-0', 'fg-1', 'status-needs-you', '--owner-1', 'text-headline', 'text-numeric', 'shadow-elev-1', '--dur-instant', '--ease-smooth', 'icons.js']) {
       expect(design, word).toContain(word);
     }
-    for (const primitive of ['Section', 'Row', 'StatCard', 'Chip', 'IconButton', 'EmptyState', 'Skeleton', 'ErrorState', 'InfoHint']) {
+    for (const primitive of ['Section', 'Row', 'StatCard', 'Chip', 'IconButton', 'EmptyState', 'Skeleton', 'ErrorState', 'InfoHint', 'Panel', 'SettingRow', 'BottomSheet']) {
       expect(design, primitive).toContain(primitive);
     }
     for (const rule of ['Icon rule', 'Disclosure rule', 'Responsive rule']) expect(design, rule).toContain(rule);

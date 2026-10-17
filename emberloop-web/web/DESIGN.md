@@ -127,6 +127,9 @@ All in `src/lib/ui/`, built on `button`, `popover` and bits-ui, using only the t
 | `ErrorState` | `error-state.svelte` | `title`, `detail`, `onRetry`, `busy`. `role="alert"`, one Retry action. |
 | `Skeleton` | `skeleton.svelte` | Decorative block (`aria-hidden`); wrap a group in `role="status"` with an `aria-label`. Loading is skeleton, not text. |
 | `InfoHint` | `info-hint.svelte` | `label` (accessible name), children. Tap-to-reveal popover for help text. |
+| `Panel` | `panel.svelte` | The grouped card: `rounded-2xl border bg-card shadow-elev-1`. `divided` (hairlines between children, default), `padded` (free content with `p-4 gap-3`), `tag` (`div` or `ul`). Settings, Memory lists and Profile put their rows in one Panel. |
+| `SettingRow` | `setting-row.svelte` | One setting: `label`, `hint` (text or snippet, opens in an `InfoHint` named `About <label>`), `note` (a visible state line such as an environment lock or a warning; `noteTone` `default`, `warn` or `error`), `inline` (control stays beside the label on phone: switches, small buttons), `stack` (control under the label on desktop too: textareas), `width` (`narrow`, `field`, `wide`, `full` on desktop). Controls fill the row on phone. |
+| `BottomSheet` | `bottom-sheet.svelte` | A secondary editor: bottom sheet under md, centred dialog above. `open`, `title`, `description` (sr-only), `children`, `footer` snippet. The Chain editor opens one per entry on phone. |
 
 Existing shadcn primitives (`Button`, `Badge`, `Dialog`, `Sheet`, `Select`, `Combobox`, ...) stay; `Chip` is for status and facts, `Badge` for legacy uses.
 
@@ -153,6 +156,16 @@ Rail (desktop) and drawer tabs (phone) carry a needs-you dot on an area that nee
 The chat header is `PageHeader size="compact"`: title, one `ChatStatus` glyph (reconnecting alert, pulsing working dot, live dot; the word is the tooltip and accessible name), then icon buttons: the `ContextMeter` ring (percent in its name; tap opens a bottom sheet under `md`, an anchored panel above, with model, tokens and Compress), New Session (phone) and Git (a dot marks changed files). The Project chip hides under `sm`. Everything shows on one line at 360 px.
 
 The composer is icon controls only. While working, the mode switch is two icon toggles (Steer `icons.steer`, Follow-up `icons.followUp`; the active one is filled) and the send button wears the active mode's glyph (arrow for a plain prompt), so the mode reads without words; Enter sends. Remember is a toggle (`aria-pressed` while the draft carries `/remember`). The Working indicator is the spinner plus the running tool trimmed to 14 characters. The Compress banner is one line with Retry, Change compress model and Dismiss as `IconButton`s. The tool strip is collapsed to one summary line (status, one icon per tool kind, current tool or `N tools · Xs`, timer, chevron); the line toggles the stage and history, and a failed strip starts open.
+
+## Settings, Memory, Providers
+
+Settings pages are `PageHeader`, one visible description line, then `Section`s of a `Panel` of `SettingRow`s. Every row's help sits behind its `InfoHint`; a `note` is only for state that must stay visible (environment lock, missing model, privacy line). The save bar is a floating pill above the safe area. The hub (`SettingsHub`) is a `Panel` of `Row`s per group, with an Admin chip on admin-only pages.
+
+The Chain editor (`ChainEditor`) shows one role as a heading, an add `IconButton` and up to three entries. Desktop edits harness, model and effort inline in a grid. Phone lists each entry as a tap row (slot, model, harness, effort chip, image warning chip); a tap opens a `BottomSheet` with the three pickers plus move and remove.
+
+Memory opens on three `StatCard`s (Pending, New, Rules) and the proposals that wait for approval; everything else (Memories with legacy observations and Episodes, Rules, Observations, Promotions, Profile, Status, Ledger, Purge) is a collapsed `Section`. Profile and Promotions take `embedded` to nest inside Memory as one collapsed `Section` each. Proposal evidence sits behind a native `details`.
+
+Providers use the Quota card: same article, icon tile, `text-title` name and `QuotaWindows` (big percent, bar, reset countdown), so both pages read the same. A Provider card adds a `Chip` for Connected or Not connected, its connect actions and its login panels; the percent comes from the shared `quotaStore`, so the card shows usage with no extra request per card. Connect flows keep their behaviour; only the markup is new.
 
 ## Checklist for a new page
 

@@ -47,8 +47,9 @@ describe('SettingsPage max_tickets', () => {
     const { container } = renderSettings();
     const input = await within(container).findByLabelText('Maximum tickets per Run (spec)');
     expect(input.value).toBe('2');
-    expect(within(container).getByText(/Global max_tickets caps concurrent tickets in each Run/i)).toBeTruthy();
-    expect(within(container).getByText(/A spec's max_tickets value can only lower this cap, never raise it/i)).toBeTruthy();
+    await fireEvent.click(within(container).getByRole('button', { name: 'About Tickets per Run' }));
+    expect(await screen.findByText(/Global max_tickets caps concurrent tickets in each Run/i)).toBeTruthy();
+    expect(screen.getByText(/A spec's max_tickets value can only lower this cap, never raise it/i)).toBeTruthy();
   });
 
   it('saves an edit with the roles', async () => {
@@ -412,7 +413,7 @@ describe('SettingsPage jev decider', () => {
     const { container } = renderSettings({ props: { admin: true } });
     const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
     expect(endpoint.getAttribute('aria-expanded')).toBe('true');
-    expect(within(endpoint).getByText(/In Jev mode, leave blank to use OpenRouter/i)).toBeTruthy();
+    expect(within(endpoint).getByText(/Blank uses OpenRouter/i)).toBeTruthy();
     const endpointPanel = container.querySelector('#custom-jev-settings');
     expect(endpointPanel.hidden).toBe(false);
     expect((await within(endpointPanel).findByLabelText('Endpoint URL')).value).toBe('http://localhost:8000/v1/systemone');
@@ -437,7 +438,7 @@ describe('SettingsPage jev decider', () => {
     const endpoint = await within(container).findByRole('button', { name: /Custom Jev endpoint/ });
     expect(endpoint.getAttribute('aria-expanded')).toBe('false');
     expect(container.querySelector('#custom-jev-settings').hidden).toBe(true);
-    expect(within(endpoint).getByText(/In Jev mode, leave blank to use OpenRouter/i)).toBeTruthy();
+    expect(within(endpoint).getByText(/Blank uses OpenRouter/i)).toBeTruthy();
   });
 
   it('saves a blank URL to use the OpenRouter default', async () => {

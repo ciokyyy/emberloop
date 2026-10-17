@@ -1,9 +1,20 @@
-<!-- Profile settings: per-User standing instructions with versions and approvals. -->
+<!-- Profile settings: per-User standing instructions with versions and approvals.
+     `embedded` (Memory page) nests the Sections one heading level lower. -->
 <script>
+  import { Archive, Undo2, UserRound } from '@lucide/svelte';
   import { getProfile, putProfile, getProfileVersions, restoreProfile, getProfileQueue, decideProfileQueue } from './api.js';
   import Button from './ui/button.svelte';
+  import EmptyState from './ui/empty-state.svelte';
   import FloatingInput from './ui/floating-input.svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import Panel from './ui/panel.svelte';
+  import Section from './ui/section.svelte';
   import Select from './ui/select.svelte';
+  import Skeleton from './ui/skeleton.svelte';
+  import { icons } from './icons.js';
+
+  let { embedded = false } = $props();
+  const level = $derived(embedded ? 3 : 2);
 
   let lines = $state([]);
   let version = $state(0);
@@ -117,91 +128,108 @@
   }
 </script>
 
-<section class="animate-rise flex flex-col gap-2" data-testid="profile-settings">
-  <div class="px-1">
-    <h2 class="text-sm font-semibold">Profile</h2>
-    <p class="text-xs text-muted-foreground">Standing instructions injected into every Session. Changes are versions; retired lines stay in history. Workflow and style lines also go to reviewers.</p>
-  </div>
-  <div class="flex flex-col gap-3 rounded-2xl border bg-card p-4">
-    {#if error}
-      <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</p>
-    {/if}
-    {#if notice}
-      <p role="status" class="rounded-xl bg-green-500/10 px-4 py-2 text-sm text-green-300">{notice}</p>
-    {/if}
-    {#if loading}
-      <div class="h-16 animate-pulse rounded-xl bg-muted"></div>
-    {:else}
+{#snippet body()}
+<div class="animate-rise flex flex-col gap-6" data-testid="profile-settings">
+  {#if error}
+    <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>
+  {/if}
+  {#if notice}
+    <p role="status" class="rounded-xl bg-status-done/10 px-4 py-2 text-body text-status-done">{notice}</p>
+  {/if}
+  {#if loading}
+    <div role="status" aria-label="Loading profile" class="flex flex-col gap-3">
+      <Skeleton class="h-16 rounded-2xl" />
+      <Skeleton class="h-16 rounded-2xl" />
+    </div>
+  {:else}
+    <Section
+      title="Standing lines"
+      icon={UserRound}
+      headingLevel={level}
+      hint="Standing instructions injected into every Session. Changes are versions; retired lines stay in history. Workflow and style lines also go to reviewers."
+    >
       {#if liveLines.length === 0}
-        <p class="text-sm text-muted-foreground" data-testid="profile-empty">No profile yet. Add the first line below.</p>
+        <EmptyState icon={UserRound} title="No profile yet" description="Add the first line below." class="py-6" data-testid="profile-empty" />
       {:else}
-        <ul class="flex flex-col gap-2" data-testid="profile-lines">
+        <Panel tag="ul" data-testid="profile-lines">
           {#each liveLines as line (line.id)}
-            <li class="flex flex-col gap-2 rounded-xl border p-3">
+            <li class="flex flex-col gap-3 p-4">
               {#if editingId === line.id}
                 <FloatingInput label="Line text" bind:value={editText} />
                 <Select aria-label={`Tag for ${line.id}`} bind:value={editTag} items={tagItems} />
-                <div class="flex gap-2">
+                <div class="flex gap-2 max-md:[&>*]:flex-1">
                   <Button size="sm" onclick={() => saveEdit(line)}>Save</Button>
                   <Button variant="ghost" size="sm" onclick={() => (editingId = '')}>Cancel</Button>
                 </div>
               {:else}
-                <div class="flex items-start justify-between gap-3">
-                  <div class="min-w-0">
-                    <div class="text-sm">{line.text}</div>
-                    <div class="text-xs text-muted-foreground">{line.tag} · {line.id}</div>
+                <div class="flex items-start gap-3">
+                  <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+                    <span class="text-body break-words text-fg-1">{line.text}</span>
+                    <span class="text-caption text-fg-3">{line.tag} · {line.id}</span>
                   </div>
-                  <div class="flex shrink-0 gap-2">
-                    <Button variant="ghost" size="sm" aria-label={`Edit ${line.id}`} onclick={() => startEdit(line)}>Edit</Button>
-                    <Button variant="ghost" size="sm" aria-label={`Retire ${line.id}`} onclick={() => retireLine(line)}>Retire</Button>
+                  <div class="flex shrink-0 items-center">
+                    <IconButton icon={icons.edit} label={`Edit ${line.id}`} onclick={() => startEdit(line)} />
+                    <IconButton icon={Archive} label={`Retire ${line.id}`} onclick={() => retireLine(line)} />
                   </div>
                 </div>
               {/if}
             </li>
           {/each}
-        </ul>
+        </Panel>
       {/if}
-      <div class="flex flex-col gap-2 border-t pt-3">
-        <FloatingInput id="profile-new-text" label="New line" bind:value={newText} placeholder="Prefer tabs for Go files." />
-        <Select aria-label="Tag for new line" bind:value={newTag} items={tagItems} />
-        <div><Button size="sm" onclick={addLine}>Add line</Button></div>
-      </div>
-      <div class="border-t pt-3" data-testid="profile-queue">
-        <h3 class="text-sm font-medium">Proposals waiting for approval ({queue.filter((q) => q.status === 'pending').length})</h3>
-        {#if queue.length === 0}
-          <p class="text-xs text-muted-foreground">No proposals. Agent patches appear here after an explicit request.</p>
-        {:else}
-          <ul class="mt-2 flex flex-col gap-2">
-            {#each queue as item (item.id)}
-              <li class="rounded-xl border p-3" data-testid={`profile-queue-${item.id}`}>
-                <div class="text-xs text-muted-foreground">#{item.id} · {item.status}</div>
-                <div class="mt-1 text-xs break-words">{item.payload}</div>
-                {#if item.status === 'pending'}
-                  <div class="mt-2 flex gap-2">
-                    <Button size="sm" onclick={() => approveItem(item)}>Approve</Button>
-                    <Button variant="ghost" size="sm" onclick={() => rejectItem(item)}>Reject</Button>
-                  </div>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </div>
-      <div class="border-t pt-3" data-testid="profile-versions">
-        <h3 class="text-sm font-medium">Versions ({versions.length})</h3>
-        {#if versions.length === 0}
-          <p class="text-xs text-muted-foreground">Every approval writes a version.</p>
-        {:else}
-          <ul class="mt-2 flex flex-col gap-1">
-            {#each versions as v (v.version)}
-              <li class="flex items-center justify-between gap-3 text-sm">
-                <span>v{v.version} · {(v.lines ?? []).filter((l) => !l.retired).length} lines</span>
-                <Button variant="ghost" size="sm" aria-label={`Restore version ${v.version}`} onclick={() => restoreVersion(v.version)}>Restore</Button>
-              </li>
-            {/each}
-          </ul>
-        {/if}
-      </div>
-    {/if}
-  </div>
-</section>
+    </Section>
+
+    <Section title="Add a line" headingLevel={level}>
+      <Panel padded divided={false}>
+        <div class="flex flex-col gap-3 md:grid md:grid-cols-[minmax(0,1fr)_10rem_auto] md:items-center">
+          <FloatingInput id="profile-new-text" label="New line" bind:value={newText} placeholder="Prefer tabs for Go files." />
+          <Select aria-label="Tag for new line" bind:value={newTag} items={tagItems} />
+          <Button onclick={addLine}>Add line</Button>
+        </div>
+      </Panel>
+    </Section>
+
+    <Section title={`Proposals waiting (${queue.filter((q) => q.status === 'pending').length})`} headingLevel={level} data-testid="profile-queue">
+      {#if queue.length === 0}
+        <p class="rounded-2xl border border-dashed px-4 py-6 text-center text-caption text-fg-3">No proposals. Agent patches appear here after an explicit request.</p>
+      {:else}
+        <Panel tag="ul">
+          {#each queue as item (item.id)}
+            <li class="flex flex-col gap-2 p-4" data-testid={`profile-queue-${item.id}`}>
+              <span class="text-caption text-fg-3">#{item.id} · {item.status}</span>
+              <span class="rounded-lg bg-muted px-3 py-2 font-mono text-caption break-words text-fg-2">{item.payload}</span>
+              {#if item.status === 'pending'}
+                <div class="flex gap-2 max-md:[&>*]:flex-1">
+                  <Button size="sm" onclick={() => approveItem(item)}>Approve</Button>
+                  <Button variant="ghost" size="sm" onclick={() => rejectItem(item)}>Reject</Button>
+                </div>
+              {/if}
+            </li>
+          {/each}
+        </Panel>
+      {/if}
+    </Section>
+
+    <Section title={`Versions (${versions.length})`} headingLevel={level} data-testid="profile-versions">
+      {#if versions.length === 0}
+        <p class="rounded-2xl border border-dashed px-4 py-6 text-center text-caption text-fg-3">Every approval writes a version.</p>
+      {:else}
+        <Panel tag="ul">
+          {#each versions as v (v.version)}
+            <li class="flex items-center gap-3 px-4 py-2">
+              <span class="min-w-0 flex-1 text-body tabular-nums">v{v.version} · {(v.lines ?? []).filter((l) => !l.retired).length} lines</span>
+              <IconButton icon={Undo2} label={`Restore version ${v.version}`} onclick={() => restoreVersion(v.version)} />
+            </li>
+          {/each}
+        </Panel>
+      {/if}
+    </Section>
+  {/if}
+</div>
+{/snippet}
+
+{#if embedded}
+  <Section title="Profile" icon={UserRound} collapsible open={false} class="animate-rise">{@render body()}</Section>
+{:else}
+  {@render body()}
+{/if}

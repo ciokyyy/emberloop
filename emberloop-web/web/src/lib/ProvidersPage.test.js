@@ -535,4 +535,26 @@ describe('ProvidersPage', () => {
     expect(input.className).toContain('text-base');
     expect(input.className).toContain('h-11');
   });
+
+  it('leads each connected card with the usage percent, like the Quota card', async () => {
+    const quota = [
+      { key: 'openai-codex', label: 'ChatGPT Plus', state: 'ok', windows: [{ label: '5-hour', pct: 7 }, { label: 'weekly', pct: 91 }] },
+      { key: 'openrouter', label: 'OpenRouter', state: 'expired', windows: [{ label: 'Credits', pct: 40 }] },
+    ];
+    quotaStore.set(quota);
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      const url = String(input);
+      if (url === '/api/providers') return { ok: true, json: async () => ({ providers: providerRows() }) };
+      if (url === '/api/quota') return { ok: true, json: async () => ({ providers: quota }) };
+      throw new Error(`unexpected request: ${url}`);
+    }));
+    const { container } = render(ProvidersPage, { props: { admin: true } });
+    await screen.findAllByTestId('provider-row');
+    const chatGPT = container.querySelector('[data-provider="openai-codex"]');
+    await waitFor(() => expect(within(chatGPT).getAllByTestId('quota-pct').map((node) => node.textContent)).toEqual(['7%', '91%']));
+    expect(within(chatGPT).getByRole('progressbar', { name: 'ChatGPT Plus Weekly' }).getAttribute('aria-valuenow')).toBe('91');
+    const openrouter = container.querySelector('[data-provider="openrouter"]');
+    expect(within(openrouter).getByText('login expired')).toBeTruthy();
+    expect(within(container.querySelector('[data-provider="anthropic"]')).queryByTestId('quota-windows')).toBeNull();
+  });
 });
