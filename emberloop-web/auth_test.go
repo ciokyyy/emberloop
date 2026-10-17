@@ -382,8 +382,12 @@ func authedHandler(t testing.TB, d *Daemon) http.Handler {
 
 // The sign-in screen reads /api/auth/state with no cookie. It reports only
 // whether the Daemon is empty and whether signup is open.
+//
+// Not parallel: the switch writes signup_enabled to the settings file, so it
+// owns its own through EL_SETTINGS. On the shared TestMain file, every
+// parallel sign-in during the window got "signup is disabled".
 func TestAuthStateIsPublicAndRevealsOnlyEmptyAndSignup(t *testing.T) {
-	t.Parallel()
+	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "settings.json"))
 	h := NewDaemon(tempDir(t), NewFakeBackend()).Handler()
 	state := func() string {
 		t.Helper()

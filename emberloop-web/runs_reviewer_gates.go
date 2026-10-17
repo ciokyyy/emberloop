@@ -86,11 +86,12 @@ func tipCheckEvidenceLine(tip string) string {
 
 // isCheckInfraError reports a check result that never ran: the runner's
 // "could not run" entries (missing tip, no worktree, unreadable check file).
-// A red check names failing tests instead. Infra failures fail open at the
-// tip gate: the Worker cannot fix them, so Reviewers still start.
+// A red check names failing tests instead. A flaked check (every run failed
+// on different tests) counts too. Infra failures fail open at the tip gate:
+// the Worker cannot fix them, so Reviewers still start.
 func isCheckInfraError(failing []string) bool {
 	for _, f := range failing {
-		if strings.HasPrefix(f, "base check could not run") || strings.HasPrefix(f, "tip check could not run") {
+		if strings.HasPrefix(f, "base check could not run") || strings.HasPrefix(f, "tip check could not run") || strings.HasPrefix(f, checkFlakedPrefix) {
 			return true
 		}
 	}

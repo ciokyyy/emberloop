@@ -42,12 +42,40 @@ func TestRepoCheckMissingAtTipIsGreenEvenWhenUntrackedOnDisk(t *testing.T) {
 	}
 }
 
-// A red check reruns once: a flake that passes the second time is green.
-func TestRepoCheckRerunsOnceAndPassesAFlake(t *testing.T) {
+// A red check reruns: a flake that passes the second time is green.
+func TestRepoCheckRerunsAndPassesAFlake(t *testing.T) {
 	t.Parallel()
 	repo, tip := checkRepo(t, "#!/bin/sh\nif [ -e ../flake-seen ]; then exit 0; fi\ntouch ../flake-seen\necho 'FAIL example.com/pkg 600.1s'\nexit 1\n")
 	if green, failing := runRepoCheckAtTip(repo, tip); !green {
 		t.Fatalf("check = red %q, want the flake to pass on rerun", failing)
+	}
+}
+
+// A check that fails on different tests every run is a flaky machine: the
+// tip gate reads it as unverifiable, not as a Worker fault.
+func TestRepoCheckFlakingOnDifferentTestsIsInfra(t *testing.T) {
+	t.Parallel()
+	repo, tip := checkRepo(t, "#!/bin/sh\nn=$(cat ../n 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > ../n\necho \"--- FAIL: TestFlake$n (0.1s)\"\necho 'FAIL'\nexit 1\n")
+	green, failing := runRepoCheckAtTip(repo, tip)
+	if green {
+		t.Fatal("check = green, want red")
+	}
+	if len(failing) != 1 || !strings.HasPrefix(failing[0], checkFlakedPrefix) {
+		t.Fatalf("failing = %q, want one flaked entry", failing)
+	}
+	if !isCheckInfraError(failing) {
+		t.Fatalf("failing = %q, want an infra error so the tip gate fails open", failing)
+	}
+}
+
+// A test that fails in every run is a real failure and the one a Worker is
+// told about; tests that failed in only some runs are dropped.
+func TestRepoCheckKeepsTestsFailingInEveryRun(t *testing.T) {
+	t.Parallel()
+	repo, tip := checkRepo(t, "#!/bin/sh\nn=$(cat ../n 2>/dev/null || echo 0)\nn=$((n+1))\necho $n > ../n\necho '--- FAIL: TestReal (0.1s)'\necho \"--- FAIL: TestFlake$n (0.1s)\"\nexit 1\n")
+	green, failing := runRepoCheckAtTip(repo, tip)
+	if green || len(failing) != 1 || failing[0] != "TestReal" {
+		t.Fatalf("check = green %v failing %q, want only TestReal", green, failing)
 	}
 }
 

@@ -1426,13 +1426,91 @@ func runRepoCheckAtTip(repo, tip string) (bool, []string) {
 		return green, failing
 	}
 	// A red result may be a flake (a slow test past its timeout, a busy
-	// machine). One rerun on the same clean tree separates a flake from a
-	// real failure before a red base parks the Run or a red tip costs the
-	// Worker a round. Go's test cache keeps the rerun short.
-	if green, _ := runCheckScript(dir); green {
-		return true, nil
+	// machine running other Sessions). Rerun on the same clean tree, up to
+	// checkAttempts runs in all, before a red base parks the Run or a red
+	// tip costs the Worker a round. Go's test cache keeps reruns short.
+	// Any green run is green. Runs that all fail but share no failing test
+	// name are a flaky machine, not a Worker fault: they return the
+	// checkFlakedPrefix entry, which the tip gate treats as unverifiable.
+	attempts := [][]string{failing}
+	for len(attempts) < checkAttempts {
+		green, again := runCheckScript(dir)
+		if green {
+			return true, nil
+		}
+		if isCheckInfraError(again) {
+			return false, again
+		}
+		attempts = append(attempts, again)
 	}
-	return false, failing
+	return false, settleRedAttempts(attempts)
+}
+
+// checkAttempts is how many times one red check runs before it counts.
+const checkAttempts = 3
+
+// checkFlakedPrefix starts the failing entry of a check whose runs all failed
+// on different tests. A Worker cannot fix it, so isCheckInfraError counts it.
+const checkFlakedPrefix = "check flaked: "
+
+// settleRedAttempts reduces the failing lists of runs that all failed. When
+// every run names failing tests and no test fails in all of them, the check
+// is flaky: one entry says so. Otherwise the failing list is the last run's
+// list minus the tests that did not fail in every run. When some run named
+// no test (a vet, build or script failure), the last run's list stands whole.
+func settleRedAttempts(attempts [][]string) []string {
+	last := attempts[len(attempts)-1]
+	common := map[string]bool{}
+	for i, failing := range attempts {
+		names := checkTestNames(failing)
+		if len(names) == 0 {
+			return last
+		}
+		if i == 0 {
+			for _, n := range names {
+				common[n] = true
+			}
+			continue
+		}
+		seen := map[string]bool{}
+		for _, n := range names {
+			seen[n] = true
+		}
+		for n := range common {
+			if !seen[n] {
+				delete(common, n)
+			}
+		}
+	}
+	if len(common) == 0 {
+		var names []string
+		for _, n := range checkTestNames(attempts[0]) {
+			if len(names) < 5 {
+				names = append(names, n)
+			}
+		}
+		return []string{checkFlakedPrefix + strconv.Itoa(len(attempts)) + " runs failed on different tests (first run: " + strings.Join(names, ", ") + ")"}
+	}
+	var kept []string
+	for _, f := range last {
+		if common[f] || !strings.HasPrefix(f, "Test") {
+			kept = append(kept, f)
+		}
+	}
+	return kept
+}
+
+// checkTestNames returns the go test names in a parsed failing list: the
+// entries that start with "Test". Package FAIL lines and output tails are
+// not names.
+func checkTestNames(failing []string) []string {
+	var names []string
+	for _, f := range failing {
+		if strings.HasPrefix(f, "Test") {
+			names = append(names, f)
+		}
+	}
+	return names
 }
 
 // repoCheckTimeout bounds one .emberloop/check run, so a wedged check never
@@ -5312,6 +5390,24 @@ func (d *Daemon) retryTicket(w http.ResponseWriter, r *http.Request, id, ticketI
 	}
 	if rs.Parked != nil {
 		delete(rs.Parked, ticketID)
+	}
+	// A retry forgets a red tip check: the next pass reruns it, so a Worker
+	// idle on a flaked tip is not stuck behind the cached verdict.
+	if tip := rs.TipRedTold[ticketID]; tip != "" {
+		delete(rs.TipRedTold, ticketID)
+		delete(rs.TipCheckCache, tip)
+	}
+	// A retry also forgets a non-done submit ("blocked", "stopped"): the
+	// Worker works on, and the stale status would make every driver pass
+	// refuse and steer it again until the refusal counter parks the ticket.
+	if sess := rs.Sessions[ticketID]; sess != "" {
+		if rec := d.submits[sess]; rec != nil && rec.Status != "" && rec.Status != "done" {
+			rec.Status = ""
+		}
+	}
+	if rec, ok := rs.SubmitRecs[ticketID]; ok && rec.Status != "" && rec.Status != "done" {
+		rec.Status = ""
+		rs.SubmitRecs[ticketID] = rec
 	}
 	if rs.RetryGen == nil {
 		rs.RetryGen = map[string]int{}

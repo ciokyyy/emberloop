@@ -235,6 +235,68 @@ func TestTipCheckRedReturnsToWorkerWithoutReviewerTurn(t *testing.T) {
 	}
 }
 
+// A User retry forgets a red tip check: the idle Worker's unchanged tip is
+// checked again and, once green, reviews and merges.
+func TestTipCheckRetryRechecksTheSameTip(t *testing.T) {
+	t.Parallel()
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-first.md": "# 01: First\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	fb := NewFakeBackend()
+	var calls atomic.Int32
+	var red atomic.Bool
+	red.Store(true)
+	d := runTestDaemon(t, tempDir(t), fb)
+	d.tipCheck = func(_, _, _ string) (bool, []string) {
+		calls.Add(1)
+		if red.Load() {
+			return false, []string{"TestTipRed"}
+		}
+		return true, nil
+	}
+	fb.ReviewSubmit = func(sessionID, prompt string) (ReviewerSubmit, bool) {
+		tip := tipFromReviewPrompt(prompt)
+		if tip == "" {
+			return ReviewerSubmit{}, false
+		}
+		return ReviewerSubmit{
+			Verdict: "pass", Tip: tip,
+			Ran: []ReviewRan{{Command: "go vet ./...", ExitCode: 0}},
+		}, true
+	}
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-first").WorkerSession != ""
+	}, "worker started")
+	worker := ticketByID(r, "01-first").WorkerSession
+	commitTicketFile(t, filepath.Join(repo, ".el-worktrees", "01-first"), "work.go", "package main\n", "work")
+	if code, out := postDone(t, srv.URL, worker); code != http.StatusAccepted {
+		t.Fatalf("done status = %d (%v), want 202", code, out)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for countPromptTells(t, srv.URL, worker, "repo check is red") != 1 {
+		if time.Now().After(deadline) {
+			t.Fatal("worker never told the tip is red")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	red.Store(false)
+	if code, _ := postTicketAction(t, srv.URL, run.ID, "01-first", "retry", ""); code != http.StatusOK {
+		t.Fatalf("retry status = %d, want 200", code)
+	}
+	waitReviewers(t, srv.URL, run.ID, "01-first")
+	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return r.Status == "done"
+	}, "run done after the retry rechecks the tip")
+	if n := calls.Load(); n != 2 {
+		t.Fatalf("tip checks = %d, want 2: red, then the retry's recheck", n)
+	}
+}
+
 // A green tip check is cached per tip: both Reviewer prompts on one tip
 // share one check, and the prompts carry it as evidence.
 func TestTipCheckGreenCachedPerTip(t *testing.T) {

@@ -120,7 +120,11 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   refuses with `el.RebaseConflictRefusal`) cover Run seams.
   Base and tip checks (`runRepoCheckAtTip`, `runs_checkspeed_test.go`) run
   `.emberloop/check` in one reused, cleaned worktree per repo
-  (`.el-worktrees/.check`, one check at a time), so Go caches hit. A base
+  (`.el-worktrees/.check`, one check at a time), so Go caches hit. A red
+  check reruns up to three times in all: any green run is green, tests red in
+  every run are the failure, and runs red on different tests are a flake the
+  tip gate fails open on (`checkFlakedPrefix`). A Ticket retry clears the
+  Ticket's red-tip claim and cached verdict so the next pass rechecks. A base
   check is shared per spec tip (`baseChecking`), reuses a green tip check of
   the same commit, and runs in the background while other Tickets have live
   Workers, so the driver never stalls their reviews and merges on it.
