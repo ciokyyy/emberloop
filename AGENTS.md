@@ -76,7 +76,6 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/settings-redesign/AGENTS.md` — the design reference (static mock) for the Settings redesign in `emberloop-web`
 - `.scratch/acp-bench/AGENTS.md` — the ACP agent/harness benchmark-candidate survey (tables + machine-readable JSON, survey only)
 - `.scratch/designer-agents/AGENTS.md` — the spec and ticket area for Designer agents (Ticket types, Designer Workers and design Reviewers, `agent-browser` CLI, `to-tickets` override, designer-agents; tickets 01 to 15)
-- `.scratch/ui-overhaul/AGENTS.md` — the spec and ticket area for the UI overhaul (design language, scroll stability, message actions, queue control, Subagent report notices; tickets 01 to 13)
 - `GLOSSARY.md` — Emberloop terms (Daemon, Session, Project, Provider, Dashboard, quota percent, Backend, Subagent, Group, Steer, Follow-up, Event, Event log, Idle, Disposition, Chain, Switch, Boot payload, Prefetch table)
 - `docs/agent/` — pages agents read as `el://docs/<page>` (update, verify, webui); `el update` refreshes them
 - `docs/adr/0001-claude-via-acp-pig-via-sdk.md` — why claude runs over ACP and pig over its Go SDK
