@@ -39,6 +39,12 @@ export function rememberReports(state, reports = []) {
   return { ...state, reports: [...bySeq.values()].sort((a, b) => a.seq - b.seq), latestSeq: Math.max(state.latestSeq ?? 0, ...bySeq.keys()) };
 }
 
+// receiveReport keeps a report unread unless its Session is already open.
+export function receiveReport(state, report, sessionOpen = false) {
+  const next = rememberReports(state, [report]);
+  return sessionOpen ? markReportsRead(next, report?.seq) : next;
+}
+
 export function setReportDismissed(state, seq, dismissed) {
   const id = Number(seq);
   if (!Number.isFinite(id)) return state;

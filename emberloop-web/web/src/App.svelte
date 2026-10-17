@@ -48,7 +48,7 @@
   import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, suggestProject, addProject, renameProject, removeProject, updateProject, getGit, getDisk } from './lib/api.js';
   import { people, refreshPeople, personFor } from './lib/people.svelte.js';
   import { runsStore } from './lib/runsStore.js';
-  import { readReportState, writeReportState, rememberReports, setReportDismissed, markReportsRead } from './lib/reportState.js';
+  import { readReportState, writeReportState, rememberReports, receiveReport, setReportDismissed, markReportsRead } from './lib/reportState.js';
 
   // The signed-in User and the sign-out action, both supplied by Root.svelte.
   let { user = null, onSignOut = () => {} } = $props();
@@ -315,7 +315,7 @@
     if (!id || !user?.id) return;
     const report = parseReport(event.text);
     if (!report) return;
-    const next = rememberReports(readReportState(user.id, id), [{ ...report, seq: event.seq }]);
+    const next = receiveReport(readReportState(user.id, id), { ...report, seq: event.seq }, currentId === id);
     writeReportState(user.id, id, next);
     if (currentId === id) reportState = next;
     sessions = sessions.map((session) => session.id === id ? { ...session, reportSeq: event.seq } : session);

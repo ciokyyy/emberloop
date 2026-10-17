@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { isReportUnread, markReportsRead, readReportState, rememberReports, setReportDismissed, writeReportState } from './reportState.js';
+import { isReportUnread, markReportsRead, readReportState, receiveReport, rememberReports, setReportDismissed, writeReportState } from './reportState.js';
 
 beforeEach(() => localStorage.clear());
 
@@ -27,5 +27,17 @@ describe('per-User, per-Session report state', () => {
     expect(isReportUnread('user-a', 'session-a')).toBe(true);
     writeReportState('user-a', 'session-a', markReportsRead(state, 18));
     expect(isReportUnread('user-a', 'session-a')).toBe(false);
+  });
+
+  it('does not leave a report unread when it arrives in the open Session', () => {
+    const report = { seq: 22, groupName: 'group-c' };
+    const background = receiveReport(readReportState('user-a', 'session-a'), report);
+    writeReportState('user-a', 'session-a', background);
+    expect(isReportUnread('user-a', 'session-a')).toBe(true);
+
+    const open = receiveReport(readReportState('user-a', 'session-a'), { ...report, seq: 23 }, true);
+    writeReportState('user-a', 'session-a', open);
+    expect(isReportUnread('user-a', 'session-a')).toBe(false);
+    expect(open.reports.map((item) => item.seq)).toEqual([22, 23]);
   });
 });
