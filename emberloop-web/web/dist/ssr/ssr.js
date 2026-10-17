@@ -5310,9 +5310,56 @@ var getDefaultConfig$1 = () => {
 		]
 	};
 };
-var twMerge = /*#__PURE__*/ createTailwindMerge$1(getDefaultConfig$1);
-//#endregion
-//#region src/lib/ui/cn.js
+/**
+* @param baseConfig Config where other config will be merged into. This object will be mutated.
+* @param configExtension Partial config to merge into the `baseConfig`.
+*/
+var mergeConfigs$1 = (baseConfig, { cacheSize, prefix, experimentalParseClassName, extend = {}, override = {} }) => {
+	overrideProperty$1(baseConfig, "cacheSize", cacheSize);
+	overrideProperty$1(baseConfig, "prefix", prefix);
+	overrideProperty$1(baseConfig, "experimentalParseClassName", experimentalParseClassName);
+	overrideConfigProperties$1(baseConfig.theme, override.theme);
+	overrideConfigProperties$1(baseConfig.classGroups, override.classGroups);
+	overrideConfigProperties$1(baseConfig.conflictingClassGroups, override.conflictingClassGroups);
+	overrideConfigProperties$1(baseConfig.conflictingClassGroupModifiers, override.conflictingClassGroupModifiers);
+	overrideProperty$1(baseConfig, "postfixLookupClassGroups", override.postfixLookupClassGroups);
+	overrideProperty$1(baseConfig, "orderSensitiveModifiers", override.orderSensitiveModifiers);
+	mergeConfigProperties$1(baseConfig.theme, extend.theme);
+	mergeConfigProperties$1(baseConfig.classGroups, extend.classGroups);
+	mergeConfigProperties$1(baseConfig.conflictingClassGroups, extend.conflictingClassGroups);
+	mergeConfigProperties$1(baseConfig.conflictingClassGroupModifiers, extend.conflictingClassGroupModifiers);
+	mergeArrayProperties$1(baseConfig, extend, "postfixLookupClassGroups");
+	mergeArrayProperties$1(baseConfig, extend, "orderSensitiveModifiers");
+	return baseConfig;
+};
+var overrideProperty$1 = (baseObject, overrideKey, overrideValue) => {
+	if (overrideValue !== void 0) baseObject[overrideKey] = overrideValue;
+};
+var overrideConfigProperties$1 = (baseObject, overrideObject) => {
+	if (overrideObject) for (const key in overrideObject) overrideProperty$1(baseObject, key, overrideObject[key]);
+};
+var mergeConfigProperties$1 = (baseObject, mergeObject) => {
+	if (mergeObject) for (const key in mergeObject) mergeArrayProperties$1(baseObject, mergeObject, key);
+};
+var mergeArrayProperties$1 = (baseObject, mergeObject, key) => {
+	const mergeValue = mergeObject[key];
+	if (mergeValue !== void 0) baseObject[key] = baseObject[key] ? baseObject[key].concat(mergeValue) : mergeValue;
+};
+var extendTailwindMerge = (configExtension, ...createConfig) => typeof configExtension === "function" ? createTailwindMerge$1(getDefaultConfig$1, configExtension, ...createConfig) : createTailwindMerge$1(() => mergeConfigs$1(getDefaultConfig$1(), configExtension), ...createConfig);
+var twMerge = extendTailwindMerge({ extend: { classGroups: {
+	"font-size": [{ text: [
+		"headline",
+		"title",
+		"body",
+		"caption",
+		"numeric"
+	] }],
+	shadow: [{ shadow: [
+		"elev-1",
+		"elev-2",
+		"elev-3"
+	] }]
+} } });
 function cn(...inputs) {
 	return twMerge(clsx$1(...inputs));
 }
