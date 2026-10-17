@@ -115,6 +115,16 @@ export const interruptSession = (id) =>
 
 export const getQueue = (id) => fetch(url(`/api/sessions/${id}/queue`)).then(json);
 
+export const editQueueItem = (id, itemId, text) =>
+  fetch(url(`/api/sessions/${id}/queue/${encodeURIComponent(itemId)}`), {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  }).then(json);
+
+export const removeQueueItem = (id, itemId) =>
+  fetch(url(`/api/sessions/${id}/queue/${encodeURIComponent(itemId)}`), { method: 'DELETE' }).then(json);
+
 export const clearQueue = (id) => fetch(url(`/api/sessions/${id}/queue`), { method: 'DELETE' }).then(json);
 
 export function openStream(id, since, onEvent, opts = {}) {

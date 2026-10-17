@@ -72,11 +72,13 @@ func (p promptSender) stamp(e *Event) {
 }
 
 // QueuedMessage is one not-yet-delivered Steer or Follow-up (or a plain
-// prompt that arrived while the Session worked).
+// prompt that arrived while the Session worked). ID remains stable while it
+// stays queued; ImageIDs names stored attachments, never their bytes.
 type QueuedMessage struct {
+	ID       string   `json:"id"`
 	Mode     string   `json:"mode"`
 	Text     string   `json:"text"`
-	ImageIDs []string `json:"imageIds,omitempty"`
+	ImageIDs []string `json:"imageIds"`
 	Degraded bool     `json:"degraded,omitempty"`
 }
 

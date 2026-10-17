@@ -46,6 +46,55 @@ func TestCreatePromptStreamsOrderedEvents(t *testing.T) {
 	}
 }
 
+func TestQueueRequiresSessionOwnerOrAdmin(t *testing.T) {
+	t.Parallel()
+	fake := NewFakeBackend()
+	fake.Delay = 500 * time.Millisecond
+	d := NewDaemon(tempDir(t), fake)
+	h := d.Handler()
+	admin := signedIn(t, h, "admin")
+	owner := signedIn(t, h, "queue-owner")
+	other := signedIn(t, h, "queue-other")
+	adminServer := httptest.NewServer(withCookie(h, admin))
+	ownerServer := httptest.NewServer(withCookie(h, owner))
+	otherServer := httptest.NewServer(withCookie(h, other))
+	defer adminServer.Close()
+	defer ownerServer.Close()
+	defer otherServer.Close()
+
+	id := createSession(t, ownerServer.URL, "fake", "fake-model", tempDir(t))
+	seq := sendPrompt(t, ownerServer.URL, id, "slow job")
+	waitStatus(t, ownerServer.URL, id, "working", 5*time.Second)
+	if code, _ := postMode(t, ownerServer.URL, id, "followup", "owner queued this"); code != http.StatusAccepted {
+		t.Fatalf("queue status = %d", code)
+	}
+	item := getQueue(t, ownerServer.URL, id)[0]
+	if got := getQueue(t, adminServer.URL, id); len(got) != 1 || got[0].ID != item.ID {
+		t.Fatalf("admin queue = %+v, want owner item %q", got, item.ID)
+	}
+	resp, err := http.Get(otherServer.URL + "/api/sessions/" + id + "/queue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("other User queue read = %d, want 403", resp.StatusCode)
+	}
+	if code, body := queueItemRequest(t, otherServer.URL, id, item.ID, http.MethodPatch, "intrusion"); code != http.StatusForbidden || !strings.Contains(body, "Session owner or an admin") {
+		t.Fatalf("other User queue edit = %d %s, want owner/admin 403", code, body)
+	}
+	if code, body := queueItemRequest(t, adminServer.URL, id, item.ID, http.MethodPatch, "admin edit"); code != http.StatusOK {
+		t.Fatalf("admin queue edit = %d %s", code, body)
+	}
+	updated := getQueue(t, ownerServer.URL, id)
+	if len(updated) != 1 || updated[0].ID != item.ID || updated[0].Text != "admin edit" {
+		t.Fatalf("owner queue after admin edit = %+v", updated)
+	}
+	clearQueue(t, ownerServer.URL, id)
+	waitTurnEnd(t, ownerServer.URL, id, seq)
+	waitDaemonIdle(t, d, id)
+}
+
 func createSession(t *testing.T, base, harness, model, workDir string) string {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"harness": harness, "model": model, "workDir": workDir})

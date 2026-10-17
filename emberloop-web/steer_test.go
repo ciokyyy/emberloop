@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -65,6 +66,31 @@ func clearQueue(t *testing.T, base, id string) int {
 	return out.Cleared
 }
 
+func queueItemRequest(t *testing.T, base, id, itemID, method, text string) (int, string) {
+	t.Helper()
+	var body []byte
+	if method == http.MethodPatch {
+		body, _ = json.Marshal(map[string]string{"text": text})
+	}
+	req, err := http.NewRequest(method, base+"/api/sessions/"+id+"/queue/"+itemID, bytes.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if method == http.MethodPatch {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode, string(raw)
+}
+
 func waitStatus(t *testing.T, base, id, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.Now().Add(timeout)
@@ -95,6 +121,22 @@ func waitTurnEnd(t *testing.T, base, id string, promptSeq int64) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatalf("turn after seq %d never ended: %+v", promptSeq, transcriptOf(t, base, id))
+}
+
+func waitDaemonIdle(t *testing.T, d *Daemon, id string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		d.mu.Lock()
+		s := d.sessions[id]
+		idle := s != nil && !s.busy && s.active == 0
+		d.mu.Unlock()
+		if idle {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("Session did not settle after its idle Event")
 }
 
 // waitParentIdle waits out a spawn parent's grouped delivery before the
@@ -223,6 +265,87 @@ func TestQueuedModesListAndClearBeforeDelivery(t *testing.T) {
 		if e.Kind == "prompt" && (strings.Contains(e.Text, "go left") || strings.Contains(e.Text, "and then")) {
 			t.Fatalf("cleared message delivered: %+v", e)
 		}
+	}
+	waitDaemonIdle(t, d, id)
+}
+
+// Per-item edits and removes preserve the ids and order of the remaining
+// Daemon-owned messages.
+func TestQueuedItemEditAndRemovePreserveOrder(t *testing.T) {
+	t.Parallel()
+	fake := NewFakeBackend()
+	fake.Delay = 500 * time.Millisecond
+	d := NewDaemon(tempDir(t), fake)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	seq := sendPrompt(t, srv.URL, id, "slow job")
+	waitStatus(t, srv.URL, id, "working", 5*time.Second)
+	for _, message := range []struct{ mode, text string }{
+		{"steer", "first"}, {"followup", "second"}, {"followup", "third"},
+	} {
+		if code, _ := postMode(t, srv.URL, id, message.mode, message.text); code != http.StatusAccepted {
+			t.Fatalf("queue %s status = %d", message.text, code)
+		}
+	}
+	initial := getQueue(t, srv.URL, id)
+	if len(initial) != 3 {
+		t.Fatalf("initial queue = %+v, want 3 messages", initial)
+	}
+	for i, item := range initial {
+		if item.ID == "" || item.ImageIDs == nil {
+			t.Fatalf("queue item %d lacks stable id or imageIds: %+v", i, item)
+		}
+		for j := 0; j < i; j++ {
+			if initial[j].ID == item.ID {
+				t.Fatalf("duplicate queue id %q", item.ID)
+			}
+		}
+	}
+	if code, body := queueItemRequest(t, srv.URL, id, initial[1].ID, http.MethodPatch, "edited second"); code != http.StatusOK {
+		t.Fatalf("patch status = %d: %s", code, body)
+	}
+	if code, body := queueItemRequest(t, srv.URL, id, initial[0].ID, http.MethodDelete, ""); code != http.StatusOK {
+		t.Fatalf("remove status = %d: %s", code, body)
+	}
+	updated := getQueue(t, srv.URL, id)
+	if len(updated) != 2 || updated[0].ID != initial[1].ID || updated[0].Text != "edited second" || updated[1].ID != initial[2].ID || updated[1].Text != "third" {
+		t.Fatalf("queue after edit/remove = %+v; want edited second then third with stable ids", updated)
+	}
+	if code, body := queueItemRequest(t, srv.URL, id, "unknown", http.MethodDelete, ""); code != http.StatusNotFound || !strings.Contains(body, "queued message not found") {
+		t.Fatalf("unknown remove = %d %s, want clear 404", code, body)
+	}
+	if n := clearQueue(t, srv.URL, id); n != 2 {
+		t.Fatalf("cleared = %d, want 2", n)
+	}
+	waitTurnEnd(t, srv.URL, id, seq)
+	waitDaemonIdle(t, d, id)
+}
+
+func TestDeliveredQueueItemCannotBeEdited(t *testing.T) {
+	t.Parallel()
+	fake := NewFakeBackend()
+	fake.Delay = 200 * time.Millisecond
+	d := NewDaemon(tempDir(t), fake)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	seq := sendPrompt(t, srv.URL, id, "slow job")
+	waitStatus(t, srv.URL, id, "working", 5*time.Second)
+	if code, _ := postMode(t, srv.URL, id, "followup", "already delivered"); code != http.StatusAccepted {
+		t.Fatalf("queue status = %d", code)
+	}
+	queued := getQueue(t, srv.URL, id)
+	if len(queued) != 1 {
+		t.Fatalf("queue = %+v, want one item", queued)
+	}
+	waitTurnEnd(t, srv.URL, id, seq)
+	firstPromptWhere(t, srv.URL, id, func(e Event) bool { return e.Text == "already delivered" })
+	waitDaemonIdle(t, d, id)
+	if code, body := queueItemRequest(t, srv.URL, id, queued[0].ID, http.MethodPatch, "too late"); code != http.StatusNotFound || !strings.Contains(body, "already have been delivered") {
+		t.Fatalf("edit delivered item = %d %s, want clear 404", code, body)
 	}
 }
 
@@ -477,11 +600,22 @@ func TestPigQueuedMessagesClearBeforeDelivery(t *testing.T) {
 	nativeID := createSession(t, srv.URL, "pig", pigFauxModel, tempDir(t))
 	pb.Steer(nativeID, "steer one")
 	pb.FollowUp(nativeID, "follow one")
-	if got := pb.QueuedMessages(nativeID); len(got) != 2 {
-		t.Fatalf("native queue = %+v, want steer plus follow-up", got)
+	queued := getQueue(t, srv.URL, nativeID)
+	if len(queued) != 2 || queued[0].Mode != "steer" || queued[1].Mode != "followup" || queued[0].ID == "" || queued[1].ID == "" {
+		t.Fatalf("native queue = %+v, want identified steer and follow-up", queued)
 	}
-	if n := pb.ClearQueued(nativeID); n != 2 {
-		t.Fatalf("native cleared = %d, want 2", n)
+	if code, body := queueItemRequest(t, srv.URL, nativeID, queued[0].ID, http.MethodPatch, "steer edited"); code != http.StatusOK {
+		t.Fatalf("native patch = %d %s", code, body)
+	}
+	if code, body := queueItemRequest(t, srv.URL, nativeID, queued[1].ID, http.MethodDelete, ""); code != http.StatusOK {
+		t.Fatalf("native remove = %d %s", code, body)
+	}
+	remaining := getQueue(t, srv.URL, nativeID)
+	if len(remaining) != 1 || remaining[0].ID != queued[0].ID || remaining[0].Mode != "steer" || remaining[0].Text != "steer edited" {
+		t.Fatalf("native queue after edit/remove = %+v, want updated steer with stable id", remaining)
+	}
+	if n := clearQueue(t, srv.URL, nativeID); n != 1 {
+		t.Fatalf("native cleared = %d, want 1", n)
 	}
 	if got := pb.QueuedMessages(nativeID); len(got) != 0 {
 		t.Fatalf("native queue after clear = %+v, want empty", got)
@@ -634,6 +768,37 @@ func TestClaudeSteerFallsBackWhenNotInjected(t *testing.T) {
 	close(stub.blockPrompt)
 	// Let the turn and its Follow-up finish before TempDir cleanup.
 	readSSE(t, srv.URL, id, 0, 7, 10*time.Second)
+	waitDaemonIdle(t, d, id)
+}
+
+func TestClaudeDegradedSteerReportsFollowupMode(t *testing.T) {
+	t.Parallel()
+	stub := &steerStub{stubConn: &stubConn{blockPrompt: make(chan struct{})}}
+	be := newStubClaudeBackend(func() (acpConn, error) { return stub, nil })
+	d := NewDaemon(tempDir(t), NewFakeBackend()).WithClaudeBackend(be)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+
+	id := createSession(t, srv.URL, "claude", "sonnet", tempDir(t))
+	seq := sendPrompt(t, srv.URL, id, "slow job")
+	waitStatus(t, srv.URL, id, "working", 5*time.Second)
+	d.mu.Lock()
+	d.sessions[id].swapping = true
+	d.mu.Unlock()
+	code, body := postMode(t, srv.URL, id, "steer", "go after handoff")
+	if code != http.StatusAccepted || body["mode"] != "followup" || body["degraded"] != true {
+		t.Fatalf("degraded steer response = %d %+v, want followup mode", code, body)
+	}
+	queued := getQueue(t, srv.URL, id)
+	if len(queued) != 1 || queued[0].Mode != "followup" || !queued[0].Degraded {
+		t.Fatalf("degraded queue = %+v, want one degraded follow-up", queued)
+	}
+	if n := clearQueue(t, srv.URL, id); n != 1 {
+		t.Fatalf("cleared = %d, want 1", n)
+	}
+	close(stub.blockPrompt)
+	waitTurnEnd(t, srv.URL, id, seq)
+	waitDaemonIdle(t, d, id)
 }
 
 // Session meta replaces the Claude Code preset with el's prompt. Project
