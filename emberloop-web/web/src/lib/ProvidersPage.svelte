@@ -2,6 +2,9 @@
   import { onDestroy, onMount, tick } from 'svelte';
   import { Check, Copy, KeyRound, LockKeyhole, Terminal, Trash2, X } from '@lucide/svelte';
   import Badge from './ui/badge.svelte';
+  import Chip from './ui/chip.svelte';
+  import PageHeader from './ui/page-header.svelte';
+  import { icons } from './icons.js';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
   import {
@@ -438,15 +441,10 @@
 <div class="flex min-h-0 flex-1 flex-col" data-testid="providers-page">
   <div class="flex-1 overflow-auto px-4 pt-6 pb-16">
     <div class="mx-auto flex w-full max-w-3xl flex-col gap-6">
-      <header class="animate-rise flex flex-col gap-2">
-        <div class="flex flex-wrap items-center gap-2.5">
-          <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-card" aria-hidden="true"><KeyRound class="size-4" /></span>
-          <h1 class="text-3xl font-semibold tracking-tight max-md:text-2xl">Providers</h1>
-          <Badge variant="outline">Global</Badge>
-          {#if admin}<Badge variant="outline">Admin managed</Badge>{/if}
-        </div>
-        <p class="text-sm text-muted-foreground">Provider status for this host. Pig API keys are stored in <code class="font-mono">auth.json</code>; Claude Code keeps its login in the host <code class="font-mono">~/.claude</code>.</p>
-      </header>
+      <PageHeader title="Providers" icon={icons.provider} scope="Global" class="animate-rise">
+        {#snippet meta()}{#if admin}<Chip tone="outline" class="max-sm:hidden">Admin managed</Chip>{/if}{/snippet}
+        {#snippet hint()}Provider status for this host. Pig API keys are stored in <code class="font-mono">auth.json</code>; Claude Code keeps its login in the host <code class="font-mono">~/.claude</code>.{/snippet}
+      </PageHeader>
 
       {#if !admin}
         <div class="flex items-start gap-2 rounded-xl bg-muted p-3 text-sm text-muted-foreground" data-testid="providers-read-only">

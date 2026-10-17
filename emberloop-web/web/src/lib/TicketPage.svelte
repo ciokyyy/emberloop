@@ -5,8 +5,10 @@
      open read-only in a drawer with no composer. -->
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { ChevronLeft, Check, X } from '@lucide/svelte';
+  import { Check, X } from '@lucide/svelte';
   import Button from './ui/button.svelte';
+  import PageHeader from './ui/page-header.svelte';
+  import { icons } from './icons.js';
   import Badge from './ui/badge.svelte';
   import Transcript from './Transcript.svelte';
   import Composer from './Composer.svelte';
@@ -436,22 +438,27 @@
 
 <div class="min-h-0 flex-1 overflow-auto">
 <div class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6" data-testid="ticket-page">
-  <div class="flex items-center gap-3">
-    <Button variant="ghost" size="sm" onclick={goBack}><ChevronLeft />Run</Button>
-    <div class="min-w-0 flex-col leading-tight">
-      <h2 class="truncate text-lg font-semibold tracking-tight" data-testid="ticket-title">
-        {#if ticket}{ticket.num ? `#${ticket.num} ` : ''}{ticket.title || ticket.id}{:else}Ticket {ticketId}{/if}
-      </h2>
-      {#if ticket}
-        <p class="truncate text-xs text-muted-foreground">
-          {ticket.id}{ticket.branch ? ` · ${ticket.branch}` : ''}{ticket.tip ? ` · tip ${shortTip(ticket.tip)}` : ''}
-        </p>
-      {/if}
-    </div>
-    {#if ticket?.stateSince}
-      <span class="ml-auto shrink-0 text-xs text-muted-foreground" title={ticket.stateSince}>
-        {track.currentLabel} · {sinceLabel(ticket.stateSince)}
-      </span>
+  <div class="flex flex-col gap-1">
+    <PageHeader
+      title={ticket ? `${ticket.num ? `#${ticket.num} ` : ''}${ticket.title || ticket.id}` : `Ticket ${ticketId}`}
+      titleAttrs={{ 'data-testid': 'ticket-title' }}
+      icon={icons.ticket}
+      onBack={goBack}
+      backLabel="Run"
+      class="animate-rise"
+    >
+      {#snippet actions()}
+        {#if ticket?.stateSince}
+          <span class="shrink-0 text-caption text-fg-3 max-sm:hidden" title={ticket.stateSince}>
+            {track.currentLabel} · {sinceLabel(ticket.stateSince)}
+          </span>
+        {/if}
+      {/snippet}
+    </PageHeader>
+    {#if ticket}
+      <p class="truncate text-caption text-fg-3">
+        {ticket.id}{ticket.branch ? ` · ${ticket.branch}` : ''}{ticket.tip ? ` · tip ${shortTip(ticket.tip)}` : ''}
+      </p>
     {/if}
   </div>
 

@@ -66,8 +66,8 @@ describe('Settings routes and shell', () => {
         await vi.waitFor(() => expect(window.location.pathname).toBe(settingsPath(item.id)));
         expect(await screen.findByRole('heading', { level: 1, name: item.label })).toBeTruthy();
         expect(within(container).getByTestId('settings-scope').textContent).toBe(item.scope);
-        const back = within(container).getByTestId('settings-page').querySelector('button');
-        expect(back.className).toContain('min-h-11');
+        const back = within(container).getByTestId('settings-page').querySelector('[data-page-header] button[aria-label="Settings"]');
+        expect(back.className).toContain('max-md:size-11');
       }
     }
   });

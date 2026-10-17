@@ -7,11 +7,13 @@ import EmptyState from './empty-state.svelte';
 import ErrorState from './error-state.svelte';
 import IconButton from './icon-button.svelte';
 import InfoHint from './info-hint.svelte';
+import PageHeader from './page-header.svelte';
 import Row from './row.svelte';
 import Section from './section.svelte';
 import Skeleton from './skeleton.svelte';
 import StatCard from './stat-card.svelte';
 import { cn } from './cn.js';
+import { SHELL_KEY } from '../shell.js';
 import { icons, statusIcons, statusLabels, providerGlyph } from '../icons.js';
 import { areas } from '../areas.js';
 import { settingsIcons } from '../settingsIcons.js';
@@ -156,6 +158,48 @@ describe('Row', () => {
     const { container } = render(Row, { props: { title: 'Static', meta: 'meta' } });
     expect(container.querySelector('a, button')).toBeNull();
     expect(container.querySelectorAll('.truncate')).toHaveLength(2);
+  });
+});
+
+describe('Row structure', () => {
+  it('shows a status glyph with an sr-only word, an unread dot and the needs-you tint', () => {
+    render(Row, { props: { title: 'Waits', meta: 'Session · pig', onclick: () => {}, status: 'needs-you', unread: true, attention: true, current: true } });
+    const row = screen.getByRole('button', { name: /Needs you\. Waits/ });
+    expect(row.querySelector('[data-status="needs-you"]')).toBeTruthy();
+    expect(row.querySelector('[data-unread]')).toBeTruthy();
+    expect(row.getAttribute('aria-current')).toBe('true');
+    expect(row.className).toContain('border-status-needs-you/30');
+  });
+  it('drops the sr-only status word when the meta already names it', () => {
+    render(Row, { props: { title: 'Failed one', meta: 'Failed', onclick: () => {}, status: 'failed', statusWord: false } });
+    expect(screen.getByRole('button').textContent).not.toContain('Failed.');
+  });
+});
+
+describe('PageHeader', () => {
+  it('renders one h1 with a scope chip, hint and actions', async () => {
+    const { container } = render(PageHeader, {
+      props: { title: 'Runs', scope: 'All projects', hint: 'Why', actions: text('Act') },
+    });
+    expect(screen.getAllByRole('heading', { level: 1, name: 'Runs' })).toHaveLength(1);
+    expect(container.querySelector('[data-scope-chip]').textContent).toContain('All projects');
+    expect(screen.getByRole('button', { name: 'About runs' })).toBeTruthy();
+    expect(screen.getByText('Act')).toBeTruthy();
+  });
+  it('shows the phone menu from the shell context and swaps it for Back on drill-down pages', async () => {
+    let opened = 0;
+    const context = new Map([[SHELL_KEY, { openMenu: () => opened++, menuLabel: 'Sessions' }]]);
+    const first = render(PageHeader, { props: { title: 'Quota' }, context });
+    await fireEvent.click(screen.getByRole('button', { name: 'Sessions' }));
+    expect(opened).toBe(1);
+    first.unmount();
+    render(PageHeader, { props: { title: 'Agents', onBack: () => {}, backLabel: 'Settings', backOn: 'phone' }, context });
+    expect(screen.queryByRole('button', { name: 'Sessions' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Settings' }).className).toContain('max-md:size-11');
+  });
+  it('has no menu button without a shell', () => {
+    render(PageHeader, { props: { title: 'Alone' } });
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });
 

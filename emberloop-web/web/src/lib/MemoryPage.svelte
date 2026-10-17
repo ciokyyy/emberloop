@@ -9,7 +9,9 @@
      and the ledger. Loads once on mount and never polls; only the buttons
      fetch again. -->
 <script>
-  import { ArrowLeft, RefreshCw } from '@lucide/svelte';
+  import PageHeader from './ui/page-header.svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import { icons } from './icons.js';
   import Button from './ui/button.svelte';
   import Badge from './ui/badge.svelte';
   import Input from './ui/input.svelte';
@@ -269,13 +271,15 @@
 <div class="flex min-h-0 flex-1 flex-col" data-testid="memory-page">
   <div class="flex-1 overflow-auto px-4 pt-6 pb-16">
     <div class="mx-auto flex w-full max-w-3xl flex-col gap-6">
-      <div class="flex items-end gap-3">
-        <div class="flex flex-col gap-1">
-          <Button variant="ghost" size="sm" class="-ml-3 w-fit text-muted-foreground" onclick={onBack}><ArrowLeft />Back</Button>
-          <h1 class="text-3xl font-semibold tracking-tight">Memory</h1>
-          <p class="text-sm text-muted-foreground">Your standing instructions, approved notes and pending proposals. Only your bank shows here.</p>
-        </div>
-        <div class="ml-auto flex shrink-0 items-center gap-2">
+      <PageHeader
+        title="Memory"
+        icon={icons.memory}
+        hint="Your standing instructions, approved notes and pending proposals. Only your bank shows here."
+        onBack={onBack}
+        backOn="desktop"
+        class="animate-rise"
+      >
+        {#snippet actions()}
           {#if status}
             {#if available}
               <Badge data-testid="memory-status">Available</Badge>
@@ -287,9 +291,9 @@
           {:else}
             <Badge variant="destructive" data-testid="memory-status">Unavailable</Badge>
           {/if}
-          <Button variant="outline" size="sm" onclick={load} aria-label="Refresh memory"><RefreshCw /></Button>
-        </div>
-      </div>
+          <IconButton icon={icons.refresh} label="Refresh memory" variant="outline" size="icon-sm" onclick={load} />
+        {/snippet}
+      </PageHeader>
       <p class="text-xs text-muted-foreground" data-testid="memory-header-summary">
         {newSinceVisit} new since last visit · Queue {status?.queue?.pending ?? pendingCount} pending · Oldest pending {status?.queue?.oldestPendingAgeHours ? `${Number(status.queue.oldestPendingAgeHours).toFixed(1)} hours` : '—'}
       </p>

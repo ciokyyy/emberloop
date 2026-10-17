@@ -1,6 +1,6 @@
 <script>
   import { ArrowRight, ShieldCheck } from '@lucide/svelte';
-  import Badge from './ui/badge.svelte';
+  import PageHeader from './ui/page-header.svelte';
   import { SETTINGS_GROUPS, settingsPath } from './settings.js';
   import { settingsIcons } from './settingsIcons.js';
 
@@ -14,14 +14,10 @@
 
 <div class="min-h-0 flex-1 overflow-auto px-4 pt-6 pb-12" data-testid="settings-hub">
   <div class="mx-auto flex w-full max-w-3xl flex-col gap-8">
-    <header class="animate-rise flex flex-col gap-2">
-      <div class="flex flex-wrap items-center gap-2.5">
-        <span class="grid size-9 place-items-center rounded-xl bg-card"><ShieldCheck class="size-4" /></span>
-        <h1 class="text-3xl font-semibold tracking-tight max-md:text-2xl">Settings</h1>
-        <Badge variant="outline">Global</Badge>
-      </div>
-      <p class="text-sm text-muted-foreground">Workspace defaults and your personal preferences.</p>
-    </header>
+    <div class="flex flex-col gap-2">
+      <PageHeader title="Settings" icon={ShieldCheck} scope="Global" class="animate-rise" />
+      <p class="text-caption text-fg-3">Workspace defaults and your personal preferences.</p>
+    </div>
 
     {#each SETTINGS_GROUPS as group (group.title)}
       <section class="animate-rise flex flex-col gap-2">

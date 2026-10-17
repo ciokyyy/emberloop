@@ -7,6 +7,8 @@
   import { onMount, onDestroy } from 'svelte';
   import Button from './ui/button.svelte';
   import Badge from './ui/badge.svelte';
+  import PageHeader from './ui/page-header.svelte';
+  import { icons } from './icons.js';
   import RunsGraph from './RunsGraph.svelte';
   import { startRun, getRun, openRunStream, pauseRun, resumeRun, pauseTicket as pauseRunTicket, resumeTicket as resumeRunTicket, switchRun as switchRunBackend, switchTicket as switchTicketBackend, rebaseRun, abandonRun, setRunTicketType } from './api.js';
   import RunSwitchPicker from './RunSwitchPicker.svelte';
@@ -72,7 +74,7 @@
     return boxes.length ? `${boxes.filter((b) => b.checked).length}/${boxes.length}` : '—';
   };
 
-  let { workDir = '', onOpenSession = null, runId = '', ticketId = '', projectId = null, onNavigate = null, onOpenMenu = null } = $props();
+  let { workDir = '', onOpenSession = null, runId = '', ticketId = '', projectId = null, onNavigate = null, onOpenMenu = null, scopeLabel = '' } = $props();
 
   const scopedProject = $derived(projectId != null && projectId !== 'none');
 
@@ -384,7 +386,7 @@
   {:else}
   <div class="min-h-0 flex-1 overflow-auto">
   <div class="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-6 sm:px-6">
-  <h2 class="text-lg font-semibold tracking-tight">Runs</h2>
+  <PageHeader title="Runs" icon={icons.run} scope={scopeLabel} scopeIcon={icons.project} class="animate-rise" />
 
   {#if run?.id && run.tickets}
     <div class="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="run-header">
@@ -504,7 +506,7 @@
   {:else}
     <p class="rounded-xl border px-4 py-2 text-sm text-muted-foreground">Pick a spec from the sidebar to preview its tickets.</p>
     {#if onOpenMenu}
-      <button type="button" class="mt-3 rounded-full bg-secondary px-4 py-2 text-sm md:hidden" onclick={onOpenMenu}>Browse specs</button>
+      <button type="button" class="mt-3 min-h-11 rounded-full bg-secondary px-4 py-2 text-sm md:hidden" onclick={onOpenMenu}>Browse specs</button>
     {/if}
   {/if}
   {#if runError}

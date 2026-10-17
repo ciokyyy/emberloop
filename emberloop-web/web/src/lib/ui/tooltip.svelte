@@ -8,7 +8,7 @@
 </script>
 
 <Tooltip.Provider {delayDuration} disableHoverableContent>
-  <Tooltip.Root>
+  <Tooltip.Root ignoreNonKeyboardFocus>
     <Tooltip.Trigger>
       {#snippet child({ props })}
         {@render trigger?.(props)}

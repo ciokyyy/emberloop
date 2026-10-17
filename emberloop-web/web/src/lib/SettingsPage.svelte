@@ -1,12 +1,12 @@
 <!-- Settings page: harness, model and effort per role, grouped like Apple Settings. -->
 <script>
-  import { ArrowDown, ArrowLeft, ArrowUp, Check, ChevronDown, Trash2 } from '@lucide/svelte';
+  import { ArrowDown, ArrowUp, Check, ChevronDown, Trash2 } from '@lucide/svelte';
   import { onMount } from 'svelte';
   import { HARNESSES, modelsForHarness, modelItems } from './harnesses.js';
   import { getModels, getSettings, putSettings } from './api.js';
   import Switch from './ui/switch.svelte';
   import Button from './ui/button.svelte';
-  import Badge from './ui/badge.svelte';
+  import PageHeader from './ui/page-header.svelte';
   import FloatingInput from './ui/floating-input.svelte';
   import Combobox from './ui/combobox.svelte';
   import Notifications from './Notifications.svelte';
@@ -371,13 +371,8 @@
   <div class="flex-1 overflow-auto px-4 pt-6 pb-32">
     <div class="mx-auto flex w-full max-w-3xl flex-col gap-8">
       <div class="flex flex-col gap-2">
-        <Button variant="ghost" size="sm" class="-ml-2 min-h-11 w-fit text-muted-foreground md:hidden" onclick={onBack}><ArrowLeft />Settings</Button>
-        <div class="flex flex-wrap items-center gap-2.5">
-          <span class="grid size-9 shrink-0 place-items-center rounded-xl bg-card"><Icon class="size-4" /></span>
-          <h1 class="text-3xl font-semibold tracking-tight max-md:text-2xl">{page.label}</h1>
-          <Badge variant="outline" data-testid="settings-scope">{page.scope}</Badge>
-        </div>
-        {#if pageDescription}<p class="text-sm text-muted-foreground">{pageDescription}</p>{/if}
+        <PageHeader title={page.label} icon={Icon} scope={page.scope} scopeAttrs={{ 'data-testid': 'settings-scope' }} onBack={onBack} backLabel="Settings" backOn="phone" class="animate-rise" />
+        {#if pageDescription}<p class="text-caption text-fg-3">{pageDescription}</p>{/if}
       </div>
       {#if DATA_SECTIONS.includes(section) && error}
         <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</p>

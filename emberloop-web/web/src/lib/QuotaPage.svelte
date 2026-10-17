@@ -5,7 +5,7 @@
   import { buttonVariants } from './ui/button.svelte';
   import Chip from './ui/chip.svelte';
   import IconButton from './ui/icon-button.svelte';
-  import InfoHint from './ui/info-hint.svelte';
+  import PageHeader from './ui/page-header.svelte';
   import Section from './ui/section.svelte';
   import Skeleton from './ui/skeleton.svelte';
   import StatCard from './ui/stat-card.svelte';
@@ -114,23 +114,27 @@
 <div class="flex min-h-0 flex-1 flex-col" data-testid="quota-page">
   <div class="flex-1 overflow-auto px-4 pt-6 pb-[max(4rem,env(safe-area-inset-bottom))] md:px-6">
     <div class="mx-auto flex w-full max-w-4xl flex-col gap-6">
-      <header class="animate-rise flex items-center gap-3">
-        <span class="grid size-10 shrink-0 place-items-center rounded-xl bg-card text-fg-2 shadow-elev-1" aria-hidden="true"><icons.quota class="size-5" /></span>
-        <h1 class="shrink-0 text-headline">Quota</h1>
-        <Chip tone="outline" class="max-sm:hidden">Read-only</Chip>
-        <InfoHint label="About quota">Percent used per account window, and when it resets. Dollars and tokens are secondary. Updates live.</InfoHint>
-        <IconButton
-          icon={icons.refresh}
-          label="Refresh all"
-          variant="outline"
-          size="icon"
-          class="ml-auto"
-          spin={refreshingAll}
-          onclick={() => runRefresh('')}
-          disabled={refreshingAll || hasBusyCard()}
-          aria-busy={refreshingAll}
-        />
-      </header>
+      <PageHeader
+        title="Quota"
+        icon={icons.quota}
+        scope="Global"
+        hint="Percent used per account window, and when it resets. Dollars and tokens are secondary. Updates live."
+        class="animate-rise"
+      >
+        {#snippet meta()}<Chip tone="outline" class="max-sm:hidden">Read-only</Chip>{/snippet}
+        {#snippet actions()}
+          <IconButton
+            icon={icons.refresh}
+            label="Refresh all"
+            variant="outline"
+            size="icon"
+            spin={refreshingAll}
+            onclick={() => runRefresh('')}
+            disabled={refreshingAll || hasBusyCard()}
+            aria-busy={refreshingAll}
+          />
+        {/snippet}
+      </PageHeader>
 
       {#if error && providers.length}
         <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>

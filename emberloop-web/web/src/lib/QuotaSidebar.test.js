@@ -40,11 +40,11 @@ describe('QuotaSidebar', () => {
     const rows = within(nav).getAllByTestId('quota-status-row');
     expect(rows.map((row) => row.dataset.key)).toEqual(['claude', 'router', 'agy']);
     expect(within(rows[0]).getByTestId('quota-status-percent').textContent.trim()).toBe('36%');
-    expect(within(rows[0]).getByTestId('quota-status-dot').className).toContain('bg-green-500');
+    expect(rows[0].querySelector('[data-status="done"]')).not.toBeNull();
     expect(within(rows[1]).getByTestId('quota-status-percent').textContent.trim()).toBe('60%');
-    expect(within(rows[1]).getByTestId('quota-status-dot').className).toContain('bg-amber-500');
+    expect(rows[1].querySelector('[data-status="needs-you"]')).not.toBeNull();
     expect(within(rows[2]).getByTestId('quota-status-percent').textContent.trim()).toBe('—');
-    expect(within(rows[2]).getByTestId('quota-status-dot').className).toContain('bg-input');
+    expect(rows[2].querySelector('[data-status="idle"]')).not.toBeNull();
     expect(container.textContent).not.toContain('$99');
   });
 
@@ -58,7 +58,7 @@ describe('QuotaSidebar', () => {
     await waitFor(() => {
       expect(within(row).getByTestId('quota-status-percent').textContent.trim()).toBe('82%');
     });
-    expect(within(row).getByTestId('quota-status-dot').className).toContain('bg-red-500');
+    expect(row.querySelector('[data-status="failed"]')).not.toBeNull();
   });
   it('shows Providers in the same sidebar and marks its route active', async () => {
     const { store } = sourceWith([]);

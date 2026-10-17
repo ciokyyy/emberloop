@@ -40,26 +40,35 @@ describe('SessionList rows', () => {
     expect(queryByText('Fix rebase')).not.toBeNull();
   });
 
-  it('shows the failed status in text and a red dot, not the needs-you treatment', () => {
+  it('shows the failed status as a word and a failed glyph, not the needs-you treatment', () => {
     const { getByRole } = mount([loose]);
     const row = getByRole('button', { name: /Quota bug/ });
-    expect(row.textContent).toContain('failed');
-    expect(row.querySelector('span.bg-red-500')).not.toBeNull();
-    expect(row.className).not.toContain('border-amber-500/30');
+    expect(row.textContent).toContain('Failed');
+    expect(row.querySelector('[data-status="failed"]')).not.toBeNull();
+    expect(row.className).not.toContain('border-status-needs-you/30');
   });
 
   it('shows the capped state on a limit-failed Session row', () => {
     const { getByRole } = mount([{ ...loose, capped: true }]);
     const row = getByRole('button', { name: /Quota bug/ });
-    expect(row.textContent).toContain('capped');
-    expect(row.textContent).not.toContain('failed');
-    expect(row.querySelector('span.bg-amber-500')).not.toBeNull();
-    expect(row.className).not.toContain('border-amber-500/30');
+    expect(row.textContent).toContain('Capped');
+    expect(row.textContent).not.toContain('Failed');
+    expect(row.querySelector('[data-status="paused"]')).not.toBeNull();
+    expect(row.className).not.toContain('border-status-needs-you/30');
   });
 
   it('gives a needs-you row the amber treatment', () => {
     const { getByRole } = mount([{ ...loose, status: 'idle', needsYou: true }]);
-    expect(getByRole('button', { name: /Quota bug/ }).className).toContain('border-amber-500/30');
+    const row = getByRole('button', { name: /Quota bug/ });
+    expect(row.className).toContain('border-status-needs-you/30');
+    expect(row.querySelector('[data-status="needs-you"]')).not.toBeNull();
+    expect(row.textContent).toContain('Needs you');
+  });
+
+  it('shows a quiet unread dot only on rows flagged unread', () => {
+    const { getByRole } = mount([{ ...loose, unread: true }, { id: 'a2', harness: 'pig', status: 'idle', title: 'Read one' }]);
+    expect(getByRole('button', { name: /Quota bug/ }).querySelector('[data-unread]')).not.toBeNull();
+    expect(getByRole('button', { name: /Read one/ }).querySelector('[data-unread]')).toBeNull();
   });
 
   it('marks a scout row with the scout badge', () => {
