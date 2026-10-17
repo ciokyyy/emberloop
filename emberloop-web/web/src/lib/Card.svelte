@@ -348,9 +348,9 @@
 {:else if block.card === 'report'}
   {@const ReportIcon = icons.report}
   {@const DismissIcon = icons.dismiss}
-  <div role="group" aria-label="Subagent report" class="group relative" onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
+  <div role="group" aria-label="Subagent report" class="group relative" data-card-wrapper="report" onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
     <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="report" data-report-seq={block.report?.seq} open={!block.collapsed}>
-      <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
+      <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 pr-24 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
         <ReportIcon class="size-4 shrink-0 text-muted-foreground" />
         {#if block.report}
           <span class="shrink-0 font-medium">Subagents {block.report.groupName} finished</span>
@@ -359,11 +359,6 @@
           <span class="font-medium">{block.title}</span>
         {/if}
         <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{firstReply}</span>
-        {#if block.report}
-          <Button variant="ghost" size="sm" class="h-8 shrink-0 px-2" aria-label="Dismiss report" onclick={(event) => { event.preventDefault(); event.stopPropagation(); onDismissReport(block.report.seq); }}>
-            <DismissIcon class="size-3.5" /> Dismiss
-          </Button>
-        {/if}
         <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
       </summary>
       <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
@@ -378,6 +373,11 @@
       </div>
     </details>
     <MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} />
+    {#if block.report}
+      <Button variant="ghost" size="sm" class="absolute top-1.5 right-2 z-10 h-8 px-2" aria-label="Dismiss report" onclick={() => onDismissReport(block.report.seq)}>
+        <DismissIcon class="size-3.5" /> Dismiss
+      </Button>
+    {/if}
   </div>
 {:else if block.card === 'thinking'}
   <details class="group animate-rise rounded-2xl border bg-card text-card-foreground {thinkingLive ? 'think-live' : ''}" data-card="thinking" data-live={thinkingLive ? 'true' : undefined} open={!block.collapsed}>

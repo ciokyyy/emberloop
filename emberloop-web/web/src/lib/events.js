@@ -56,9 +56,12 @@ export function parseReport(text = '') {
   const scouts = members.length - workers;
   const failed = members.filter((member) => /\[(?:failed|stopped without submitting)\]/.test(member.reply)).length;
   const total = members.length;
+  // The Daemon provides an opaque group id, not a display name. Keep that
+  // explicit in the label instead of presenting the id as a human name.
+  const groupName = `Unnamed group · ${m[1].slice(0, 8)}`;
   return {
     groupId: m[1],
-    groupName: m[1],
+    groupName,
     title: total === 1 ? 'Subagent report' : `${total} subagent reports`,
     body: m[2].trim(),
     members,

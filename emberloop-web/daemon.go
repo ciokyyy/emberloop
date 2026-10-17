@@ -1011,7 +1011,7 @@ func (d *Daemon) appendEventExtraLocked(id, kind, text, status, mode string, ima
 					break
 				}
 			}
-			if groupedReport {
+			if groupedReport && status != "failed" {
 				d.pushSubagentsFinished(s.meta, e.Seq)
 			} else {
 				d.pushTurnDone(s.meta, status, e.Seq)

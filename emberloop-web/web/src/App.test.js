@@ -3,6 +3,7 @@ import { render, within, screen, fireEvent, cleanup } from '@testing-library/sve
 import App from './App.svelte';
 import { resetDiscovery } from './lib/runsDiscovery.svelte.js';
 import { stopLive } from './lib/live.js';
+import { readReportState } from './lib/reportState.js';
 
 // jsdom has no ResizeObserver; App measures the floating composer with one.
 beforeEach(() => {
@@ -487,6 +488,35 @@ describe('Non-blocking boot', () => {
     await vi.waitFor(() => expect(within(container).getByTestId('header-title').textContent).toContain('Loaded Session'));
     await vi.waitFor(() => expect(within(container).queryByTestId('sessions-loading')).toBeNull());
     expect(within(container).queryByTestId('session-missing')).toBeNull();
+  });
+
+  it('marks a live report read when it arrives in the open Session', async () => {
+    history.replaceState(null, '', '/s/s1');
+    localStorage.clear();
+    const session = { id: 's1', harness: 'fake', model: 'fake-model', title: 'Session A', projectId: 'p1', owner: 'u1', status: 'idle' };
+    const project = { id: 'p1', name: 'Demo', path: '/repo' };
+    const EventSource = fakeEvents();
+    vi.stubGlobal('EventSource', EventSource);
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = String(url);
+      if (path === '/api/sessions') return response([session]);
+      if (path === '/api/projects') return response([project]);
+      if (path.startsWith('/api/sessions/s1?')) return response({ session, events: [], reports: [], resumable: true, hasMore: false, firstSeq: 0 });
+      if (path === '/api/sessions/s1/queue') return response({ queue: [] });
+      if (path.endsWith('/api/runs')) return response({ runs: [] });
+      if (path.endsWith('/api/specs')) return response({ specs: [] });
+      return response([]);
+    }));
+
+    const { container } = render(App, { props: { user: { id: 'u1', username: 'Alice' } } });
+    await within(container).findByRole('button', { name: /Session A/ });
+    const stream = EventSource.instances.find((item) => item.url.includes('/api/sessions/s1/events'));
+    expect(stream).toBeTruthy();
+    stream.onmessage({ data: JSON.stringify({ seq: 1, kind: 'prompt', mode: 'steer', text: 'Subagents group-1 finished:\n- child-1 (worker): completed' }) });
+
+    await vi.waitFor(() => expect(readReportState('u1', 's1').readSeq).toBe(1));
+    expect(readReportState('u1', 's1').reports).toHaveLength(1);
+    expect(container.querySelector('[data-testid="report-unread"]')).toBeNull();
   });
 
 

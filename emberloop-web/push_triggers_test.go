@@ -505,6 +505,42 @@ func TestPushGroupCompletionUsesOneParentNotice(t *testing.T) {
 	}
 }
 
+func TestPushGroupedReportPreservesParentFailure(t *testing.T) {
+	t.Parallel()
+	fake := NewFakeBackend()
+	d := NewDaemon(tempDir(t), fake)
+	srv := httptest.NewServer(authedHandler(t, d))
+	defer srv.Close()
+	parent := createSession(t, srv.URL, "fake", "fake-model", tempDir(t))
+	fake.TurnFailure = func(sessionID, prompt string) (string, bool) {
+		return "parent failed", sessionID == parent && strings.HasPrefix(prompt, "Subagents ")
+	}
+	cap, decrypt := capturePush(t, d)
+
+	code, out := postSpawn(t, srv.URL, parent, map[string]any{
+		"agents": []map[string]any{{"prompt": "job A"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("spawn status = %d (%v)", code, out)
+	}
+	raw, _ := json.Marshal(out["sessions"])
+	var kids []SessionMeta
+	_ = json.Unmarshal(raw, &kids)
+	if len(kids) != 1 {
+		t.Fatalf("spawn sessions = %v, want 1", out["sessions"])
+	}
+	waitStatus(t, srv.URL, kids[0].ID, "idle", 10*time.Second)
+	waitStatus(t, srv.URL, parent, "failed", 10*time.Second)
+
+	m := decodePushMessage(t, decrypt, waitPush(t, cap, 1)[0])
+	if m.SessionID != parent || m.Body != "Turn failed." || m.Cue != "error" || !strings.HasPrefix(m.Key, "turn:"+parent+":") {
+		t.Fatalf("push = %+v, want failed parent turn notification", m)
+	}
+	if n := len(cap.all()); n != 1 {
+		t.Fatalf("pushes = %d, want exactly one failed-turn notification", n)
+	}
+}
+
 // Each-mode deliveries are individual child messages, not a group-completion
 // notice. The parent's ordinary turn-complete push remains unchanged.
 func TestPushEachModeDoesNotSendGroupCompletionBody(t *testing.T) {

@@ -48,13 +48,13 @@ describe('cardForEvent maps every Event kind to a card', () => {
     const text = 'Subagents group-7 finished:\n- abc (worker): fixed the bug\n- def (scout): checked callers [failed]';
     expect(parseReport(text)).toMatchObject({
       groupId: 'group-7',
-      groupName: 'group-7',
+      groupName: 'Unnamed group · group-7',
       counts: { total: 2, workers: 1, scouts: 1, failed: 1 },
     });
     const c = cardForEvent({ ...ev(8, 'prompt', text, '', 'steer'), sender: 'system', user: 'u1' });
     expect(c.card).toBe('report');
     expect(c.report.seq).toBe(8);
-    expect(c.report.groupName).toBe('group-7');
+    expect(c.report.groupName).toBe('Unnamed group · group-7');
     expect(c.report.counts.total).toBe(2);
     expect(c).not.toHaveProperty('sender');
     expect(c).not.toHaveProperty('senderId');

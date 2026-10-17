@@ -465,7 +465,6 @@
 <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div bind:this={scrollEl} data-testid="transcript-scroll" role="region" aria-label="Transcript" tabindex="0" onscroll={onScroll} onwheel={onWheel} ontouchstart={onTouchStart} ontouchmove={onTouchMove} onkeydown={onKey} class="transcript-scroll flex flex-1 scroll-auto flex-col overflow-auto px-3 pt-4 sm:px-4" style="padding-bottom: {bottomPad}px">
-
   {#if reports.length}
     <div class="sticky top-0 z-20 self-end w-full max-w-sm">
       <ReportsTray {reports} dismissed={dismissedReports} onRestore={onRestoreReport} />
