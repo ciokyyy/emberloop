@@ -243,7 +243,7 @@
     transition-duration: var(--dur-standard);
     transition-timing-function: var(--ease-smooth);
   }
-  /* Animate <details> open and close: height from 0 to auto. */
+  /* Animate disclosure height; browser anchoring preserves the reader's position. */
   :root {
     interpolate-size: allow-keywords;
   }

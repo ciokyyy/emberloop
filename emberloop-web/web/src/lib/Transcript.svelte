@@ -201,7 +201,7 @@
   const virtualRows = $derived.by(() => {
     try {
       const rows = $virtualizer.getVirtualItems();
-      if (rows.length > 0) return { virtual: true, rows: rows.map((r) => ({ index: r.index, start: r.start, key: r.key })) };
+      if (rows.length > 0) return { virtual: true, rows: rows.map((r) => ({ index: r.index, start: r.start, end: r.end, key: r.key })) };
     } catch {
       // Fall through to the plain list below.
     }
@@ -345,32 +345,19 @@
     untrack(() => glideToBottom());
   });
 
-  // The live tool stage can keep growing after its Event is rendered. Observe
-  // only that final stage: disclosures elsewhere rely on browser anchoring and
-  // must not trigger another follow-to-bottom pass.
+  // Observe the transcript's full content for layout changes while pinned:
+  // tool output, card disclosures and the bottom-pad resize all keep the last
+  // row in view. Once unpinned, native scroll anchoring owns height changes.
   $effect(() => {
     const content = contentEl;
     const el = scrollEl;
-    const lastIndex = blocks.length - 1;
-    const last = blocks[lastIndex];
-    const lastRun = last?.runs?.[last.runs.length - 1];
-    last?.body;
-    last?.events?.length;
-    lastRun?.output;
-    lastRun?.status;
-    virtualRows.rows;
-    const pinned = stuck;
-    if (!content || !el || !pinned || lastIndex < 0 || last?.card !== 'toolstrip' || typeof ResizeObserver === 'undefined') return;
-    const key = String(last.key ?? lastIndex);
-    const row = Array.from(content.querySelectorAll('[data-block-key]')).find((candidate) => candidate.getAttribute('data-block-key') === key);
-    const stage = row?.querySelector('[data-testid="toolstrip-stage"]');
-    if (!stage) return;
+    if (!content || !el || typeof ResizeObserver === 'undefined') return;
     const ro = new ResizeObserver(() => {
       lastHeight = el.scrollHeight;
       nearBottom = isNearBottom(el);
       if (stuck) glideToBottom();
     });
-    ro.observe(stage);
+    ro.observe(content);
     return () => ro.disconnect();
   });
 
@@ -392,7 +379,6 @@
       if (el) el.style.overflowAnchor = previousOverflowAnchor;
     }
   }
-
 
   // Auto-load on scroll up; the button covers observers-less browsers and tests.
   $effect(() => {
@@ -472,17 +458,25 @@
       </div>
     {/if}
     {#if useVirtual}
-      <div style="position: relative; height: {totalSize}px; width: 100%;">
-        {#each virtualRows.rows as row (row.key)}
+      <div data-testid="transcript-virtual-list" class="flex w-full flex-col">
+        <div aria-hidden="true" class="shrink-0" style="height: {virtualRows.rows[0]?.start ?? 0}px;"></div>
+        {#each virtualRows.rows as row, rowIndex (row.key)}
+          {@const previous = virtualRows.rows[rowIndex - 1]}
           {@const b = blocks[row.index]}
+          {#if previous}
+            <div aria-hidden="true" class="shrink-0" style="height: {Math.max(0, row.start - previous.end)}px;"></div>
+          {/if}
           {#if b}
-            <div data-index={row.index} data-block-key={b.key} use:measure class="absolute top-0 left-0 w-full" style="transform: translateY({row.start}px); content-visibility: auto; contain-intrinsic-size: auto 320px;">
+            <div data-index={row.index} data-block-key={b.key} use:measure class="w-full shrink-0">
               <div class="pb-4">
                 <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
               </div>
             </div>
           {/if}
         {/each}
+        {#if virtualRows.rows.length > 0}
+          <div aria-hidden="true" class="shrink-0" style="height: {Math.max(0, totalSize - virtualRows.rows[virtualRows.rows.length - 1].end)}px;"></div>
+        {/if}
       </div>
     {:else}
       {#each blocks as b (b.key)}

@@ -34,18 +34,22 @@ afterEach(() => {
 function fakeFrames() {
   let id = 0;
   let now = 0;
+  let cancelCount = 0;
   const frames = new Map();
   const request = (callback) => {
     const frame = ++id;
     frames.set(frame, callback);
     return frame;
   };
-  const cancel = (frame) => frames.delete(frame);
+  const cancel = (frame) => {
+    if (frames.delete(frame)) cancelCount++;
+  };
   vi.stubGlobal('requestAnimationFrame', request);
   vi.stubGlobal('cancelAnimationFrame', cancel);
   window.requestAnimationFrame = request;
   window.cancelAnimationFrame = cancel;
   return {
+    cancelCount: () => cancelCount,
     flush() {
       for (let pass = 0; frames.size && pass < 50; pass++) {
         const pending = [...frames.values()];
@@ -75,7 +79,6 @@ function observeResizes() {
 
 function message(body = 'hello') {
   return { key: 1, card: 'assistant', title: 'Assistant', body, events: [] };
-
 }
 function toolStrip(output = 'line one') {
   return {
@@ -104,7 +107,7 @@ function mountTranscript({ blocks = [message()], hasMore = false, onLoadEarlier 
 }
 
 describe('Transcript scroll follow', () => {
-  it('leaves the reader at their wheel position when the last block grows during a pending follow frame', async () => {
+  it('cancels the pending follow frame before applying the reader wheel delta', async () => {
     const frames = fakeFrames();
     const { container, rerender, scroll, metrics } = mountTranscript();
     frames.flush();
@@ -112,9 +115,13 @@ describe('Transcript scroll follow', () => {
 
     metrics.scrollHeight += 200;
     await rerender({ blocks: [message('A streamed chunk that makes the last block taller.')] });
+    const cancelsBeforeInput = frames.cancelCount();
     await fireEvent.wheel(scroll, { deltaY: -90 });
+    expect(frames.cancelCount()).toBe(cancelsBeforeInput + 1);
+
+    // The browser applies the wheel delta after dispatching the input event.
+    // Do not send scroll yet: the cancelled follow frame must not overwrite it.
     scroll.scrollTop = before - 90;
-    await fireEvent.scroll(scroll);
     frames.flush();
 
     expect(scroll.scrollTop).toBe(before - 90);
