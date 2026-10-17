@@ -3,6 +3,7 @@
 "Calm density": dark only, quiet surfaces, confident numbers, status colour with a word. Tokens live in `src/app.css`; primitives live in `src/lib/ui/`; the icon map is `src/lib/icons.js`. Extend these. Never hardcode a colour, size, shadow or duration, and never pick an icon for a domain concept by hand.
 
 The reference page is Quota (`src/lib/QuotaPage.svelte`): read it for every primitive in use at 390 px and 1280 px.
+Quota provider cards sit in a container-query grid (single column below `@2xl`) and flow up to three usage windows across (`sm:grid-cols-3`) so row-mate cards stay even. `e2e/tests/quota-layout.e2e.ts` probes 390, 800 and 1280 px; 800 px is extra coverage for the rail plus sidebar layout.
 
 ## Tokens
 

@@ -38,7 +38,7 @@ for (const size of SIZES) {
 
     if (size.width < 768) {
       const small = await browser.evaluate(() => {
-        const controls = [...document.querySelectorAll('[data-testid="quota-page"] button, [data-testid="quota-page"] a[href^="/providers#"]')];
+        const controls = [...document.querySelectorAll('[data-testid="quota-page"] button, [data-testid="quota-page"] a[href^="/providers"]')];
         return controls.map((el) => Math.round((el as HTMLElement).getBoundingClientRect().height)).filter((h) => h < 44);
       });
       expect(small).toEqual([]);
