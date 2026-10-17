@@ -85,7 +85,7 @@
   onDestroy(stopRuns);
   const needsYouRuns = $derived(scopedRuns.filter((run) => run.counts?.needsYou > 0));
   const needsYouCount = $derived(scopedRuns.reduce((count, run) => count + (run.counts?.needsYou ?? 0), 0));
-  const RUN_STATUS = { running: 'working', done: 'done', failed: 'failed', paused: 'paused' };
+  const RUN_STATUS = { running: 'working', 'needs-you': 'needs-you', done: 'done', failed: 'failed', paused: 'paused', abandoned: 'paused' };
   const runPath = (id) => buildPath(projectId == null ? { name: 'run', runId: id } : { name: 'project-run', projectId, runId: id });
   const runsPath = () => buildPath(projectId == null ? { name: 'runs' } : { name: 'project-runs', projectId });
   const specLabel = (run) => String(run.spec ?? run.id).split('/').filter(Boolean).at(-2) || run.id;
@@ -157,6 +157,7 @@
             title={specLabel(r)}
             meta="{merged(r)}/{total(r)} merged"
             status={RUN_STATUS[r.status] ?? 'working'}
+            attention={r.status === 'needs-you'}
             current={r.id === runId}
             onclick={() => onNavigate(runPath(r.id))}
           />
