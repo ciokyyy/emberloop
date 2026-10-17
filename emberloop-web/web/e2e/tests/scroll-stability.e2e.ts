@@ -72,7 +72,7 @@ test('phone transcript anchors a visible virtualized row as a disclosure above i
     const virtualized = !!content.querySelector('[data-testid="transcript-virtual-list"]')?.contains(reportRow) && reportRow.hasAttribute('data-index') && reportRow.hasAttribute('data-block-key');
     for (let attempt = 0; attempt < 5; attempt++) {
       const port = scroller.getBoundingClientRect();
-      const delta = anchor.getBoundingClientRect().top - (port.top + 12);
+      const delta = anchor.getBoundingClientRect().top - (port.top + 200);
       if (Math.abs(delta) < 1) break;
       scroller.scrollTop += delta;
       await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -115,20 +115,27 @@ test('phone transcript anchors a visible virtualized row as a disclosure above i
     const anchorVisible = beforeRect.top >= port.top && beforeRect.top < port.bottom;
     const before = anchor.getBoundingClientRect().top;
     const closedHeight = disclosure.getBoundingClientRect().height;
-
     disclosure.open = true;
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const midOpenHeight = disclosure.getBoundingClientRect().height;
+    await new Promise((resolve) => setTimeout(resolve, 300));
     const openedHeight = disclosure.getBoundingClientRect().height;
     const opened = anchor.getBoundingClientRect().top;
     disclosure.open = false;
-    await new Promise((resolve) => setTimeout(resolve, 500));
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const midCloseHeight = disclosure.getBoundingClientRect().height;
+    await new Promise((resolve) => setTimeout(resolve, 400));
     const closed = anchor.getBoundingClientRect().top;
-    return { disclosureAbove, anchorVisible, closedHeight, openedHeight, before, opened, closed };
+    return { disclosureAbove, anchorVisible, closedHeight, midOpenHeight, openedHeight, midCloseHeight, before, opened, closed };
   });
   expect(placement.virtualized).toBe(true);
   expect(anchored.disclosureAbove).toBe(true);
   expect(anchored.anchorVisible).toBe(true);
   expect(anchored.openedHeight - anchored.closedHeight).toBeGreaterThan(50);
+  expect(anchored.midOpenHeight).toBeGreaterThan(anchored.closedHeight + 1);
+  expect(anchored.midOpenHeight).toBeLessThan(anchored.openedHeight - 1);
+  expect(anchored.midCloseHeight).toBeGreaterThan(anchored.closedHeight + 1);
+  expect(anchored.midCloseHeight).toBeLessThan(anchored.openedHeight - 1);
   if (Math.abs(anchored.opened - anchored.before) > 1 || Math.abs(anchored.closed - anchored.before) > 1) {
     throw new Error(`Disclosure shifted the visible virtual row: ${JSON.stringify(anchored)}`);
   }

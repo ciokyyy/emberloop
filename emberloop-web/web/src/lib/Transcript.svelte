@@ -158,7 +158,11 @@
     const key = inst.options.getItemKey(index);
     const prev = measuredAt.get(key);
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
-    if (prev && now - prev.t < MEASURE_MS && Math.abs(size - prev.size) < MEASURE_PX) return prev.size;
+    const disclosure = el.querySelector('details');
+    const liveThinking = disclosure?.matches('[data-card="thinking"][data-live="true"]') ?? false;
+    // Measure disclosure transitions each frame for native anchoring; keep
+    // live thought streaming throttled.
+    if (prev && now - prev.t < MEASURE_MS && Math.abs(size - prev.size) < MEASURE_PX && (!disclosure || liveThinking)) return prev.size;
     measuredAt.set(key, { size, t: now });
     if (measuredAt.size > 500) measuredAt.delete(measuredAt.keys().next().value);
     return size;
@@ -345,19 +349,32 @@
     untrack(() => glideToBottom());
   });
 
-  // Observe the transcript's full content for layout changes while pinned:
-  // tool output, card disclosures and the bottom-pad resize all keep the last
-  // row in view. Once unpinned, native scroll anchoring owns height changes.
+  // The live tool stage can keep growing after its Event is rendered. Observe
+  // only that final stage: disclosures elsewhere rely on browser anchoring and
+  // must not trigger another follow-to-bottom pass.
   $effect(() => {
     const content = contentEl;
     const el = scrollEl;
-    if (!content || !el || typeof ResizeObserver === 'undefined') return;
+    const lastIndex = blocks.length - 1;
+    const last = blocks[lastIndex];
+    const lastRun = last?.runs?.[last.runs.length - 1];
+    last?.body;
+    last?.events?.length;
+    lastRun?.output;
+    lastRun?.status;
+    virtualRows.rows;
+    const pinned = stuck;
+    if (!content || !el || !pinned || lastIndex < 0 || last?.card !== 'toolstrip' || typeof ResizeObserver === 'undefined') return;
+    const key = String(last.key ?? lastIndex);
+    const row = Array.from(content.querySelectorAll('[data-block-key]')).find((candidate) => candidate.getAttribute('data-block-key') === key);
+    const stage = row?.querySelector('[data-testid="toolstrip-stage"]');
+    if (!stage) return;
     const ro = new ResizeObserver(() => {
       lastHeight = el.scrollHeight;
       nearBottom = isNearBottom(el);
       if (stuck) glideToBottom();
     });
-    ro.observe(content);
+    ro.observe(stage);
     return () => ro.disconnect();
   });
 
