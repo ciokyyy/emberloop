@@ -16,12 +16,12 @@
   import { people, personFor } from './people.svelte.js';
   import { ownerTone } from './owners.js';
   import { appendText } from './appendText.js';
-  let { block, sessionId = null, sessions = [], onOpenSession = () => {}, queuedItem = null, onQueueChange = () => {} } = $props();
+  let { block, sessionId = null, sessions = [], onOpenSession = () => {}, queuedItem = null, cancelled = false, onQueueChange = () => {} } = $props();
   let actionsOpen = $state(false);
   let longPressTimer = 0;
   let longPressY = 0;
   let longPressTriggered = false;
-  const ownUserMessage = $derived(block.card === 'user' && block.sender === 'user' && !!block.senderId && block.senderId === getCurrentUserId());
+  const ownUserMessage = $derived(!cancelled && !block.pending && block.card === 'user' && block.sender === 'user' && !!block.senderId && block.senderId === getCurrentUserId());
   const messageText = $derived(String(queuedItem?.text ?? block.body ?? ''));
   const messageImageIds = $derived(queuedItem?.imageIds ?? block.imageIds ?? []);
   function clearActionLongPress() {
@@ -134,7 +134,7 @@
 </script>
 
 {#if block.card === 'user'}
-<div role="group" aria-label={queuedItem ? `Queued ${block.title}` : `${block.title || 'User'} message`} class="group flex flex-col items-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-state={queuedItem ? 'queued' : block.pending ? 'pending' : block.sender === 'user' ? 'delivered' : undefined} data-swap={block.noAnim ? 'true' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
+<div role="group" aria-label={queuedItem ? `Queued ${block.title}` : cancelled ? `Canceled ${block.title || 'User'} message` : `${block.title || 'User'} message`} class="group flex flex-col items-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-state={queuedItem ? 'queued' : cancelled ? 'canceled' : block.pending ? 'pending' : block.sender === 'user' ? 'delivered' : undefined} data-swap={block.noAnim ? 'true' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
   {#if block.sender === 'user' && block.senderId}
     {@const who = personFor(block.senderId)}
     <Badge variant="outline" class="mb-1 py-0 pr-2.5 pl-1" data-testid="sender-badge">
@@ -145,6 +145,9 @@
     <div class="max-w-[80%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground {block.pending === 'sending' ? 'opacity-60' : ''}">
       {#if block.title && block.title !== 'You'}
         <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide opacity-80">{block.title}</div>
+      {/if}
+      {#if cancelled}
+        <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground" data-testid="canceled-message">Canceled</div>
       {/if}
       {#if !voiceIds.length}{messageText}{/if}
       {#each voiceIds as vid (vid)}

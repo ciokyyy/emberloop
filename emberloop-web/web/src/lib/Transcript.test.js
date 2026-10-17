@@ -69,7 +69,10 @@ describe('Transcript message action rows', () => {
 
     await fireEvent.click(within(nativeCard).getByRole('button', { name: /Message actions/ }));
     await fireEvent.click(within(nativeCard).getByRole('button', { name: 'Cancel' }));
-    await vi.waitFor(() => expect(nativeCard.querySelector('[data-card="user"]')?.getAttribute('data-state')).toBe('delivered'));
+    await vi.waitFor(() => expect(nativeCard.querySelector('[data-card="user"]')?.getAttribute('data-state')).toBe('canceled'));
+    expect(within(nativeCard).getByTestId('canceled-message').textContent).toBe('Canceled');
+    await fireEvent.click(within(nativeCard).getByRole('button', { name: /Message actions/ }));
+    expect(within(nativeCard).queryByRole('button', { name: 'Edit and resend' })).toBeNull();
     expect(queueState.items.map((item) => item.id)).toEqual(['pending-1']);
   });
 

@@ -27,6 +27,7 @@
   } = $props();
   let queueItems = $state([]);
   let queueAssignments = $state({});
+  let canceledBlockKeys = $state([]);
   let queueRequest = 0;
   let queueSession = '';
   const queueLabel = (mode) => mode === 'steer' ? 'Steer' : mode === 'followup' ? 'Follow-up' : 'Prompt';
@@ -62,6 +63,8 @@
       if (block) queueAssignments = { ...queueAssignments, [change.id]: block.key };
       queueItems = queueItems.map((item) => item.id === change.id ? { ...item, text: change.text } : item);
     } else if (change.type === 'remove') {
+      const block = queueView.byId.get(change.id);
+      if (block) canceledBlockKeys = [...new Set([...canceledBlockKeys, block.key])];
       queueItems = queueItems.filter((item) => item.id !== change.id);
       const next = { ...queueAssignments };
       delete next[change.id];
@@ -79,7 +82,7 @@
       const assignedKey = queueAssignments[item.id];
       if (assignedKey == null) continue;
       const block = blocks.find((candidate) => String(candidate.key) === String(assignedKey));
-      if (!block || block.card !== 'user' || block.sender !== 'user') continue;
+      if (!block || canceledBlockKeys.includes(block.key) || block.card !== 'user' || block.sender !== 'user') continue;
       byKey.set(block.key, item);
       byId.set(item.id, block);
       const index = remaining.findIndex((candidate) => candidate.id === item.id);
@@ -87,7 +90,7 @@
     }
     for (let i = blocks.length - 1; i >= 0; i--) {
       const block = blocks[i];
-      if (block.card !== 'user' || block.sender !== 'user' || byKey.has(block.key)) continue;
+      if (block.card !== 'user' || block.sender !== 'user' || byKey.has(block.key) || canceledBlockKeys.includes(block.key)) continue;
       let index = -1;
       for (let j = remaining.length - 1; j >= 0; j--) {
         if (matchesQueueBlock(block, remaining[j])) { index = j; break; }
@@ -114,6 +117,7 @@
     if (id !== queueSession) {
       queueSession = id;
       queueItems = [];
+      canceledBlockKeys = [];
       queueAssignments = {};
     }
     if (!id) return;
@@ -435,7 +439,7 @@
           {#if b}
             <div data-index={row.index} data-block-key={b.key} use:measure class="absolute top-0 left-0 w-full" style="transform: translateY({row.start}px); content-visibility: auto; contain-intrinsic-size: auto 320px;">
               <div class="pb-4">
-                <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} onQueueChange={queueChanged} />
+                <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
               </div>
             </div>
           {/if}
@@ -444,7 +448,7 @@
     {:else}
       {#each blocks as b (b.key)}
         <div data-block-key={b.key} style="content-visibility: auto; contain-intrinsic-size: auto 320px;">
-          <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} onQueueChange={queueChanged} />
+          <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
         </div>
       {:else}
         <p class="py-24 text-center text-2xl font-semibold tracking-tight text-muted-foreground">{emptyHint}</p>

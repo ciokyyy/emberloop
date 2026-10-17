@@ -318,6 +318,12 @@ describe('per-message actions', () => {
   });
 
 
+  it.each(['sending', 'sent'])('does not offer Edit and resend while a User message is %s', async (pending) => {
+    const { container } = render(Card, { props: { block: userMessage({ pending }), sessionId: 's1' } });
+    await openActions(container);
+    expect(within(container).queryByRole('button', { name: 'Edit and resend' })).toBeNull();
+  });
+
   it('loads only the signed-in User message into the composer as a new prompt', async () => {
     const { COMPOSER_EDIT_EVENT } = await import('./composer.js');
     const onEdit = vi.fn();
