@@ -28,21 +28,31 @@ test('phone transcript keeps its viewport anchored through disclosure height cha
     earlier.style.height = '1000px';
     const disclosure = document.createElement('details');
     disclosure.innerHTML = '<summary>Disclosure fixture</summary><div style="height: 180px">Details</div>';
+    const spacer = document.createElement('div');
+    spacer.style.height = '200px';
     const visible = document.createElement('div');
     visible.textContent = 'Visible reading position';
     visible.style.height = '1000px';
-    content.replaceChildren(earlier, disclosure, visible);
-    scroller.scrollTop = 1400;
+    content.replaceChildren(earlier, disclosure, spacer, visible);
+
+    // Put the disclosure fully above the scrollport and a visible block below
+    // it. Resizing the disclosure must preserve that block's viewport position.
+    const rootTop = scroller.getBoundingClientRect().top;
+    scroller.scrollTop += disclosure.getBoundingClientRect().bottom - (rootTop - 20);
     await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    const disclosureAbove = disclosure.getBoundingClientRect().bottom <= scroller.getBoundingClientRect().top;
     const before = visible.getBoundingClientRect().top;
+    const visibleInPort = before >= scroller.getBoundingClientRect().top && before < scroller.getBoundingClientRect().bottom;
     disclosure.open = true;
     await new Promise((resolve) => setTimeout(resolve, 400));
     const opened = visible.getBoundingClientRect().top;
     disclosure.open = false;
     await new Promise((resolve) => setTimeout(resolve, 400));
     const closed = visible.getBoundingClientRect().top;
-    return { before, opened, closed };
+    return { disclosureAbove, visibleInPort, before, opened, closed };
   });
+  expect(anchored.disclosureAbove).toBe(true);
+  expect(anchored.visibleInPort).toBe(true);
   expect(Math.abs(anchored.opened - anchored.before)).toBeLessThanOrEqual(1);
   expect(Math.abs(anchored.closed - anchored.before)).toBeLessThanOrEqual(1);
 });
