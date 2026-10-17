@@ -10,6 +10,9 @@ import {
   outputKind,
   toolIcon,
   prefersReducedMotion,
+  shortTool,
+  activeTool,
+  kindSummary,
 } from './toolstrip.js';
 
 const toolEv = (seq, kind, { id = `t${seq}`, name = 'read', input = '', output = '', status = '' } = {}, extra = {}) => ({
@@ -188,5 +191,34 @@ describe('idle session settles open strips', () => {
     expect(idle.settled).toBe(true);
     expect(idle.runs[0].status).toBe('failed');
     expect(idle.status).toBe('failed');
+  });
+});
+
+describe('Working indicator helpers', () => {
+  it('shortTool trims long names to a few characters', () => {
+    expect(shortTool('bash')).toBe('bash');
+    expect(shortTool('mcp__server__very_long_tool')).toBe('mcp__server__…');
+    expect(shortTool(undefined)).toBe('');
+  });
+  it('activeTool names the current run of a trailing live strip only', () => {
+    const live = groupTranscript([
+      toolEv(1, 'tool_call_started', { id: 't1', name: 'read', status: 'completed' }),
+      toolEv(2, 'tool_call_started', { id: 't2', name: 'bash', status: 'running' }),
+    ]);
+    expect(activeTool(live)).toBe('bash');
+    const settled = groupTranscript([
+      toolEv(1, 'tool_call_started', { id: 't1', name: 'read', status: 'completed' }),
+      ev(2, 'assistant_chunk', 'done'),
+    ]);
+    expect(activeTool(settled)).toBe('');
+    expect(activeTool([])).toBe('');
+  });
+  it('kindSummary counts runs per tool kind in first-seen order', () => {
+    const runs = [{ name: 'read' }, { name: 'bash' }, { name: 'read' }, { name: 'x', thinking: true }];
+    expect(kindSummary(runs)).toEqual([
+      { kind: 'read', count: 2 },
+      { kind: 'bash', count: 1 },
+      { kind: 'thinking', count: 1 },
+    ]);
   });
 });

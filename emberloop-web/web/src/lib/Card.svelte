@@ -8,6 +8,8 @@
   import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
   import { getCurrentUserId, decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import Button from './ui/button.svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import { icons } from './icons.js';
   import Input from './ui/input.svelte';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
@@ -232,7 +234,7 @@
       <CreditCard class="size-4 shrink-0 text-amber-400" />
       <span class="font-medium">{block.title}</span>
       <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={block.body}>{block.body}</span>
-      <Button size="sm" disabled={compressBusy} onclick={retryCompress}>Retry</Button>
+      <IconButton icon={icons.retry} label="Retry" disabled={compressBusy} onclick={retryCompress} />
     </div>
     {#if compressError}<p role="alert" class="px-4 pb-2.5 text-xs text-destructive">{compressError}</p>{/if}
   </div>

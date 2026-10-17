@@ -1,6 +1,6 @@
 <script>
   import { onDestroy, setContext } from 'svelte';
-  import { Plus, FolderPlus, GitBranch, Search, LogOut, Settings } from '@lucide/svelte';
+  import { Plus, FolderPlus, Search, LogOut, Settings } from '@lucide/svelte';
   import Button from './lib/ui/button.svelte';
   import Input from './lib/ui/input.svelte';
   import Badge from './lib/ui/badge.svelte';
@@ -29,6 +29,8 @@
   import ProvidersPage from './lib/ProvidersPage.svelte';
   import MemoryPage from './lib/MemoryPage.svelte';
   import ContextMeter from './lib/ContextMeter.svelte';
+  import ChatStatus from './lib/ChatStatus.svelte';
+  import { activeTool } from './lib/toolstrip.js';
   import VersionBadge from './lib/VersionBadge.svelte';
   import Rail from './lib/Rail.svelte';
   import QuotaSidebar from './lib/QuotaSidebar.svelte';
@@ -1090,6 +1092,10 @@
   {/if}
 {/snippet}
 
+{#snippet chatStatus()}
+  <ChatStatus {connected} {status} />
+{/snippet}
+
 <div class="flex h-dvh">
   <Rail view={areaView} collapsed={sideCollapsed} {attention} onToggleSidebar={toggleSidebar} onSelect={navigateArea} />
   <aside data-testid="sidebar" inert={sideCollapsed || view === 'memory'} aria-hidden={sideCollapsed || view === 'memory'} class="motion-emphasis flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] max-md:hidden {sideCollapsed || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
@@ -1146,21 +1152,28 @@
         scopeIcon={icons.project}
         subtitle={[creatorName ? `created by ${creatorName}` : '', meta ? `${meta.harness} · ${modelLabel(meta.harness, meta.model)}${meta.effort ? ` · ${meta.effort}` : ''}` : drafting ? `${draftHarness} · ${modelLabel(draftHarness, draftModel)}${(draftHarness === 'claude' || draftHarness === 'pig') && draftEffort !== 'default' ? ` · ${draftEffort}` : ''}` : ''].filter(Boolean).join(' · ')}
         titleAttrs={{ 'data-testid': 'header-title' }}
+        scopeAttrs={{ class: 'shrink-[2] max-sm:hidden' }}
+        meta={chatStatus}
       >
         {#snippet actions()}
-          {#if connected}
-            <span class="size-2 shrink-0 rounded-full bg-status-done" title="Live" role="status" aria-label="Live" data-testid="live"></span>
-          {:else}
-            <Badge variant="warning" class="shrink-0" data-testid="reconnect"><span class="size-1.5 animate-pulse rounded-full bg-status-needs-you"></span>Reconnecting…</Badge>
-          {/if}
-          {#if currentId && usage}
-            <span class="flex items-center self-center px-1 text-caption tabular-nums text-fg-3 max-sm:hidden" title="{usage.used} of {usage.size} tokens" data-testid="header-context">{Math.min(100, Math.round((usage.used / usage.size) * 100))}% ctx</span>
+          {#if currentId && !drafting && !sessionMissing}
+            <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} {compressNote} />
           {/if}
           <IconButton icon={Plus} label="New Session" class="md:hidden" onclick={newChat} />
           {#if activeProject}
-            <Button variant="outline" size="sm" id="git-toggle" onclick={() => (gitOpen = !gitOpen)} aria-pressed={gitOpen}>
-              <GitBranch /><span class="max-w-24 truncate max-sm:hidden">{git?.isRepo ? git.branch : 'Git'}</span>{#if git?.isRepo && git.files.length}<Badge class="px-1.5 py-0 text-[10px]">{git.files.length}</Badge>{/if}
-            </Button>
+            <span class="relative inline-flex">
+              <IconButton
+                icon={icons.git}
+                label={git?.isRepo ? `Git: ${git.branch}${git.files.length ? `, ${git.files.length} changed` : ''}` : 'Git status'}
+                id="git-toggle"
+                variant={gitOpen ? 'secondary' : 'ghost'}
+                aria-pressed={gitOpen}
+                onclick={() => (gitOpen = !gitOpen)}
+              />
+              {#if git?.isRepo && git.files.length}
+                <span class="pointer-events-none absolute right-0.5 top-0.5 size-2 rounded-full bg-status-needs-you ring-2 ring-background" data-testid="git-dirty" aria-hidden="true"></span>
+              {/if}
+            </span>
           {/if}
         {/snippet}
       </PageHeader>
@@ -1245,13 +1258,7 @@
             {/if}
               <Composer status="idle" busy={sending || !!draftPick} onSend={send} />
             {:else if currentId && resumable && !meta?.scout}
-              <Composer {status} busy={sending} sessionId={currentId} onSend={send} onStop={() => interruptSession(currentId)} />
-            {/if}
-            {#if currentId && !drafting}
-              <!-- The meter always renders, read-only on scout, ended and
-                   unresumable Sessions: only the Compress button and the
-                   composer stay gated by canCompress. -->
-              <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} {compressNote} />
+              <Composer {status} busy={sending} sessionId={currentId} activity={activeTool(blocks)} onSend={send} onStop={() => interruptSession(currentId)} />
             {/if}
             {/if}
           </div>

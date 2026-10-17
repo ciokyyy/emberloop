@@ -704,6 +704,36 @@ describe('Sidebar collapse', () => {
     expect(within(container).queryByLabelText('composer')).toBeNull();
     expect(within(container).queryByTestId('context-meter')).toBeNull();
   });
+  it('keeps the chat header to icon controls: status glyph, context ring, New and Git', async () => {
+    stubApp();
+    history.replaceState(null, '', '/s/s1');
+    vi.stubGlobal('EventSource', class { close() {} });
+    const usage = { seq: 9, kind: 'usage', text: JSON.stringify({ used: 150000, size: 1000000 }) };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => {
+        if (String(u).includes('/git')) return { ok: true, json: async () => ({ isRepo: true, branch: 'main', files: ['a', 'b'], log: [] }) };
+        if (String(u).includes('/api/sessions/s1')) return { ok: true, json: async () => ({ session: sessionsBody[0], events: [usage], resumable: true, hasMore: false, firstSeq: 0 }) };
+        if (String(u).includes('/api/sessions')) return { ok: true, json: async () => sessionsBody };
+        if (String(u).includes('/api/projects')) return { ok: true, json: async () => projectsBody };
+        if (String(u).includes('/api/users')) return { ok: true, json: async () => usersBody };
+        return { ok: true, json: async () => [] };
+      }),
+    );
+    const { container } = render(App, { props: { user: me } });
+    const header = await vi.waitFor(() => {
+      const el = container.querySelector('[data-page-header]');
+      expect(el?.querySelector('[data-testid="context-meter"]')).toBeTruthy();
+      return el;
+    });
+    expect(within(header).getByRole('status', { name: 'Live' })).toBeTruthy();
+    expect(await within(header).findByRole('button', { name: 'Context 15% used' })).toBeTruthy();
+    expect(within(header).getByRole('button', { name: 'New Session' })).toBeTruthy();
+    const git = await within(header).findByRole('button', { name: 'Git: main, 2 changed' });
+    expect(git.textContent.trim()).toBe('');
+    expect(header.textContent).not.toMatch(/% ctx/);
+    for (const b of header.querySelectorAll('button')) expect(b.textContent.trim(), b.getAttribute('aria-label')).toBe('');
+  });
   it('closes the Git panel on Escape and returns focus to its toggle', async () => {
     stubApp();
     history.replaceState(null, '', '/s/s1');

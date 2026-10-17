@@ -106,6 +106,7 @@ Reduced motion (`prefers-reduced-motion: reduce`): transitions and one-shot anim
 | Retry (run a failed action again) | `retry` | `RotateCcw` |
 | Dismiss | `dismiss` | `X` |
 | Refresh (re-read live data) | `refresh` | `RefreshCw` |
+| Model | `model` | `Cpu` |
 
 Status glyphs: `statusIcons` and `statusLabels` (working `Loader`, needs-you `CircleAlert`, done `CircleCheck`, failed `CircleX`, paused `CirclePause`). `providerGlyph(key)` gives one brand glyph per Provider inside lists; the Provider concept itself stays `icons.provider`. `areas.js` and `settingsIcons.js` read the map (ticket 01 rewired both). Everything else (Settings, Bell, User) is a one-off lucide import. `ui/primitives.test.js` guards uniqueness.
 
@@ -146,6 +147,12 @@ Every design change specifies both layouts and says what phone omits. Phone (`<m
 ## Shell
 
 Rail (desktop) and drawer tabs (phone) carry a needs-you dot on an area that needs the User. The Project switcher is a compact popover with search. Rail and drawer rows use `Row`; Rename and Remove Project actions show on hover or focus on desktop and live in Project settings on phone. Tooltips open on keyboard focus, not on programmatic or pointer focus (`ignoreNonKeyboardFocus`). The Dashboard leads with two `StatCard`s (Needs you, Running), then Needs you rows, Running rows and Project rows.
+
+## Chat chrome
+
+The chat header is `PageHeader size="compact"`: title, one `ChatStatus` glyph (reconnecting alert, pulsing working dot, live dot; the word is the tooltip and accessible name), then icon buttons: the `ContextMeter` ring (percent in its name; tap opens a bottom sheet under `md`, an anchored panel above, with model, tokens and Compress), New Session (phone) and Git (a dot marks changed files). The Project chip hides under `sm`. Everything shows on one line at 360 px.
+
+The composer is icon controls only. While working, the mode switch is two icon toggles (Steer `icons.steer`, Follow-up `icons.followUp`; the active one is filled) and the send button wears the active mode's glyph (arrow for a plain prompt), so the mode reads without words; Enter sends. Remember is a toggle (`aria-pressed` while the draft carries `/remember`). The Working indicator is the spinner plus the running tool trimmed to 14 characters. The Compress banner is one line with Retry, Change compress model and Dismiss as `IconButton`s. The tool strip is collapsed to one summary line (status, one icon per tool kind, current tool or `N tools · Xs`, timer, chevron); the line toggles the stage and history, and a failed strip starts open.
 
 ## Checklist for a new page
 

@@ -8,6 +8,7 @@ import {
   CirclePause,
   CircleX,
   Copy,
+  Cpu,
   FileText,
   FolderGit2,
   Gauge,
@@ -55,6 +56,8 @@ export const icons = Object.freeze({
   dismiss: X,
   // Re-reading live data (quota, status). Retry is re-running a failed action.
   refresh: RefreshCw,
+  // The model a Session or action runs on.
+  model: Cpu,
 });
 
 // Status glyphs pair with a status word and the --status-* colour.
