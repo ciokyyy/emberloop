@@ -2,7 +2,7 @@
 <script>
   import { onDestroy } from 'svelte';
   import WorkingIndicator from './WorkingIndicator.svelte';
-  import { availableModes, resolveComposerMode } from './composer.js';
+  import { COMPOSER_EDIT_EVENT, availableModes, resolveComposerMode } from './composer.js';
   import Button from './ui/button.svelte';
   import { BookmarkPlus, Mic, Square, Loader, Paperclip, X, Images } from '@lucide/svelte';
   import { sttSupport, startRecording, transcribe, STT_MAX_BYTES } from './stt.js';
@@ -32,6 +32,8 @@
   // Stored references: { id, name, url } into the Session's image gallery.
   // They ride the next send as stable ids; the agent reads their files.
   let refs = $state([]);
+  let editAsPrompt = $state(false);
+  let editNotice = $state('');
   let gallery = $state(false);
   let galleryImages = $state([]);
   let galleryLoadedFor = '';
@@ -82,9 +84,9 @@
     }
     dropAudio();
   });
-  const mode = $derived(resolveComposerMode({ status, selected }));
+  const mode = $derived(editAsPrompt ? 'prompt' : resolveComposerMode({ status, selected }));
   const workingModes = availableModes('working');
-  const headerOpen = $derived(availableModes(status).length > 1);
+  const headerOpen = $derived(!editAsPrompt && availableModes(status).length > 1);
   const canSend = $derived(!busy && voice !== 'transcribing' && (text.trim() !== '' || images.length > 0 || refs.length > 0));
 
   // A new Session starts with an empty tray: refs point at another
@@ -95,7 +97,40 @@
       refs = [];
       gallery = false;
       galleryLoadedFor = '';
+      if (editAsPrompt) {
+        text = '';
+        images = [];
+        editAsPrompt = false;
+        editNotice = '';
+      }
     }
+  });
+  function applyMessageEdit(event) {
+    const detail = event.detail ?? {};
+    if (!sessionId || detail.sessionId !== sessionId) return;
+    text = String(detail.text ?? '');
+    images = [];
+    refs = [...new Set(detail.imageIds ?? [])].map((id, index) => ({
+      id: String(id),
+      name: isAudioId(id) ? 'Voice message' : `Image ${index + 1}`,
+      url: imageSrc(sessionId, String(id)),
+    }));
+    dropAudio();
+    gallery = false;
+    editAsPrompt = true;
+    editNotice = 'Editing a copy; history stays unchanged.';
+    sendError = '';
+    imageNote = '';
+    box?.focus();
+  }
+
+  $effect(() => {
+    const id = sessionId;
+    const onEdit = (event) => {
+      if (event.detail?.sessionId === id) applyMessageEdit(event);
+    };
+    window.addEventListener(COMPOSER_EDIT_EVENT, onEdit);
+    return () => window.removeEventListener(COMPOSER_EDIT_EVENT, onEdit);
   });
 
   // The gallery lists every image attached in this Session. Clicking one
@@ -125,6 +160,7 @@
     const sent = images;
     const sentRefs = refs;
     const sentAudio = audio;
+    const sentAsNewPrompt = editAsPrompt;
     if ((!t && sent.length === 0 && sentRefs.length === 0) || busy) return;
     // Clear at once: the transcript shows the message while it travels.
     // A failed send puts the draft, the images and the refs back.
@@ -138,6 +174,10 @@
       const ids = sentRefs.map((r) => r.id);
       if (sentAudio) await onSend(t, mode, toWire(sent), ids, { blob: sentAudio.blob, durationMs: sentAudio.durationMs, peaks: sentAudio.peaks });
       else await onSend(t, mode, toWire(sent), ids);
+      if (sentAsNewPrompt) {
+        editAsPrompt = false;
+        editNotice = '';
+      }
       if (sentAudio?.url) URL.revokeObjectURL(sentAudio.url);
     } catch {
       text = t;
@@ -318,7 +358,11 @@
       {/each}
       {#each refs as r (r.id)}
         <li class="relative" title={r.name}>
-          <img src={r.url} alt={r.name} class="size-14 rounded-lg border object-cover" />
+          {#if isAudioId(r.id)}
+            <span class="grid size-14 place-items-center rounded-lg border bg-background text-xs">Voice</span>
+          {:else}
+            <img src={r.url} alt={r.name} class="size-14 rounded-lg border object-cover" />
+          {/if}
           <button
             type="button"
             aria-label={`remove ${r.name}`}
@@ -390,7 +434,7 @@
         bind:value={text}
         onkeydown={key}
         onpaste={paste}
-        placeholder={status === 'working' ? 'Steer or follow up…' : 'Send a prompt…'}
+        placeholder={editAsPrompt ? 'Edit this prompt…' : status === 'working' ? 'Steer or follow up…' : 'Send a prompt…'}
         class="max-h-40 w-full resize-none bg-transparent px-3 pb-2 pt-2 text-[15px] outline-none placeholder:text-muted-foreground"
       ></textarea>
     </div>
@@ -435,8 +479,9 @@
       </Button>
     {/if}
     <Button type="button" variant="ghost" size="sm" aria-label="remember as rule" title="Remember as a Rule (sends /remember)" onclick={remember}><BookmarkPlus class="sm:hidden" /><span class="max-sm:sr-only">Remember</span></Button>
-    <Button type="submit" size="default" class="ml-auto sm:ml-0" disabled={!canSend} title={canSend ? 'Send' : busy ? 'Sending the previous message…' : 'Type a message or attach an image'}>Send</Button>
+    <Button type="submit" size="default" class="ml-auto sm:ml-0" disabled={!canSend} title={editAsPrompt ? 'Send as a new prompt; history remains unchanged' : canSend ? 'Send' : busy ? 'Sending the previous message…' : 'Type a message or attach an image'}>{editAsPrompt ? 'Send as new prompt' : 'Send'}</Button>
   </div>
+  {#if editNotice}<p data-testid="edit-notice" class="truncate px-3 pb-1 text-xs text-muted-foreground">{editNotice}</p>{/if}
   {#if sendError}
     <p role="alert" class="px-3 pb-1 text-xs text-destructive">{sendError}</p>
   {/if}

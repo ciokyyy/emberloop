@@ -3,6 +3,7 @@ import { render, within, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import Composer from './Composer.svelte';
 import { writeVoicePrefs, DEFAULT_VOICE } from './voicePrefs.js';
+import { COMPOSER_EDIT_EVENT, markdownToPlainText } from './composer.js';
 
 const { mockStart, mockTranscribe } = vi.hoisted(() => ({
   mockStart: vi.fn(),
@@ -264,6 +265,43 @@ describe('Composer stored image references', () => {
     await fireEvent.click(q.getByText('Send'));
     await tick();
     expect(onSend).toHaveBeenCalledWith('see this', 'prompt', [], ['img1']);
+  });
+});
+describe('Composer edit and resend', () => {
+  it('loads the original text and image references without sending, then submits a new prompt', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'working', busy: false, sessionId: 's1', onSend } });
+    const q = within(container);
+    await tick();
+    window.dispatchEvent(new CustomEvent(COMPOSER_EDIT_EVENT, {
+      detail: { sessionId: 's1', text: 'Revised request', imageIds: ['img1', 'aud_2'] },
+    }));
+    await tick();
+
+    expect(q.getByLabelText('message').value).toBe('Revised request');
+    expect(q.getByTestId('edit-notice').textContent).toContain('history stays unchanged');
+    expect(q.getByTestId('composer-tray').textContent).toContain('Voice');
+    expect(q.getByTestId('composer-tray').querySelector('img').getAttribute('src')).toContain('/api/sessions/s1/images/img1');
+    expect(q.queryByTestId('mode-header').getAttribute('aria-hidden')).toBe('true');
+    expect(onSend).not.toHaveBeenCalled();
+
+    await fireEvent.click(q.getByRole('button', { name: 'Send as new prompt' }));
+    await tick();
+    expect(onSend).toHaveBeenCalledWith('Revised request', 'prompt', [], ['img1', 'aud_2']);
+    expect(q.queryByTestId('edit-notice')).toBeNull();
+  });
+
+  it('ignores an edit request for another Session and strips Markdown for plain-text copy', async () => {
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, sessionId: 's2', onSend: vi.fn() } });
+    const q = within(container);
+    await tick();
+    window.dispatchEvent(new CustomEvent(COMPOSER_EDIT_EVENT, {
+      detail: { sessionId: 's1', text: 'wrong Session', imageIds: [] },
+    }));
+    await tick();
+    expect(q.getByLabelText('message').value).toBe('');
+    expect(q.queryByTestId('edit-notice')).toBeNull();
+    expect(markdownToPlainText('# **Title**\n- `code`\n[docs](https://example.com)')).toBe('Title\ncode\ndocs');
   });
 });
 

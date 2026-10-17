@@ -1,12 +1,14 @@
 <!-- Transcript card: one visual block per grouped Event run. -->
 <script>
+  import { onDestroy } from 'svelte';
+  import MessageActions from './MessageActions.svelte';
   import Markdown from './Markdown.svelte';
   import GroupCard from './GroupCard.svelte';
   import ToolStrip from './ToolStrip.svelte';
   import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
+  import { getCurrentUserId, decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
-  import { decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
   import Badge from './ui/badge.svelte';
@@ -14,7 +16,39 @@
   import { people, personFor } from './people.svelte.js';
   import { ownerTone } from './owners.js';
   import { appendText } from './appendText.js';
-  let { block, sessionId = null, sessions = [], onOpenSession = () => {} } = $props();
+  let { block, sessionId = null, sessions = [], onOpenSession = () => {}, queuedItem = null, onQueueChange = () => {} } = $props();
+  let actionsOpen = $state(false);
+  let longPressTimer = 0;
+  let longPressY = 0;
+  let longPressTriggered = false;
+  const ownUserMessage = $derived(block.card === 'user' && block.sender === 'user' && !!block.senderId && block.senderId === getCurrentUserId());
+  const messageText = $derived(String(queuedItem?.text ?? block.body ?? ''));
+  const messageImageIds = $derived(queuedItem?.imageIds ?? block.imageIds ?? []);
+  function clearActionLongPress() {
+    clearTimeout(longPressTimer);
+    longPressTimer = 0;
+  }
+  function startActionLongPress(event) {
+    if (!queuedItem && block.sender !== 'user' && !['assistant', 'report'].includes(block.card)) return;
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+    if (event.target?.closest?.('[data-testid="message-actions"]')) return;
+    longPressY = event.clientY ?? 0;
+    longPressTriggered = false;
+    longPressTimer = setTimeout(() => {
+      actionsOpen = true;
+      longPressTriggered = true;
+    }, 500);
+  }
+  function moveActionLongPress(event) {
+    if (longPressTimer && Math.abs((event.clientY ?? longPressY) - longPressY) > 10) clearActionLongPress();
+  }
+  function stopActionLongPress() {
+    clearActionLongPress();
+  }
+  function suppressContextMenu(event) {
+    if (longPressTriggered) event.preventDefault();
+  }
+  onDestroy(clearActionLongPress);
   // A live thinking block grows per delta: its <pre> appends text only, and
   // the details height animation is off until it settles, so the mount-only
   // rise animation is never re-triggered by streaming.
@@ -85,8 +119,8 @@
   const saved = $derived(compaction.tokensBefore > 0 && compaction.tokensAfter > 0 ? Math.max(0, Math.round((1 - compaction.tokensAfter / compaction.tokensBefore) * 100)) : null);
   // Voice recordings ride the image ids ("aud_" prefix): they show as a voice
   // bubble whose transcript is the message text; the rest stay pictures.
-  const voiceIds = $derived((block.imageIds ?? []).filter(isAudioId));
-  const pictureIds = $derived((block.imageIds ?? []).filter((i) => !isAudioId(i)));
+  const voiceIds = $derived(messageImageIds.filter(isAudioId));
+  const pictureIds = $derived(messageImageIds.filter((i) => !isAudioId(i)));
   let voiceMeta = $state({});
   $effect(() => {
     for (const vid of voiceIds) {
@@ -100,7 +134,7 @@
 </script>
 
 {#if block.card === 'user'}
-<div class="flex flex-col items-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-swap={block.noAnim ? 'true' : undefined}>
+<div role="group" aria-label={queuedItem ? `Queued ${block.title}` : `${block.title || 'User'} message`} class="group flex flex-col items-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-state={queuedItem ? 'queued' : block.pending ? 'pending' : block.sender === 'user' ? 'delivered' : undefined} data-swap={block.noAnim ? 'true' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
   {#if block.sender === 'user' && block.senderId}
     {@const who = personFor(block.senderId)}
     <Badge variant="outline" class="mb-1 py-0 pr-2.5 pl-1" data-testid="sender-badge">
@@ -112,14 +146,14 @@
       {#if block.title && block.title !== 'You'}
         <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide opacity-80">{block.title}</div>
       {/if}
-      {#if !voiceIds.length}{block.body}{/if}
+      {#if !voiceIds.length}{messageText}{/if}
       {#each voiceIds as vid (vid)}
         <div class="w-64 max-w-full text-left" data-testid="voice-message">
           <VoiceBubble
             src={sessionId ? imageSrc(sessionId, vid) : ''}
             peaks={voiceMeta[vid]?.peaks ?? []}
             durationMs={voiceMeta[vid]?.durationMs ?? 0}
-            transcript={block.body}
+            transcript={messageText}
           />
         </div>
       {/each}
@@ -138,6 +172,9 @@
         <div class="mt-0.5 text-[11px] text-muted-foreground">Sending…</div>
       {/if}
     </div>
+    {#if block.sender === 'user' || queuedItem}
+      <MessageActions block={block} {sessionId} canEdit={ownUserMessage} {queuedItem} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} {onQueueChange} />
+    {/if}
   </div>
 {:else if block.card === 'sudo'}
   <div class="animate-rise overflow-hidden rounded-2xl border border-amber-500/40 bg-card text-card-foreground" data-card="sudo" data-state={sudo.state}>
@@ -297,6 +334,7 @@
     </div>
   </details>
 {:else if block.card === 'report'}
+  <div role="group" aria-label="Subagent report" class="group relative" onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
   <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="report">
     <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
       <Bot class="size-4 shrink-0 text-muted-foreground" />
@@ -315,6 +353,8 @@
       {/each}
     </div>
   </details>
+    <MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} />
+  </div>
 {:else if block.card === 'thinking'}
   <details class="group animate-rise rounded-2xl border bg-card text-card-foreground {thinkingLive ? 'think-live' : ''}" data-card="thinking" data-live={thinkingLive ? 'true' : undefined} open={!block.collapsed}>
     <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
@@ -352,9 +392,10 @@
     {/if}
   </div>
 {:else}
-  <div class="animate-rise px-1 py-1 text-[15px] leading-7" data-card={block.card}>
+  <div role="group" aria-label={block.title || 'Message'} class="group relative animate-rise px-1 py-1 text-[15px] leading-7" data-card={block.card} data-state={block.card === 'assistant' ? 'delivered' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
     <div class="mb-1 text-xs font-medium text-muted-foreground">{block.title}</div>
-    <Markdown text={block.body} fade={block.card === 'assistant'} />
+    <Markdown text={messageText} fade={block.card === 'assistant'} />
+    {#if block.card === 'assistant'}<MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} />{/if}
   </div>
 {/if}
 <style>

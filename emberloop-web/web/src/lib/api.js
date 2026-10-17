@@ -20,9 +20,19 @@ function getJSON(path) {
 // session has ended, so the app returns to the sign-in screen (Root.svelte).
 export const UNAUTHORIZED = 'el:unauthorized';
 
+let signedInUserId = '';
+export const getCurrentUserId = () => signedInUserId;
+const rememberUser = (user) => {
+  if (user && typeof user.id === 'string') signedInUserId = user.id;
+  return user;
+};
+
 async function json(res) {
   if (!res.ok) {
-    if (res.status === 401 && typeof window !== 'undefined') window.dispatchEvent(new Event(UNAUTHORIZED));
+    if (res.status === 401) {
+      signedInUserId = '';
+      if (typeof window !== 'undefined') window.dispatchEvent(new Event(UNAUTHORIZED));
+    }
     const err = new Error(`request failed: ${res.status}`);
     err.status = res.status;
     throw err;
@@ -596,8 +606,11 @@ async function authFailure(res) {
 }
 
 const authJSON = async (res) => {
-  if (!res.ok) throw await authFailure(res);
-  return res.json();
+  if (!res.ok) {
+    if (res.status === 401) signedInUserId = '';
+    throw await authFailure(res);
+  }
+  return rememberUser(await res.json());
 };
 
 const postCredentials = (path, username, password) =>
@@ -615,12 +628,18 @@ export const getAuthState = () => {
 // The signed-in User. Rejects with status 401 when signed out.
 export const getMe = () => {
   const boot = typeof window !== 'undefined' ? window.__EL_BOOT__ : null;
-  if (boot?.auth?.signedIn === false) return Promise.reject(Object.assign(new Error('signed out'), { status: 401 }));
-  return boot?.['/api/auth/me'] ? Promise.resolve(boot['/api/auth/me']) : fetch(url('/api/auth/me')).then(authJSON);
+  if (boot?.auth?.signedIn === false) {
+    signedInUserId = '';
+    return Promise.reject(Object.assign(new Error('signed out'), { status: 401 }));
+  }
+  return boot?.['/api/auth/me']
+    ? Promise.resolve(rememberUser(boot['/api/auth/me']))
+    : fetch(url('/api/auth/me')).then(authJSON);
 };
 export const login = (username, password) => postCredentials('/api/auth/login', username, password);
 export const signup = (username, password) => postCredentials('/api/auth/signup', username, password);
 export const logout = () =>
   fetch(url('/api/auth/logout'), { method: 'POST' }).then(async (res) => {
     if (!res.ok) throw await authFailure(res);
+    signedInUserId = '';
   });

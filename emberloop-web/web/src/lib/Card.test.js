@@ -2,11 +2,15 @@ import { describe, it, expect, vi, afterEach } from 'vitest';
 import { render, within, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import Card from './Card.svelte';
-import { compressSession, promoteSessionRule, decideProfileQueue } from './api.js';
+import { compressSession, promoteSessionRule, decideProfileQueue, editQueueItem, removeQueueItem } from './api.js';
 import { people } from './people.svelte.js';
 
 afterEach(() => {
   vi.clearAllMocks();
+  vi.unstubAllGlobals();
+  delete navigator.clipboard;
+  delete navigator.share;
+  vi.useRealTimers();
 });
 
 vi.mock('./api.js', async (orig) => ({
@@ -15,6 +19,9 @@ vi.mock('./api.js', async (orig) => ({
   compressSession: vi.fn(async () => ({ ok: true })),
   promoteSessionRule: vi.fn(async () => ({ id: 7, status: 'pending' })),
   decideProfileQueue: vi.fn(async () => ({ version: 1, approvedBy: 'user' })),
+  getCurrentUserId: vi.fn(() => 'u1'),
+  editQueueItem: vi.fn(async () => ({ updated: true })),
+  removeQueueItem: vi.fn(async () => ({ removed: true })),
 }));
 
 const block = (card, title = 'T', body = 'body text') => ({ key: 1, card, title, body, collapsed: card === 'tool', events: [] });
@@ -226,5 +233,140 @@ describe('Card thinking live state', () => {
     const settled = render(Card, { props: { block: block('thinking', 'Thinking', 'hmm') } });
     expect(settled.container.querySelector('[data-card="thinking"]')?.getAttribute('data-live')).toBeNull();
     expect(settled.container.querySelector('[data-card="thinking"]')?.className).toMatch(/animate-rise/);
+  });
+});
+describe('per-message actions', () => {
+  const userMessage = (over = {}) => ({ ...block('user', 'You', '**hello**\n[docs](https://example.com)'), sender: 'user', senderId: 'u1', imageIds: [], ...over });
+  const openActions = async (container) => fireEvent.click(within(container).getByRole('button', { name: /Message actions/ }));
+
+  it('copies plain text and Markdown from User and assistant messages', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const user = render(Card, { props: { block: userMessage() } });
+    await openActions(user.container);
+    await fireEvent.click(within(user.container).getByRole('button', { name: 'Copy text' }));
+    expect(writeText).toHaveBeenLastCalledWith('hello\ndocs');
+    user.unmount();
+
+    const assistant = render(Card, { props: { block: block('assistant', 'Agent', '**agent**') } });
+    await openActions(assistant.container);
+    await fireEvent.click(within(assistant.container).getByRole('button', { name: 'Copy Markdown' }));
+    expect(writeText).toHaveBeenLastCalledWith('**agent**');
+  });
+
+  it('shares a report through the phone share sheet and falls back to clipboard on desktop', async () => {
+    const share = vi.fn(async () => {});
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'share', { configurable: true, value: share });
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+    const report = render(Card, { props: { block: block('report', 'Subagent report', '**finished**') } });
+    await openActions(report.container);
+    await fireEvent.click(within(report.container).getByRole('button', { name: 'Share' }));
+    expect(share).toHaveBeenCalledWith({ text: 'finished' });
+
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })));
+    report.unmount();
+    const assistant = render(Card, { props: { block: block('assistant', 'Agent', 'answer') } });
+    await openActions(assistant.container);
+    await fireEvent.click(within(assistant.container).getByRole('button', { name: 'Share' }));
+    expect(writeText).toHaveBeenLastCalledWith('answer');
+  });
+  it('provides Copy and Share on User, assistant and report messages', async () => {
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })));
+    const messages = [
+      ['user', userMessage({ body: '**user**' })],
+      ['assistant', block('assistant', 'Agent', '**assistant**')],
+      ['report', block('report', 'Subagent report', '**report**')],
+    ];
+    for (const [kind, message] of messages) {
+      const rendered = render(Card, { props: { block: message, sessionId: 's1' } });
+      await openActions(rendered.container);
+      expect(within(rendered.container).getByRole('button', { name: 'Copy text' })).toBeTruthy();
+      expect(within(rendered.container).getByRole('button', { name: 'Copy Markdown' })).toBeTruthy();
+      expect(within(rendered.container).getByRole('button', { name: 'Share' })).toBeTruthy();
+      await fireEvent.click(within(rendered.container).getByRole('button', { name: 'Copy text' }));
+      expect(writeText).toHaveBeenLastCalledWith(kind);
+      await openActions(rendered.container);
+      await fireEvent.click(within(rendered.container).getByRole('button', { name: 'Share' }));
+      expect(writeText).toHaveBeenLastCalledWith(kind);
+      rendered.unmount();
+    }
+  });
+
+
+  it('shows clipboard failures to the User', async () => {
+    const { container } = render(Card, { props: { block: userMessage() } });
+    await openActions(container);
+    await fireEvent.click(within(container).getByRole('button', { name: 'Copy text' }));
+    await vi.waitFor(() => expect(within(container).getByRole('alert').textContent).toContain('Clipboard'));
+  });
+  it('shows Web Share failures and never offers edit for another User', async () => {
+    Object.defineProperty(navigator, 'share', { configurable: true, value: vi.fn(async () => { throw new Error('share blocked'); }) });
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: true })));
+    const report = render(Card, { props: { block: block('report', 'Subagent report', 'result') } });
+    await openActions(report.container);
+    await fireEvent.click(within(report.container).getByRole('button', { name: 'Share' }));
+    await vi.waitFor(() => expect(within(report.container).getByRole('alert').textContent).toContain('share blocked'));
+    report.unmount();
+
+    const other = render(Card, { props: { block: userMessage({ senderId: 'u2' }), sessionId: 's1' } });
+    await openActions(other.container);
+    expect(within(other.container).queryByRole('button', { name: 'Edit and resend' })).toBeNull();
+  });
+
+
+  it('loads only the signed-in User message into the composer as a new prompt', async () => {
+    const { COMPOSER_EDIT_EVENT } = await import('./composer.js');
+    const onEdit = vi.fn();
+    window.addEventListener(COMPOSER_EDIT_EVENT, onEdit);
+    const { container } = render(Card, { props: { block: userMessage({ body: 'Fix this', imageIds: ['image-1'] }), sessionId: 's1' } });
+    await openActions(container);
+    await fireEvent.click(within(container).getByRole('button', { name: 'Edit and resend' }));
+    expect(onEdit).toHaveBeenCalledWith(expect.objectContaining({ detail: { sessionId: 's1', text: 'Fix this', imageIds: ['image-1'] } }));
+    window.removeEventListener(COMPOSER_EDIT_EVENT, onEdit);
+    expect(container.querySelector('[data-card="user"]')?.getAttribute('data-state')).toBe('delivered');
+  });
+
+  it('marks queued cards distinctly and edits or cancels one queue item through the API', async () => {
+    const onQueueChange = vi.fn();
+    const queuedItem = { id: 'q1', mode: 'followup', text: 'old text', imageIds: ['image-1'] };
+    const { container } = render(Card, {
+      props: { block: { ...userMessage({ title: 'Follow-up', body: 'old text' }) }, sessionId: 's1', queuedItem, onQueueChange },
+    });
+    expect(container.querySelector('[data-card="user"]')?.getAttribute('data-state')).toBe('queued');
+    await openActions(container);
+    expect(within(container).queryByRole('button', { name: 'Edit and resend' })).toBeNull();
+    await fireEvent.click(within(container).getByRole('button', { name: 'Edit' }));
+    const editor = within(container).getByRole('textbox', { name: 'Edit queued message' });
+    await fireEvent.input(editor, { target: { value: 'new text' } });
+    await fireEvent.click(within(container).getByRole('button', { name: 'Save' }));
+    expect(editQueueItem).toHaveBeenCalledWith('s1', 'q1', 'new text');
+    expect(onQueueChange).toHaveBeenCalledWith({ type: 'edit', id: 'q1', text: 'new text' });
+
+    await openActions(container);
+    await fireEvent.click(within(container).getByRole('button', { name: 'Cancel' }));
+    expect(removeQueueItem).toHaveBeenCalledWith('s1', 'q1');
+    expect(onQueueChange).toHaveBeenLastCalledWith({ type: 'remove', id: 'q1' });
+  });
+
+  it('opens the same action group from a keyboard button and a phone long-press', async () => {
+    const { container } = render(Card, { props: { block: userMessage() } });
+    const trigger = within(container).getByRole('button', { name: /Message actions/ });
+    expect(trigger.getAttribute('aria-haspopup')).toBe('true');
+    trigger.focus();
+    await fireEvent.click(trigger);
+    expect(trigger.getAttribute('aria-expanded')).toBe('true');
+    await fireEvent.click(trigger);
+
+    vi.useFakeTimers();
+    const press = new Event('pointerdown', { bubbles: true });
+    Object.defineProperties(press, { pointerType: { value: 'touch' }, clientY: { value: 20 } });
+    container.querySelector('[data-card="user"]').dispatchEvent(press);
+    await vi.advanceTimersByTimeAsync(500);
+    await tick();
+    expect(within(container).getByTestId('message-action-menu')).toBeTruthy();
   });
 });

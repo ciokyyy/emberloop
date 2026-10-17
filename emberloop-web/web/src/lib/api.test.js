@@ -26,6 +26,7 @@ describe('auth client', () => {
     );
     const who = await api.login('alice', 'correct horse battery');
     expect(who.username).toBe('alice');
+    expect(api.getCurrentUserId()).toBe('u1');
     expect(seen.url).toBe('/api/auth/login');
     expect(seen.opts.method).toBe('POST');
     expect(JSON.parse(seen.opts.body)).toEqual({ username: 'alice', password: 'correct horse battery' });
@@ -42,11 +43,12 @@ describe('auth client', () => {
       'fetch',
       vi.fn(async (u) => {
         urls.push(String(u));
-        return String(u).endsWith('/state') ? reply(200, '{"empty":true,"signup_enabled":true}') : reply(200, '{"username":"alice"}');
+        return String(u).endsWith('/state') ? reply(200, '{"empty":true,"signup_enabled":true}') : reply(200, '{"id":"u1","username":"alice"}');
       }),
     );
     expect(await api.getAuthState()).toEqual({ empty: true, signup_enabled: true });
-    expect(await api.getMe()).toEqual({ username: 'alice' });
+    expect(await api.getMe()).toEqual({ id: 'u1', username: 'alice' });
+    expect(api.getCurrentUserId()).toBe('u1');
     expect(urls).toEqual(['/api/auth/state', '/api/auth/me']);
   });
 
@@ -62,6 +64,7 @@ describe('auth client', () => {
     );
     await expect(api.logout()).resolves.toBeUndefined();
     expect(seen).toEqual({ url: '/api/auth/logout', method: 'POST' });
+    expect(api.getCurrentUserId()).toBe('');
   });
 });
 

@@ -8,6 +8,7 @@
   import Button from './ui/button.svelte';
   import Card from './Card.svelte';
   import { isNearBottom, applyAnchor, blockIndexForSeq } from './transcript.js';
+  import { getQueue } from './api.js';
 
   const ESTIMATE = 320;
   const OVERSCAN = 8;
@@ -24,6 +25,106 @@
     sessions = [],
     onOpenSession = null,
   } = $props();
+  let queueItems = $state([]);
+  let queueAssignments = $state({});
+  let queueRequest = 0;
+  let queueSession = '';
+  const queueLabel = (mode) => mode === 'steer' ? 'Steer' : mode === 'followup' ? 'Follow-up' : 'Prompt';
+
+  function matchesQueueBlock(block, item) {
+    if (block.title !== queueLabel(item.mode) || String(block.body ?? '') !== String(item.text ?? '')) return false;
+    const blockImages = block.imageIds ?? [];
+    const queueImages = item.imageIds ?? [];
+    return blockImages.length === queueImages.length && blockImages.every((id, index) => id === queueImages[index]);
+  }
+
+  async function refreshQueue(id = sessionId) {
+    if (!id) {
+      queueItems = [];
+      queueAssignments = {};
+      return;
+    }
+    const request = ++queueRequest;
+    try {
+      const body = await getQueue(id);
+      if (request !== queueRequest || id !== sessionId) return;
+      queueItems = body.queue ?? [];
+      const ids = new Set(queueItems.map((item) => item.id));
+      queueAssignments = Object.fromEntries(Object.entries(queueAssignments).filter(([itemId]) => ids.has(itemId)));
+    } catch {
+      // Queue controls are best-effort; a failed read keeps the last good rows.
+    }
+  }
+
+  function queueChanged(change) {
+    if (change.type === 'edit') {
+      const block = queueView.byId.get(change.id);
+      if (block) queueAssignments = { ...queueAssignments, [change.id]: block.key };
+      queueItems = queueItems.map((item) => item.id === change.id ? { ...item, text: change.text } : item);
+    } else if (change.type === 'remove') {
+      queueItems = queueItems.filter((item) => item.id !== change.id);
+      const next = { ...queueAssignments };
+      delete next[change.id];
+      queueAssignments = next;
+    }
+    void refreshQueue(sessionId);
+  }
+
+  const queueView = $derived.by(() => {
+    const available = queueItems.filter((item) => item.mode === 'steer' || item.mode === 'followup');
+    const remaining = available.slice();
+    const byKey = new Map();
+    const byId = new Map();
+    for (const item of available) {
+      const assignedKey = queueAssignments[item.id];
+      if (assignedKey == null) continue;
+      const block = blocks.find((candidate) => String(candidate.key) === String(assignedKey));
+      if (!block || block.card !== 'user' || block.sender !== 'user') continue;
+      byKey.set(block.key, item);
+      byId.set(item.id, block);
+      const index = remaining.findIndex((candidate) => candidate.id === item.id);
+      if (index !== -1) remaining.splice(index, 1);
+    }
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const block = blocks[i];
+      if (block.card !== 'user' || block.sender !== 'user' || byKey.has(block.key)) continue;
+      let index = -1;
+      for (let j = remaining.length - 1; j >= 0; j--) {
+        if (matchesQueueBlock(block, remaining[j])) { index = j; break; }
+      }
+      if (index === -1) continue;
+      const [item] = remaining.splice(index, 1);
+      byKey.set(block.key, item);
+      byId.set(item.id, block);
+    }
+    return { byKey, byId, extra: remaining };
+  });
+  $effect(() => {
+    const assignments = {};
+    for (const [id, block] of queueView.byId) {
+      if (queueAssignments[id] == null) assignments[id] = block.key;
+    }
+    if (Object.keys(assignments).length) queueAssignments = { ...queueAssignments, ...assignments };
+  });
+
+  $effect(() => {
+    const id = sessionId;
+    blocks.length;
+    blocks[blocks.length - 1]?.key;
+    if (id !== queueSession) {
+      queueSession = id;
+      queueItems = [];
+      queueAssignments = {};
+    }
+    if (!id) return;
+    void refreshQueue(id);
+  });
+  $effect(() => {
+    const id = sessionId;
+    if (!id) return;
+    const timer = setInterval(() => void refreshQueue(id), 3000);
+    return () => clearInterval(timer);
+  });
 
   let scrollEl = $state(null);
   let sentinel = $state(null);
@@ -334,7 +435,7 @@
           {#if b}
             <div data-index={row.index} data-block-key={b.key} use:measure class="absolute top-0 left-0 w-full" style="transform: translateY({row.start}px); content-visibility: auto; contain-intrinsic-size: auto 320px;">
               <div class="pb-4">
-                <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} />
+                <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} onQueueChange={queueChanged} />
               </div>
             </div>
           {/if}
@@ -343,12 +444,16 @@
     {:else}
       {#each blocks as b (b.key)}
         <div data-block-key={b.key} style="content-visibility: auto; contain-intrinsic-size: auto 320px;">
-          <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} />
+          <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} queuedItem={queueView.byKey.get(b.key) ?? null} onQueueChange={queueChanged} />
         </div>
       {:else}
         <p class="py-24 text-center text-2xl font-semibold tracking-tight text-muted-foreground">{emptyHint}</p>
       {/each}
     {/if}
+    {#each queueView.extra as item (item.id)}
+      {@const queuedBlock = { key: `queue-${item.id}`, card: 'user', title: queueLabel(item.mode), body: item.text, imageIds: item.imageIds ?? [], sender: 'user', senderId: '' }}
+      <Card block={queuedBlock} {sessionId} queuedItem={item} onQueueChange={queueChanged} />
+    {/each}
   </div>
   {#if !stuck && !nearBottom && blocks.length}
     <div class="sticky bottom-2 flex justify-center">
