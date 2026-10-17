@@ -108,7 +108,7 @@ afterEach(() => {
 });
 
 describe('QuotaPage cards', () => {
-  it('renders the redesigned read-only header and a two-column-at-md card grid', async () => {
+  it('renders the redesigned read-only header and a card grid that goes two-column on a wide content column', async () => {
     stubFetch();
     render(QuotaPage);
     expect(await screen.findByRole('heading', { name: 'Quota' })).toBeTruthy();
@@ -119,7 +119,8 @@ describe('QuotaPage cards', () => {
     expect(await screen.findByText('Percent used per account window, and when it resets. Dollars and tokens are secondary. Updates live.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Refresh all' })).toBeTruthy();
     const grid = screen.getByTestId('quota-card-grid');
-    expect(grid.classList.contains('md:grid-cols-2')).toBe(true);
+    expect(grid.classList.contains('@2xl:grid-cols-2')).toBe(true);
+    expect(grid.parentElement.classList.contains('@container')).toBe(true);
     expect([...grid.classList].some((name) => name.startsWith('sm:grid-cols-'))).toBe(false);
   });
   it('gives quota controls a 44px phone target', async () => {

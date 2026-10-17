@@ -25,7 +25,12 @@
 {#snippet head()}
   {#if Icon}<Icon class="size-4 shrink-0 text-fg-3" aria-hidden="true" />{/if}
   <svelte:element this={heading} class="min-w-0 truncate text-title text-fg-1">{title}</svelte:element>
-  {#if hint}<InfoHint label={`About ${title}`}>{#if typeof hint === 'string'}{hint}{:else}{@render hint()}{/if}</InfoHint>{/if}
+  {#if hint}
+    <!-- Inside a <summary> the hint must not toggle the disclosure. -->
+    <span class="contents" role="presentation" onclick={(event) => { if (collapsible) event.preventDefault(); }}>
+      <InfoHint label={`About ${title}`}>{#if typeof hint === 'string'}{hint}{:else}{@render hint()}{/if}</InfoHint>
+    </span>
+  {/if}
 {/snippet}
 
 {#if collapsible}

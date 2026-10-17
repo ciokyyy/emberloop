@@ -137,11 +137,11 @@
       {/if}
 
       {#if loading}
-        <div role="status" aria-label="Loading quota" class="flex flex-col gap-6">
+        <div role="status" aria-label="Loading quota" class="@container flex flex-col gap-6">
           <div class="grid grid-cols-3 gap-2 md:gap-4">
             {#each [0, 1, 2] as i (i)}<Skeleton class="h-24 rounded-2xl" />{/each}
           </div>
-          <div class="grid gap-4 md:grid-cols-2" data-testid="quota-card-grid">
+          <div class="grid gap-4 @2xl:grid-cols-2" data-testid="quota-card-grid">
             {#each [0, 1, 2, 3, 4, 5] as i (i)}<Skeleton class="h-44 rounded-2xl" />{/each}
           </div>
         </div>
@@ -174,7 +174,8 @@
         </div>
 
         <Section title="Providers" icon={icons.provider}>
-        <div class="grid gap-4 md:grid-cols-2" data-testid="quota-card-grid">
+        <div class="@container">
+        <div class="grid gap-4 @2xl:grid-cols-2" data-testid="quota-card-grid">
           {#each providers as p (p.key)}
             {@const state = quotaState(p)}
             {@const ProviderIcon = providerGlyph(p.key)}
@@ -183,7 +184,7 @@
               <div class="flex items-center gap-3">
                 <span class="grid size-10 shrink-0 place-items-center rounded-xl bg-muted text-fg-2" aria-hidden="true"><ProviderIcon class="size-5" /></span>
                 <div class="min-w-0 flex-1">
-                  <h2 class="truncate text-title">{p.label}</h2>
+                  <h3 class="truncate text-title">{p.label}</h3>
                   <p class="truncate text-caption text-fg-3" data-testid="quota-updated">{quotaUpdatedLine(p, now)}</p>
                 </div>
                 <IconButton
@@ -233,7 +234,7 @@
                 {/if}
 
                 {#if windows.length}
-                  <div class={`grid gap-x-4 gap-y-5 ${windows.length === 2 ? 'grid-cols-2' : ''}`} data-testid="quota-windows" data-dimmed={state === 'expired' ? 'true' : undefined}>
+                  <div class={`grid gap-x-4 gap-y-5 ${windows.length === 2 ? 'grid-cols-2' : windows.length >= 3 ? 'sm:grid-cols-3' : ''}`} data-testid="quota-windows" data-dimmed={state === 'expired' ? 'true' : undefined}>
                     {#each windows as w, i (`${w.label}-${i}`)}
                       {@const label = wordLabel(w.label)}
                       {@const tone = thresholdClass(w.pct)}
@@ -266,6 +267,7 @@
               {/if}
             </article>
           {/each}
+        </div>
         </div>
         </Section>
       {/if}

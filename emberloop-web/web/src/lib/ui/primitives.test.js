@@ -86,6 +86,13 @@ describe('InfoHint', () => {
   });
 });
 
+describe('numeric style', () => {
+  it('keeps text-numeric figures tabular in app.css', async () => {
+    const css = (await import('node:fs')).readFileSync(`${process.cwd()}/src/app.css`, 'utf8');
+    expect(css).toMatch(/\.text-numeric\s*\{\s*font-variant-numeric:\s*tabular-nums/);
+  });
+});
+
 describe('Chip', () => {
   it('renders the word with a status dot and tone', () => {
     const { container } = render(Chip, { props: { tone: 'needs-you', dot: true, children: text('Needs you') } });
@@ -115,6 +122,13 @@ describe('Section', () => {
     expect(screen.queryByText('Long help')).toBeNull();
     await fireEvent.click(screen.getByRole('button', { name: 'About Memory' }));
     expect(await screen.findByText('Long help')).toBeTruthy();
+  });
+  it('opens the hint inside a collapsible Section without toggling it', async () => {
+    const { container } = render(Section, { props: { title: 'Ledger', collapsible: true, open: false, hint: 'Why', children: text('rows') } });
+    const details = container.querySelector('details');
+    await fireEvent.click(screen.getByRole('button', { name: 'About Ledger' }));
+    expect(await screen.findByText('Why')).toBeTruthy();
+    expect(details.open).toBe(false);
   });
   it('collapses secondary detail in a details element', () => {
     const { container } = render(Section, { props: { title: 'Ledger', collapsible: true, open: false, children: text('rows') } });

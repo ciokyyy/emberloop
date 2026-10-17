@@ -44,7 +44,7 @@ One utility per style. Size, line height, weight and tracking come with the util
 | `text-title` | 17 / 23, 600 | Section, card and row-group titles, empty and error lines |
 | `text-body` | 15 / 22 | Row titles, values, body copy |
 | `text-caption` | 12 / 16 | Meta, help, chips, tooltips |
-| `text-numeric` | 28 / 28, 600 | Quota, cost and counts; always add `tabular-nums` |
+| `text-numeric` | 28 / 28, 600 | Quota, cost and counts; figures are always tabular (set by the utility) |
 
 Phones shrink only `StatCard` values (`max-sm:text-[1.5rem]`). Fonts: system sans, mono for code.
 
@@ -106,7 +106,7 @@ Reduced motion (`prefers-reduced-motion: reduce`): transitions and one-shot anim
 | Dismiss | `dismiss` | `X` |
 | Refresh (re-read live data) | `refresh` | `RefreshCw` |
 
-Status glyphs: `statusIcons` and `statusLabels` (working `Loader`, needs-you `CircleAlert`, done `CircleCheck`, failed `CircleX`, paused `CirclePause`). `providerGlyph(key)` gives one brand glyph per Provider inside lists; the Provider concept itself stays `icons.provider`. `areas.js` and `settingsIcons.js` read the map. Everything else (Settings, Bell, User) is a one-off lucide import. `ui/primitives.test.js` guards uniqueness.
+Status glyphs: `statusIcons` and `statusLabels` (working `Loader`, needs-you `CircleAlert`, done `CircleCheck`, failed `CircleX`, paused `CirclePause`). `providerGlyph(key)` gives one brand glyph per Provider inside lists; the Provider concept itself stays `icons.provider`. `areas.js` and `settingsIcons.js` read the map (ticket 01 rewired both). Everything else (Settings, Bell, User) is a one-off lucide import. `ui/primitives.test.js` guards uniqueness.
 
 ## Primitives
 
@@ -114,7 +114,7 @@ All in `src/lib/ui/`, built on `button`, `popover` and bits-ui, using only the t
 
 | Primitive | File | Props and behaviour |
 | --- | --- | --- |
-| `Section` | `section.svelte` | `title`, `description` (one line), `icon`, `hint` (text or snippet, opens in an `InfoHint`), `actions` snippet, `collapsible` + `open` (native `<details>`), `headingLevel`. Heading row is 44 px under md. |
+| `Section` | `section.svelte` | `title`, `description` (one line), `icon`, `hint` (text or snippet, opens in an `InfoHint`), `actions` snippet, `collapsible` + `open` (native `<details>`; the hint button does not toggle it), `headingLevel` (cards inside a Section use one level lower). Heading row is 44 px under md. |
 | `Row` | `row.svelte` | `title`, `meta` (one line), `icon`, `status` (dot), `trailing` snippet, `selected`. A link with `href`, a button with `onclick`, else static. Truncates; 56 px under md. |
 | `StatCard` | `stat-card.svelte` | `label`, `value`, `unit`, `caption`, `tone` (status), `icon`. Tabular headline value. Three fit in a row at 390 px. |
 | `Chip` | `chip.svelte` | `tone` (`neutral`, `outline`, or a status), `dot`, `icon`. One short word; truncates, never wraps. |
@@ -139,12 +139,12 @@ At most one paragraph of help text is visible by default on any page. The rest s
 
 ### Responsive rule
 
-Every design change specifies both layouts and says what phone omits. Phone (`<md`): single column, bottom-anchored primary action, sheets for secondary panels, 44 px touch targets (`max-md:` sizes), safe-area insets (`env(safe-area-inset-*)`), no hover-only controls. Desktop: persistent navigation, side panels, hover affordances with keyboard equivalents. Verify at 390 px and 1280 px: no horizontal scroll, every control reachable by keyboard with a visible focus ring.
+Every design change specifies both layouts and says what phone omits. Phone (`<md`): single column, bottom-anchored primary action, sheets for secondary panels, 44 px touch targets (`max-md:` sizes), safe-area insets (`env(safe-area-inset-*)`), no hover-only controls. Desktop: persistent navigation, side panels, hover affordances with keyboard equivalents. Grids that sit beside the rail and second sidebar switch columns on the content column's width (container queries, `@container` + `@2xl:grid-cols-2`), not the viewport (`md:`), so 768 to 990 px viewports stay single column. Verify at 390 px and 1280 px (and about 800 px for pages with the sidebar): no horizontal scroll, every control reachable by keyboard with a visible focus ring.
 
 ## Checklist for a new page
 
 1. One `text-headline` title; the headline state (what is happening, what needs the User) first.
-2. Sections and rows from the primitives; numbers in `text-numeric tabular-nums`.
+2. Sections and rows from the primitives; numbers in `text-numeric`.
 3. Empty, loading and error states from `EmptyState`, `Skeleton`, `ErrorState`.
 4. Tokens only; icons from the map; at most one visible help paragraph.
 5. Checked at 390 px and 1280 px.

@@ -37,7 +37,7 @@
   --color-status-paused: var(--status-paused);
   /* 4 px spacing scale: every p-, m-, gap- and size- step is n x 0.25rem. */
   --spacing: 0.25rem;
-  /* Type scale: headline, title, body, caption, numeric (add tabular-nums for figures). */
+  /* Type scale: headline, title, body, caption, numeric (figures are tabular). */
   --text-headline: 1.75rem;
   --text-headline--line-height: 1.2;
   --text-headline--font-weight: 600;
@@ -112,6 +112,11 @@
   --owner-4: #ff9f0a;
   --owner-5: #64d2ff;
   --owner-6: #ff375f;
+}
+
+/* Numeric style: figures are always tabular. */
+.text-numeric {
+  font-variant-numeric: tabular-nums lining-nums;
 }
 
 /* Streamed text: each new run of characters fades in once. Spans carry a
