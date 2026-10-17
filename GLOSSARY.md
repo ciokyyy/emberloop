@@ -113,10 +113,6 @@ _Avoid_: Frontend worker, UI agent
 A persistent Subagent that judges one Ticket on one axis, spec fit or repository standards, and keeps its context across Passes.
 _Avoid_: Judge, checker
 
-**Design Reviewer**:
-The Reviewer of a `design` Ticket that judges the rendered result, not the code, from screenshots and page snapshots. It stands in for the standards Reviewer's taste role.
-_Avoid_: UI reviewer, visual judge
-
 **Pass**:
 A Reviewer verdict recorded at a specific tip of a Ticket's branch. A Pass at an older tip is stale and does not count.
 _Avoid_: Approval

@@ -1256,32 +1256,19 @@ func TestReviewMissingVerdictBlocksMerge(t *testing.T) {
 	}
 }
 
-// Design tickets require the persistent design Reviewer in addition to the
-// code-review seats; its changes verdict blocks merge and its typed finding
-// must be dispositioned before the re-review can pass.
-func TestDesignReviewerSeatBlocksAndThenPasses(t *testing.T) {
+// Design tickets use the same two reviewers as code tickets. The standards
+// Reviewer also gets the design axis; there is no third seat to block merge.
+func TestDesignTicketUsesTwoReviewersWithDesignAxis(t *testing.T) {
 	repo, spec := initRunRepo(t, map[string]string{
 		"01-design.md": "# 01: Design\n\n**Type:** design\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
 	})
 	fb := NewFakeBackend()
-	var mu sync.Mutex
-	designCalls := 0
 	fb.ReviewSubmit = func(_ string, prompt string) (ReviewerSubmit, bool) {
 		tip := tipFromReviewPrompt(prompt)
 		if tip == "" {
 			return ReviewerSubmit{}, false
 		}
-		run := []ReviewRan{{Command: "check rendered page", ExitCode: 0}}
-		if strings.Contains(prompt, "reviewer-design") {
-			mu.Lock()
-			designCalls++
-			n := designCalls
-			mu.Unlock()
-			if n == 1 {
-				return ReviewerSubmit{Verdict: "changes", Tip: tip, Ran: run, Findings: []ReviewFinding{{File: "page.html", Line: 1, Severity: "major", Problem: "visual hierarchy is unclear"}}}, true
-			}
-		}
-		return ReviewerSubmit{Verdict: "pass", Tip: tip, Ran: run}, true
+		return ReviewerSubmit{Verdict: "pass", Tip: tip, Ran: []ReviewRan{{Command: "check rendered page", ExitCode: 0}}}, true
 	}
 	d := NewDaemon(tempDir(t), fb)
 	srv := httptest.NewServer(authedHandler(t, d))
@@ -1296,40 +1283,26 @@ func TestDesignReviewerSeatBlocksAndThenPasses(t *testing.T) {
 	commitTicketFile(t, worktree, "page.html", "<main>page</main>\n", "design")
 	submitSession(t, srv.URL, worker, "done", []string{"alpha"})
 
-	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		tk := ticketByID(r, "01-design")
-		return len(tk.ReviewerSessions) == 3 && tk.Verdicts[reviewerSpecType].Verdict == "pass" && tk.Verdicts[reviewerStandardsType].Verdict == "pass" && tk.Verdicts[reviewerDesignType].Verdict == "changes"
-	}, "three reviewers and design changes")
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == "done" }, "two-seat design pass")
 	tk := ticketByID(r, "01-design")
-	if len(tk.Verdicts) != 3 || tk.State == "merged" {
-		t.Fatalf("design ticket gate = %+v, state %q; want three required seats and no merge", tk.Verdicts, tk.State)
+	if tk.State != "merged" || len(tk.Verdicts) != 2 || len(tk.ReviewerSessions) != 2 {
+		t.Fatalf("design ticket = state %q, verdicts %+v, reviewers %v; want merged with two seats", tk.State, tk.Verdicts, tk.ReviewerSessions)
 	}
-	warnings := strings.Join(tk.Warnings, " ")
-	if !strings.Contains(warnings, "using the worker model") || !strings.Contains(warnings, "using the standards reviewer model") {
-		t.Fatalf("design fallback warnings = %v, want worker and standards model fallbacks", tk.Warnings)
+	if strings.Contains(strings.Join(tk.Warnings, " "), "design reviewer") {
+		t.Fatalf("design ticket warnings = %v, want no design reviewer warning", tk.Warnings)
 	}
-	if !strings.Contains(sessTranscript(getSession(t, srv.URL, tk.ReviewerSessions[reviewerDesignType])), "rendered page") {
-		t.Fatal("design reviewer prompt does not ask it to judge the rendered page")
+	if !strings.Contains(sessTranscript(getSession(t, srv.URL, tk.ReviewerSessions[reviewerStandardsType])), "Design axis") {
+		t.Fatal("standards reviewer prompt lacks the design axis")
 	}
-	waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
-		return strings.Contains(ticketByID(r, "01-design").LastRefusal, "visual hierarchy")
-	}, "design finding reaches worker")
-	commitTicketFile(t, worktree, "page.html", "<main><h1>Page</h1></main>\n", "improve hierarchy")
-	if code, out := submitWorkerWithDispositions(t, srv.URL, worker, []ReviewDisposition{{FindingID: "r1-reviewer-design-1", Disposition: "fixed"}}); code != http.StatusAccepted {
-		t.Fatalf("done with design finding disposition = %d (%v), want 202", code, out)
-	}
-	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool { return r.Status == "done" }, "three-seat design pass")
-	tk = ticketByID(r, "01-design")
-	if tk.State != "merged" || tk.Verdicts[reviewerDesignType].Verdict != "pass" {
-		t.Fatalf("design ticket = state %q, design verdict %+v; want merged with design pass", tk.State, tk.Verdicts[reviewerDesignType])
+	if strings.Contains(sessTranscript(getSession(t, srv.URL, tk.ReviewerSessions[reviewerSpecType])), "Design axis") {
+		t.Fatal("spec reviewer prompt carries the design axis")
 	}
 }
 
 func TestRequiredReviewerTypesByTicketType(t *testing.T) {
-	if got := requiredReviewerTypes("code"); len(got) != 2 || got[0] != reviewerStandardsType || got[1] != reviewerSpecType {
-		t.Fatalf("code reviewers = %v, want standards and spec only", got)
-	}
-	if got := requiredReviewerTypes("design"); len(got) != 3 || got[0] != reviewerStandardsType || got[1] != reviewerSpecType || got[2] != reviewerDesignType {
-		t.Fatalf("design reviewers = %v, want standards, spec and design", got)
+	for _, ticketType := range []string{"code", "design"} {
+		if got := requiredReviewerTypes(ticketType); len(got) != 2 || got[0] != reviewerStandardsType || got[1] != reviewerSpecType {
+			t.Fatalf("%s reviewers = %v, want standards and spec only", ticketType, got)
+		}
 	}
 }

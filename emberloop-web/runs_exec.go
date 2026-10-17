@@ -91,14 +91,12 @@ type blockedTrack struct {
 const (
 	reviewerStandardsType = "reviewer-standards"
 	reviewerSpecType      = "reviewer-spec"
-	reviewerDesignType    = "reviewer-design"
 )
 
 // requiredReviewerTypes returns the gate for the effective Ticket type.
+// Design Tickets use the same two reviewers: the standards Reviewer also
+// judges the rendered result (designBrief); there is no third seat.
 func requiredReviewerTypes(ticketType string) []string {
-	if ticketType == "design" {
-		return []string{reviewerStandardsType, reviewerSpecType, reviewerDesignType}
-	}
 	return []string{reviewerStandardsType, reviewerSpecType}
 }
 
@@ -303,13 +301,12 @@ type runState struct {
 	// never sets it.
 	// IdlePaused marks a Run the driver paused because every open Ticket is
 	// paused by the user; resuming one of those Tickets resumes the Run.
-	IdlePaused             bool                    `json:"idlePaused,omitempty"`
-	ResumeOnRestart        bool                    `json:"resumeOnRestart,omitempty"`
-	Rows                   map[string]savedRow     `json:"rows,omitempty"`
-	Chains                 map[string][]chainEntry `json:"chains,omitempty"`
-	DesignReviewerFallback bool                    `json:"designReviewerFallback,omitempty"`
-	DesignWorkerFallback   bool                    `json:"designWorkerFallback,omitempty"`
-	ChainExhausted         map[string]bool         `json:"chainExhausted,omitempty"`
+	IdlePaused           bool                    `json:"idlePaused,omitempty"`
+	ResumeOnRestart      bool                    `json:"resumeOnRestart,omitempty"`
+	Rows                 map[string]savedRow     `json:"rows,omitempty"`
+	Chains               map[string][]chainEntry `json:"chains,omitempty"`
+	DesignWorkerFallback bool                    `json:"designWorkerFallback,omitempty"`
+	ChainExhausted       map[string]bool         `json:"chainExhausted,omitempty"`
 	// ChainPendingSubmit invalidates an old Worker done submit on a provider
 	// Chain failure until the replacement Worker submits done.
 	ChainPendingSubmit map[string]bool `json:"chainPendingSubmit,omitempty"`
@@ -851,54 +848,53 @@ func (d *Daemon) createRun(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	rs := &runState{
-		ID:                     newID(),
-		Spec:                   specRun.Spec,
-		Repo:                   repo,
-		Status:                 runStatusRunning,
-		Harness:                harness,
-		Model:                  model,
-		Effort:                 effort,
-		RecallOffN:             req.RecallOffN,
-		NoStopAfterSubmit:      req.NoStopAfterSubmit,
-		CreatedAt:              time.Now().UTC(),
-		Owner:                  creator.ID,
-		SpecBranch:             specRun.Branch,
-		SpecBase:               specBase,
-		Sessions:               map[string]string{},
-		Branches:               map[string]string{},
-		Worktrees:              map[string]string{},
-		Targets:                map[string]string{},
-		Bases:                  map[string]string{},
-		Merged:                 map[string]string{},
-		Reviewers:              map[string]map[string]string{},
-		Reviews:                map[string]map[string]storedReview{},
-		ReviewTips:             map[string]map[string]string{},
-		ReviewPending:          map[string]map[string][]string{},
-		Reprompted:             map[string]int{},
-		ReviewStarted:          map[string]map[string]time.Time{},
-		FormatReprompt:         map[string]map[string]bool{},
-		Rounds:                 map[string][]ticketRound{},
-		NeedsYouReason:         map[string]string{},
-		Followups:              map[string]string{},
-		Rows:                   map[string]savedRow{},
-		Chains:                 d.daemonConfiguredRunChains(harness, model, effort),
-		DesignReviewerFallback: len(d.daemonChainFor(reviewerDesignType)) == 0,
-		DesignWorkerFallback:   len(d.daemonChainFor("worker-design")) == 0,
-		ChainExhausted:         map[string]bool{},
-		ChainPendingSubmit:     map[string]bool{},
-		StartBlocked:           map[string]string{},
-		SpecRun:                specRun,
-		Driver:                 el.NewDriverRun(nil),
-		Parked:                 map[string]bool{},
-		TicketPaused:           map[string]bool{},
-		TicketPauseHolds:       map[string]bool{},
-		PausedRoles:            map[string]map[string]bool{},
-		RunPausedRoles:         map[string]map[string]bool{},
-		WorkerOverrides:        map[string]chainEntry{},
-		ReviewerOverrides:      map[string]map[string]chainEntry{},
-		Discarded:              map[string]bool{},
-		RetryGen:               map[string]int{},
-		RecallOff:              map[string]bool{},
+		ID:                   newID(),
+		Spec:                 specRun.Spec,
+		Repo:                 repo,
+		Status:               runStatusRunning,
+		Harness:              harness,
+		Model:                model,
+		Effort:               effort,
+		RecallOffN:           req.RecallOffN,
+		NoStopAfterSubmit:    req.NoStopAfterSubmit,
+		CreatedAt:            time.Now().UTC(),
+		Owner:                creator.ID,
+		SpecBranch:           specRun.Branch,
+		SpecBase:             specBase,
+		Sessions:             map[string]string{},
+		Branches:             map[string]string{},
+		Worktrees:            map[string]string{},
+		Targets:              map[string]string{},
+		Bases:                map[string]string{},
+		Merged:               map[string]string{},
+		Reviewers:            map[string]map[string]string{},
+		Reviews:              map[string]map[string]storedReview{},
+		ReviewTips:           map[string]map[string]string{},
+		ReviewPending:        map[string]map[string][]string{},
+		Reprompted:           map[string]int{},
+		ReviewStarted:        map[string]map[string]time.Time{},
+		FormatReprompt:       map[string]map[string]bool{},
+		Rounds:               map[string][]ticketRound{},
+		NeedsYouReason:       map[string]string{},
+		Followups:            map[string]string{},
+		Rows:                 map[string]savedRow{},
+		Chains:               d.daemonConfiguredRunChains(harness, model, effort),
+		DesignWorkerFallback: len(d.daemonChainFor("worker-design")) == 0,
+		ChainExhausted:       map[string]bool{},
+		ChainPendingSubmit:   map[string]bool{},
+		StartBlocked:         map[string]string{},
+		SpecRun:              specRun,
+		Driver:               el.NewDriverRun(nil),
+		Parked:               map[string]bool{},
+		TicketPaused:         map[string]bool{},
+		TicketPauseHolds:     map[string]bool{},
+		PausedRoles:          map[string]map[string]bool{},
+		RunPausedRoles:       map[string]map[string]bool{},
+		WorkerOverrides:      map[string]chainEntry{},
+		ReviewerOverrides:    map[string]map[string]chainEntry{},
+		Discarded:            map[string]bool{},
+		RetryGen:             map[string]int{},
+		RecallOff:            map[string]bool{},
 
 		notify:  make(chan struct{}),
 		unpause: make(chan struct{}),
@@ -1734,8 +1730,6 @@ func reviewerTaskPrefix(ticketID, spec, reviewerType, branch, tip string) string
 	axis := "correctness and this repo's standards"
 	if reviewerType == reviewerSpecType {
 		axis = "fit to the ticket and the spec"
-	} else if reviewerType == reviewerDesignType {
-		axis = "visual quality, hierarchy, spacing, responsiveness, states, copy, and fit to the Ticket's intent; judge the rendered page at this tip, not the diff"
 	}
 	return fmt.Sprintf("Review ticket %s for spec %s as %s: judge %s on branch %s at tip %s. Do not edit files; judge only. Report through the submit tool: verdict `pass` or `changes`, tip the full SHA you judged (this tip unless you re-read it), ran the commands you ran with their exit codes (for example `go vet ./...` with its exit code; a pass without ran is refused), and findings as `{file, line, severity, problem}` objects (severity blocker, major or minor). A `changes` needs at least one blocker or major; minors never block a `pass` but still reach the worker. Do not re-raise any declined finding unless its cited lines have changed since the finding was declined. "+reviewerScopeRule, ticketID, spec, reviewerType, axis, branch, tip)
 }
@@ -1778,7 +1772,8 @@ func reviewerPromptWithDeclined(ticketID, spec, reviewerType, branch, tip string
 	return reviewerPromptWithExtras(ticketID, spec, reviewerType, branch, tip, declined, "", "", "")
 }
 
-// designerBrowserSkill is injected only for Designers and design Reviewers.
+// designerBrowserSkill is injected only for Designers. Reviewers get
+// browserMention and read the CLI guidance on demand.
 const designerBrowserSkill = "Browser skill (local UI only). Use these CLI command shapes: `agent-browser open <url>`, `agent-browser snapshot -i -c -d5`, `agent-browser set viewport 390 844`, and `agent-browser screenshot $AGENT_BROWSER_SCREENSHOT_DIR/phone.jpg`. Start the Ticket's dev server with `.emberloop/preview` and use its printed URL, or follow the repo's AGENTS.md dev command. Stay on localhost only; never navigate to the public internet. Snapshot first with depth and element limits; use screenshots only to judge visuals, at 390 px and 1280 px, JPEG at capped scale, never full-page by default. Read saved screenshots with `el read`. Before submit, check the console and run `a11y`. If agent-browser is missing, report it and continue with available local checks; do not install ad hoc or claim visual verification. For Designer implementation, build on the merged code Ticket and own layout, styling, visual states, and copy; markup may change, but logic and test behaviour are out of scope, and the Ticket's tests and `.emberloop/check` must pass."
 
 // standardsBrief and specBrief carry the two axes of the code-review skill
@@ -1787,7 +1782,7 @@ const designerBrowserSkill = "Browser skill (local UI only). Use these CLI comma
 // follows every standard can still miss the ticket, and the reverse.
 const standardsBrief = `Standards axis. Read the repo's documented standards first (AGENTS.md files on the route to each changed path, CLAUDE.md, CONTRIBUTING.md, CODING_STANDARDS.md). Report (a) each place the diff breaks a documented standard, citing the file and rule, and (b) bugs, missed edge cases, callers the change broke and new logic with no test. DOX check: report a diff that changes a documented contract or layout without updating the owning AGENTS.md, or leaves a Child DOX Index stale. Smell baseline, always a judgement call and always overridden by a documented repo standard: Mysterious Name, Duplicated Code, Feature Envy, Data Clumps, Primitive Obsession, Repeated Switches, Shotgun Surgery, Divergent Change, Speculative Generality, Message Chains, Middle Man, Refused Bequest. Name a smell as "possible <smell>" and quote the hunk. Skip anything tooling already enforces. Whether the change matches the ticket is the spec reviewer's job, not yours.`
 
-const designBrief = `Design review axis. Judge the rendered result at the Ticket tip, not the diff: visual quality, hierarchy, spacing, responsiveness, states, copy, and fit to the Ticket's intent. Use the local browser skill when available. Do not edit files; report findings through the same typed submit verdict.`
+const designBrief = `Design axis (this is a design Ticket; you also judge the rendered result, not only the diff): visual quality, hierarchy, spacing, responsiveness, states, copy, and fit to the Ticket's intent. The browser check is optional. When you need to see the page, run ` + "`agent-browser skills get core`" + ` and start the Ticket's dev server with ` + "`.emberloop/preview`" + `; stay on localhost. Never wait on a browser or dev server that does not come up: judge from the diff, say so in ran, and submit. Stop any dev server you started before you submit. A design finding is blocker or major only when it breaks the Ticket's stated intent.`
 
 const specBrief = `Spec axis. Read the ticket file and the spec. Report (a) requirements the ticket or spec asked for that are missing or only partly done, (b) behaviour in the diff nobody asked for (scope creep), and (c) requirements that look done but are implemented wrong. Quote the ticket or spec line for each finding. Check every acceptance checkbox against the diff, not against the worker's claim. The spec's hard limits bind the worker: never ask for an edit they forbid. Code style and repo standards are the standards reviewer's job, not yours.`
 
@@ -2596,12 +2591,12 @@ func (d *Daemon) ensureReviewersSerial(runID, ticketID string) {
 	// Re-review prompts carry the green driver-check evidence (so reviewers
 	// need not rerun the full suite), the scope warning and the round-4+
 	// note. All three are non-blocking additions to the gate prompt.
-	evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, tip)
 	for _, typ := range requiredReviewerTypesFor(rs, ticketID) {
 		if !need[typ] {
 			continue
 		}
 		if sess := existing[typ]; sess != "" {
+			evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, typ, tip)
 			_ = d.runTellSession(sess, reviewerPromptWithExtras(ticketID, spec, typ, branch, tip, declined, evidence, scope, late))
 		}
 	}
@@ -2715,6 +2710,17 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 		base = rs.Bases[ticketID]
 	}
 	owner := rs.Owner
+	// A design Ticket's standards Reviewer may start the preview, so it gets
+	// an isolated PORT like a Designer.
+	designReviewer := false
+	if reviewerType == reviewerStandardsType {
+		for _, t := range rs.Tickets {
+			if t.ID == ticketID {
+				designReviewer = effectiveRunTicketType(rs, t) == "design"
+				break
+			}
+		}
+	}
 	chain := append([]chainEntry(nil), runRoleChain(rs, ticketID, reviewerType)...)
 	if len(chain) == 0 {
 		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
@@ -2732,7 +2738,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 			ID: newID(), Harness: entry.Backend, Model: entry.Model, Effort: entry.Effort,
 			WorkDir: worktree, Status: "idle", CreatedAt: time.Now().UTC(),
 			ParentID: runID, Owner: owner, Reviewer: reviewerType,
-			DesignSession: reviewerType == reviewerDesignType,
+			DesignSession: designReviewer,
 		}
 		var serr *startError
 		be, serr = d.startSession(meta)
@@ -2826,7 +2832,7 @@ func (d *Daemon) runStartReviewer(runID, ticketID, reviewerType, tip string) err
 	// First prompts carry the same non-blocking extras as re-reviews: green
 	// driver-check evidence (cached only), the scope warning and the
 	// round-4+ note.
-	if evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, tip); evidence != "" || scope != "" || late != "" {
+	if evidence, scope, late := d.reviewerPromptExtras(runID, ticketID, reviewerType, tip); evidence != "" || scope != "" || late != "" {
 		for _, extra := range []string{evidence, scope, late} {
 			if extra != "" {
 				prompt += "\n\n" + extra
@@ -4340,9 +4346,6 @@ func (d *Daemon) runJSONLocked(rs *runState, specBehind any) map[string]any {
 		effectiveType := effectiveRunTicketType(rs, t)
 		if effectiveType == "design" && rs.DesignWorkerFallback {
 			ticketWarnings = append(ticketWarnings, "No designer model set; using the worker model.")
-		}
-		if effectiveType == "design" && rs.DesignReviewerFallback {
-			ticketWarnings = append(ticketWarnings, "No design reviewer model set; using the standards reviewer model.")
 		}
 		tickets = append(tickets, map[string]any{
 			"id": t.ID, "num": t.Num, "title": title, "blockers": blockers,

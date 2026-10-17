@@ -670,7 +670,7 @@ func setReviewerOverridesLocked(rs *runState, ticketID string, requested chainEn
 	if rs.ReviewerOverrides == nil {
 		rs.ReviewerOverrides = map[string]map[string]chainEntry{}
 	}
-	for _, role := range []string{reviewerSpecType, reviewerStandardsType, reviewerDesignType} {
+	for _, role := range []string{reviewerSpecType, reviewerStandardsType} {
 		chain := runRoleChain(rs, ticketID, role)
 		if len(chain) == 0 {
 			continue
@@ -770,7 +770,7 @@ func (d *Daemon) switchRunBackend(w http.ResponseWriter, r *http.Request, runID 
 		if rs.Merged[ticket.ID] != "" || rs.Discarded[ticket.ID] {
 			continue
 		}
-		for _, role := range []string{reviewerSpecType, reviewerStandardsType, reviewerDesignType} {
+		for _, role := range []string{reviewerSpecType, reviewerStandardsType} {
 			chain := runRoleChain(rs, ticket.ID, role)
 			if len(chain) == 0 {
 				continue

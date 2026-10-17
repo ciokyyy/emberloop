@@ -170,8 +170,7 @@ func TestSpecPreviewBlockersAndProgress(t *testing.T) {
 			Error    string   `json:"error"`
 		} `json:"tickets"`
 		DesignWarnings struct {
-			WorkerFallback   bool `json:"workerFallback"`
-			ReviewerFallback bool `json:"reviewerFallback"`
+			WorkerFallback bool `json:"workerFallback"`
 		} `json:"designWarnings"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -190,8 +189,8 @@ func TestSpecPreviewBlockersAndProgress(t *testing.T) {
 	if second.ID != "02-second" || len(second.Blockers) != 1 || second.Blockers[0] != "01-first" {
 		t.Fatalf("second = %+v, want blocker 01-first", second)
 	}
-	if !out.DesignWarnings.WorkerFallback || !out.DesignWarnings.ReviewerFallback {
-		t.Fatalf("designWarnings = %+v, want both unset Chain fallbacks", out.DesignWarnings)
+	if !out.DesignWarnings.WorkerFallback {
+		t.Fatalf("designWarnings = %+v, want the unset designer Chain fallback", out.DesignWarnings)
 	}
 }
 

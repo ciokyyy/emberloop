@@ -56,15 +56,14 @@ describe('RunsView preview and live run', () => {
     expect(await within(container).findByRole('button', { name: 'design' })).toBeTruthy();
   });
 
-  it('shows design Chain fallback warnings on the preview, including after a type flip', async () => {
+  it('shows the designer Chain fallback warning on the preview, including after a type flip', async () => {
     seedPreview([{ ...preview.tickets[0], type: 'code' }]);
-    discovery.designWarnings = { workerFallback: true, reviewerFallback: true };
+    discovery.designWarnings = { workerFallback: true };
     stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));
     const { container } = render(RunsView, { props: { workDir: '/repo' } });
     expect(within(container).queryByTestId('design-worker-fallback-01-first')).toBeNull();
     await fireEvent.click(await within(container).findByRole('button', { name: 'code' }));
     expect(await within(container).findByTestId('design-worker-fallback-01-first')).toBeTruthy();
-    expect(within(container).getByTestId('design-reviewer-fallback-01-first')).toBeTruthy();
   });
 
   it('prompts for a sidebar pick with nothing selected', async () => {

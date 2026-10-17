@@ -11,7 +11,7 @@ export const discovery = $state({
   selected: '',
   previewTitle: '',
   tickets: [],
-  designWarnings: { workerFallback: false, reviewerFallback: false },
+  designWarnings: { workerFallback: false },
   message: '',
   error: '',
   // Bump on every explicit user pick so RunsView can drop a live Run whose
@@ -30,7 +30,7 @@ export function resetDiscovery() {
   discovery.selected = '';
   discovery.previewTitle = '';
   discovery.tickets = [];
-  discovery.designWarnings = { workerFallback: false, reviewerFallback: false };
+  discovery.designWarnings = { workerFallback: false };
   discovery.message = '';
   discovery.error = '';
   discovery.pickNonce = 0;
@@ -52,7 +52,7 @@ export async function loadDiscovery(repo = discovery.repo) {
   discovery.selected = '';
   discovery.tickets = [];
   discovery.previewTitle = '';
-  discovery.designWarnings = { workerFallback: false, reviewerFallback: false };
+  discovery.designWarnings = { workerFallback: false };
   discovery.specSeedFor = '';
   if (!target) {
     discovery.message = 'Enter a repo directory to find specs.';
@@ -84,7 +84,7 @@ export async function previewDiscovery(spec, { picked = false } = {}) {
     if (discovery.selected !== spec) return;
     discovery.previewTitle = body.title ?? '';
     discovery.tickets = body.tickets ?? [];
-    discovery.designWarnings = body.designWarnings ?? { workerFallback: false, reviewerFallback: false };
+    discovery.designWarnings = body.designWarnings ?? { workerFallback: false };
   } catch {
     if (discovery.selected !== spec) return;
     discovery.error = 'Could not load the ticket preview.';

@@ -126,11 +126,10 @@ func (d *Daemon) handleSpecPreview(w http.ResponseWriter, r *http.Request) {
 		previews = []el.TicketPreview{}
 	}
 	workerFallback := len(d.daemonChainFor("worker-design")) == 0
-	reviewerFallback := len(d.daemonChainFor(reviewerDesignType)) == 0
 	writeJSON(w, http.StatusOK, map[string]any{
 		"spec":           run.Spec,
 		"title":          el.SpecTitle(run.Spec),
 		"tickets":        previews,
-		"designWarnings": map[string]bool{"workerFallback": workerFallback, "reviewerFallback": reviewerFallback},
+		"designWarnings": map[string]bool{"workerFallback": workerFallback},
 	})
 }

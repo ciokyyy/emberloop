@@ -80,7 +80,6 @@ var agentChainRoles = []struct {
 	{key: reviewerSpecType, chainAliases: []string{"spec-review"}, roleAliases: []string{reviewerSpecType, "spec-review"}},
 	{key: reviewerStandardsType, chainAliases: []string{"code-review"}, roleAliases: []string{reviewerStandardsType, "code-review"}},
 	{key: "worker-design", roleAliases: []string{"worker-design"}},
-	{key: "reviewer-design", roleAliases: []string{"reviewer-design"}},
 }
 
 const agentChainsVersionKey = "agents_chains_version"

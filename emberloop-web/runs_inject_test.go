@@ -111,8 +111,7 @@ const expectedDesignerBrowserSkill = "Browser skill (local UI only). Use these C
 func TestDesignerBrowserSkillsAndCodeMention(t *testing.T) {
 	t.Setenv("EL_SETTINGS", filepath.Join(tempDir(t), "missing.json"))
 	designer := runSkillsFor("designer")
-	designReviewer := runSkillsFor(reviewerDesignType)
-	for name, skills := range map[string][]string{"designer": designer, "design reviewer": designReviewer} {
+	for name, skills := range map[string][]string{"designer": designer} {
 		if len(skills) == 0 || skills[len(skills)-1] != expectedDesignerBrowserSkill {
 			t.Errorf("%s browser skill = %#v, want exact injected text", name, skills)
 		}
@@ -288,9 +287,11 @@ func TestFirstPromptsCarryInjectionPerRole(t *testing.T) {
 	if strings.Count(designerPrompt, expectedDesignerBrowserSkill) != 1 || !strings.Contains(designerPrompt, "Snapshot first") || !strings.Contains(designerPrompt, "localhost only") || strings.Contains(designerPrompt, "agent-browser skills get core") {
 		t.Errorf("Designer first prompt must contain its exact browser skill once: %q", designerPrompt)
 	}
-	designReviewerPrompt := buildReviewerFirstPrompt("01-x", specPath, ticketPath, reviewerDesignType, "b", "tip", worktree, repo, "")
-	if strings.Count(designReviewerPrompt, expectedDesignerBrowserSkill) != 1 || !strings.Contains(designReviewerPrompt, "Design review axis.") {
-		t.Errorf("design Reviewer first prompt must contain its exact browser skill once: %q", designReviewerPrompt)
+	// No design Reviewer seat: the standards Reviewer gets the one-line mention
+	// only, never the full browser skill.
+	stdPrompt := buildReviewerFirstPrompt("01-x", specPath, ticketPath, reviewerStandardsType, "b", "tip", worktree, repo, "")
+	if strings.Contains(stdPrompt, expectedDesignerBrowserSkill) || strings.Count(stdPrompt, "agent-browser skills get core") != 1 {
+		t.Errorf("standards Reviewer must carry only the browser mention: %q", stdPrompt)
 	}
 
 	spec := buildReviewerFirstPrompt("01-x", specPath, ticketPath, reviewerSpecType, "b", "tip", worktree, repo, "")

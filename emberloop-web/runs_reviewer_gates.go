@@ -554,11 +554,8 @@ func reviewerPromptWithExtras(ticketID, spec, reviewerType, branch, tip string, 
 		}
 	}
 	brief := standardsBrief
-	switch reviewerType {
-	case reviewerSpecType:
+	if reviewerType == reviewerSpecType {
 		brief = specBrief
-	case reviewerDesignType:
-		brief = designBrief
 	}
 	return prefix + "\n\n" + brief
 }
@@ -566,8 +563,9 @@ func reviewerPromptWithExtras(ticketID, spec, reviewerType, branch, tip string, 
 // reviewerPromptExtras assembles the non-blocking additions for one Reviewer
 // prompt at tip: green driver-check evidence (cached only, never a fresh
 // run), the scope warning for changed files outside the ticket's scope, and
-// the round-4+ note. Git and file reads run unlocked.
-func (d *Daemon) reviewerPromptExtras(runID, ticketID, tip string) (evidence, scope, late string) {
+// the round-4+ note. A design Ticket's standards Reviewer also gets the
+// design axis (designBrief) in the scope slot. Git and file reads run unlocked.
+func (d *Daemon) reviewerPromptExtras(runID, ticketID, reviewerType, tip string) (evidence, scope, late string) {
 	d.mu.Lock()
 	rs, ok := d.runs[runID]
 	if !ok {
@@ -591,6 +589,14 @@ func (d *Daemon) reviewerPromptExtras(runID, ticketID, tip string) (evidence, sc
 	d.mu.Unlock()
 
 	late = lateRoundReviewNote(rounds)
+	if designTicket && reviewerType == reviewerStandardsType {
+		defer func() {
+			if scope != "" {
+				scope += "\n\n"
+			}
+			scope += designBrief
+		}()
+	}
 	if tip == "" {
 		return evidence, "", late
 	}

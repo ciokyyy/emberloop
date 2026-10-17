@@ -701,12 +701,15 @@ func TestSelectiveRereviewLineThresholdValue(t *testing.T) {
 	}
 }
 
-// Persistent design Reviewer re-prompts keep the visual brief separate from
-// the standards axis instead of reverting to the code-review default.
-func TestDesignReviewerRereviewUsesDesignBrief(t *testing.T) {
+// A design Ticket's standards Reviewer keeps the standards brief; the design
+// axis is an optional, browser-light addition that never needs the full skill.
+func TestDesignBriefIsLightweight(t *testing.T) {
 	t.Parallel()
-	prompt := reviewerPromptWithExtras("10-design", "spec.md", reviewerDesignType, "branch", "tip", nil, "", "", "")
-	if !strings.Contains(prompt, designBrief) || strings.Contains(prompt, standardsBrief) {
-		t.Fatalf("design re-review prompt has the wrong brief: %s", prompt)
+	prompt := reviewerPromptWithExtras("10-design", "spec.md", reviewerStandardsType, "branch", "tip", nil, "", designBrief, "")
+	if !strings.Contains(prompt, designBrief) || !strings.Contains(prompt, standardsBrief) {
+		t.Fatalf("design standards prompt lacks a brief: %s", prompt)
+	}
+	if strings.Contains(prompt, designerBrowserSkill) || !strings.Contains(designBrief, "agent-browser skills get core") {
+		t.Fatalf("design brief must point to the CLI guidance, not inline the skill: %s", prompt)
 	}
 }

@@ -9,7 +9,7 @@ import (
 )
 
 // runRoles are the Chain slots shown on each Ticket row.
-var runRoles = []string{"worker", "worker-design", reviewerSpecType, reviewerStandardsType, "reviewer-design"}
+var runRoles = []string{"worker", "worker-design", reviewerSpecType, reviewerStandardsType}
 
 // configuredRunChains snapshots the Run's configured chains so a settings
 // edit or Daemon restart cannot change a Ticket's fallback order mid-run.
@@ -19,9 +19,6 @@ func configuredRunChains(harness, model, effort string) map[string][]chainEntry 
 		entries := chainFor(role)
 		if role == "worker-design" && len(entries) == 0 {
 			entries = chainFor("worker")
-		}
-		if role == reviewerDesignType && len(entries) == 0 {
-			entries = chainFor(reviewerStandardsType)
 		}
 		if len(entries) == 0 {
 			entries = []chainEntry{{Backend: harness, Model: model, Effort: effort}}
@@ -38,9 +35,6 @@ func (d *Daemon) daemonConfiguredRunChains(harness, model, effort string) map[st
 		entries := d.daemonChainFor(role)
 		if role == "worker-design" && len(entries) == 0 {
 			entries = d.daemonChainFor("worker")
-		}
-		if role == reviewerDesignType && len(entries) == 0 {
-			entries = d.daemonChainFor(reviewerStandardsType)
 		}
 		if len(entries) == 0 {
 			entries = []chainEntry{{Backend: harness, Model: model, Effort: effort}}

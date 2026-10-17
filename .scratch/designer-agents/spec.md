@@ -1,5 +1,7 @@
 # Designer agents
 
+> Amended 2026-10-17: no design Reviewer seat. A `design` Ticket uses the spec and standards Reviewers; the standards Reviewer also judges the rendered result and gets only the `agent-browser skills get core` mention. Text below that names `reviewer-design` is superseded.
+
 One spec, from the 2026-10-16 grilling Session. It adds Ticket types to Runs so visual work goes to a Designer on a strong model that can look at the rendered page, removes the grok Backend, and gives every agent a way to inspect local UI through the `agent-browser` CLI. Decision record: `docs/adr/0005-designer-tickets-agent-browser-cli.md`. Browser tooling research and measurements: `research-browser-tooling.md` (its Playwright MCP pick is superseded by the ADR).
 
 ## Problem Statement

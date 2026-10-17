@@ -486,9 +486,6 @@
             {#if previewType(t) === 'design' && discovery.designWarnings.workerFallback}
               <tr><td colspan="6" class="pb-2"><p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200" data-testid={`design-worker-fallback-${t.id}`}>No designer model set; using the worker model.</p></td></tr>
             {/if}
-            {#if previewType(t) === 'design' && discovery.designWarnings.reviewerFallback}
-              <tr><td colspan="6" class="pb-2"><p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200" data-testid={`design-reviewer-fallback-${t.id}`}>No design reviewer model set; using the standards reviewer model.</p></td></tr>
-            {/if}
             {#if t.error}
               <tr>
                 <td colspan="5" class="pb-2">
