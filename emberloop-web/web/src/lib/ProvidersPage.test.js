@@ -285,7 +285,11 @@ describe('ProvidersPage', () => {
     ];
     for (const id of cloudProviderIDs) {
       const cloudRow = container.querySelector(`[data-provider="${id}"]`);
-      expect(within(cloudRow).getByTestId('provider-cli-guidance').textContent).toBe('configure via CLI');
+      const guidance = within(cloudRow).getByTestId('provider-cli-guidance');
+      expect(guidance.textContent).not.toContain('configure via CLI');
+      await fireEvent.click(within(guidance).getByRole('button', { name: /How to set up/ }));
+      expect(await screen.findByText('configure via CLI')).toBeTruthy();
+      await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
       expect(within(cloudRow).queryByRole('button', { name: /copy/i })).toBeNull();
     }
     expect(within(oauthRow).getByText('pig login anthropic')).toBeTruthy();

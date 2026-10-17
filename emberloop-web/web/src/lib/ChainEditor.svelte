@@ -26,12 +26,13 @@
     oneffort,
   } = $props();
 
-  let phone = $state(false);
+  const phoneQuery = '(max-width: 767px)';
+  let phone = $state(typeof matchMedia === 'function' && matchMedia(phoneQuery).matches);
   let editing = $state(-1);
 
   onMount(() => {
     if (typeof matchMedia !== 'function') return;
-    const query = matchMedia('(max-width: 767px)');
+    const query = matchMedia(phoneQuery);
     phone = query.matches;
     const change = (event) => (phone = event.matches);
     query.addEventListener?.('change', change);
@@ -47,6 +48,13 @@
   function open(index) {
     editing = index;
     sheetOpen = true;
+  }
+  // The sheet follows an entry that moves, so later edits hit the same entry.
+  function move(index, delta) {
+    const destination = index + delta;
+    if (destination < 0 || destination >= entries.length) return;
+    if (editing === index) editing = destination;
+    onmove(index, delta);
   }
   // A removed entry closes its sheet; the list shifts under the index.
   function remove(index) {
@@ -82,8 +90,8 @@
 {/snippet}
 
 {#snippet actions(index)}
-  <IconButton icon={ArrowUp} label={`Move ${role.label} ${slot(index)} up`} disabled={saving || index === 0} onclick={() => onmove(index, -1)} />
-  <IconButton icon={ArrowDown} label={`Move ${role.label} ${slot(index)} down`} disabled={saving || index === entries.length - 1} onclick={() => onmove(index, 1)} />
+  <IconButton icon={ArrowUp} label={`Move ${role.label} ${slot(index)} up`} disabled={saving || index === 0} onclick={() => move(index, -1)} />
+  <IconButton icon={ArrowDown} label={`Move ${role.label} ${slot(index)} down`} disabled={saving || index === entries.length - 1} onclick={() => move(index, 1)} />
   <IconButton icon={Trash2} label={`Remove ${role.label} ${slot(index)}`} disabled={saving} onclick={() => remove(index)} />
 {/snippet}
 

@@ -76,4 +76,14 @@ describe('ChainEditor on phone', () => {
     expect(p.onremove).toHaveBeenCalledWith(0);
     expect(screen.queryByRole('dialog')).toBeNull();
   });
+  it('keeps the sheet on the entry it moves', async () => {
+    const p = props();
+    p.onmove = vi.fn();
+    render(ChainEditor, { props: p });
+    await fireEvent.click(await screen.findByRole('button', { name: 'Edit Ticket worker Primary' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Ticket worker · Primary' });
+    await fireEvent.click(within(sheet).getByRole('button', { name: 'Move Ticket worker Primary down' }));
+    expect(p.onmove).toHaveBeenCalledWith(0, 1);
+    expect(await screen.findByRole('dialog', { name: 'Ticket worker · Fallback 1' })).toBeTruthy();
+  });
 });

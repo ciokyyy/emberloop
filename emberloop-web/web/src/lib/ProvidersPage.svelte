@@ -11,6 +11,7 @@
   import { icons, providerGlyph } from './icons.js';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
+  import InfoHint from './ui/info-hint.svelte';
   import {
     cancelAntigravityLogin,
     cancelChatGPTDeviceCodeLogin,
@@ -566,7 +567,11 @@
         <IconButton icon={copied === provider.id ? Check : icons.copy} label={`Copy ${provider.name} command`} onclick={() => copyCommand(provider)} />
       </div>
     {:else if provider.cliHint}
-      <p class="text-caption text-fg-3" data-testid="provider-cli-guidance">{provider.cliHint}</p>
+      <div class="flex items-center gap-1 text-caption text-fg-3" data-testid="provider-cli-guidance">
+        <Terminal class="size-3.5 shrink-0" aria-hidden="true" />
+        <span>Set up with the CLI</span>
+        <InfoHint label={`How to set up ${provider.name}`}>{provider.cliHint}</InfoHint>
+      </div>
     {/if}
 
     {#if provider.id === 'claude' && admin && claudeLogin?.id}
