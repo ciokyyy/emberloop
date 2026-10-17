@@ -67,7 +67,6 @@ child it belongs to, and every entry must resolve to a file.
 - `.scratch/projects-providers-settings/AGENTS.md` — the spec area for Speed, Providers, Project scope, the draft Project pick and the Settings redesign (spec only; no tickets yet)
 - `.scratch/workspace-overhaul/AGENTS.md` — the combined spec of the 2026-10-13 grilling Session (Quota, Speed, Providers, Project scope, draft Project pick, Settings redesign, stall-proof Run tests; tickets for all Parts, Quota included)
 - `.scratch/web-v1/AGENTS.md` — the spec and ticket area for web v1 in `emberloop-web` (Handoff compress, Users, Memory with Profile, Rules and Deciders)
-- `.scratch/ui-overhaul/AGENTS.md` — the spec and ticket area for the browser UI overhaul, including transcript scroll stability, message actions and Subagent notices
 - `.scratch/run-upgrade/AGENTS.md` — the spec and ticket area for the Run upgrade (Reviewer submit tool, Chains and Switch, spec branches, hygiene guards, `find` graph hits)
 - `.scratch/memory-v2/AGENTS.md` — the spec and ticket area for Memory v2 (automatic extraction, embedding-backed Memories and hybrid recall, deduplication and same-author supersession, narrowed human gate, nightly fold/promote stages and scheduler fix; tickets 01 to 11)
 - `.scratch/ssr/AGENTS.md` — the spec and ticket area for server-side rendering in `emberloop-web` (Go route table, embedded JS engine spike, per-route prefetch with Boot payload, cache headers, dependency updates first; tickets 01 to 06)
