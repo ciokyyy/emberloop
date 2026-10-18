@@ -38,6 +38,8 @@ func removeRetry(root string) {
 // TestMain removes the process-shared git history template after the run so
 // the package leaves nothing behind in the temp dir.
 func TestMain(m *testing.M) {
+	// A host DEEPSEEK_API_KEY must never turn a fake-backed test into a live call.
+	_ = os.Unsetenv("DEEPSEEK_API_KEY")
 	code := m.Run()
 	if gitHistoryTemplateDir != "" {
 		removeRetry(gitHistoryTemplateDir)

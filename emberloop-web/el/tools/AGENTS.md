@@ -42,9 +42,9 @@ via the shared bin-dir-then-PATH resolver with a Go fallback), `execute.go`
   Disposition per finding (blocker/major required, minor optional); submit stays
   defined but unoffered while `WebSubmitEnabled` in `toolresolve.go` is false),
   `websearch.go`
-(the provider-neutral search tool: Brave then Exa under auto, a 15-minute
-answer cache, quota rows; adapters and response parsing live in
-`websearch_providers.go`), `git.go` (read-only inspection: diff, log, show,
+(the provider-neutral search tool: DeepSeek while it is the default, then Brave
+and Exa under auto, a 15-minute answer cache, quota rows; adapters and response
+parsing live in `websearch_providers.go` and `deepseek.go`), `git.go` (read-only inspection: diff, log, show,
 blame, status, ls-files, grep, rev-parse, merge-base, cat-file, branch
 and tag listing only), `check.go` (the repo's named checks from `.emberloop/check`:
 plain command or JSON name map, one `{args}` slot, metacharacters refused),
@@ -96,14 +96,25 @@ here; the transports that serve it (`mcp/`, `cmd/`) live with their docs.
   through the same checked client before launch and confines the browser's
   own resolver with host rules over the IPv4 local ranges; page-script
   subresource fetches inside the browser see only those rules.
-- `websearch` answers from Brave then Exa under `auto` (a named provider
+- `websearch` answers from the `auto` chain (DeepSeek in its window, then Brave, then Exa; a named provider
   never falls back, a bad-query 4xx neither); keys come from
-  `BRAVE_API_KEY` and `EXA_API_KEY`, never settings or the database.
-  Answers cache 15 minutes keyed by query, resolved provider and arguments
-  (`fresh` bypasses); each live call writes one quota row with only what
-  the provider reported, and the footer reads the latest row that reports
-  something. `EL_BRAVE_ENDPOINT` and `EL_EXA_ENDPOINT` redirect the
-  adapters at test fakes.
+  `DEEPSEEK_API_KEY`, `BRAVE_API_KEY` and `EXA_API_KEY`, never settings or the
+  database. `deepseek.go` makes DeepSeek (Search and Fetch APIs) the default
+  until 00:00 Beijing time on 2026-11-01 (`deepseekDefaultUntil`): `auto`
+  starts with DeepSeek, and `read` on a URL tries DeepSeek Fetch before the
+  native tier. Both defaults need `DEEPSEEK_API_KEY`; without it nothing
+  changes and no skip note shows. Fetch follows Jina's outbound rules (no
+  credentials, no token-like parameters, no blocked address), skips `:raw`,
+  and falls through with a note on any failure or thin page. After the cutoff
+  DeepSeek leaves `auto` and Fetch; `provider: deepseek` still works. DeepSeek
+  bills direct API calls at $0.75 per 1,000 successful requests from day one;
+  its free period covers only calls through DeepSeek Harness, Claude Code and
+  Codex. Answers cache 15 minutes keyed by query, resolved provider and
+  arguments (`fresh` bypasses); each live call writes one quota row with only
+  what the provider reported (DeepSeek reports none), and the footer reads the
+  latest row that reports something. `EL_DEEPSEEK_ENDPOINT`,
+  `EL_BRAVE_ENDPOINT` and `EL_EXA_ENDPOINT` redirect the adapters at test
+  fakes.
 - Tool output above `overflow.threshold_bytes` (about 8KB by default) is
   stored with a `ctx:` handle instead of entering context; `ctx_search`
   is read-only and rides with `read` in every role that can read.

@@ -778,10 +778,10 @@ func setSearch(s *tools.Settings, argv []string) error {
 	switch field {
 	case "provider":
 		switch value {
-		case tools.SearchProviderAuto, tools.SearchProviderBrave, tools.SearchProviderExa:
+		case tools.SearchProviderAuto, tools.SearchProviderDeepSeek, tools.SearchProviderBrave, tools.SearchProviderExa:
 			s.Search.Provider = value
 		default:
-			return fmt.Errorf("unknown search provider %q (have auto, brave, exa)\n%s", argv[1], settingsUsage)
+			return fmt.Errorf("unknown search provider %q (have auto, deepseek, brave, exa)\n%s", argv[1], settingsUsage)
 		}
 	case "mode":
 		switch value {

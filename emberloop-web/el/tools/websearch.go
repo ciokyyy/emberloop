@@ -18,18 +18,22 @@ import (
 	"example.com/emberloop-web/el/statedb"
 )
 
-// Websearch: a provider-neutral web search tool (Brave, then Exa as fallback)
-// served the same way as the existing file tools.
+// Websearch: a provider-neutral web search tool (DeepSeek while it is the
+// default, then Brave, then Exa as fallback) served the same way as the
+// existing file tools.
 //
 // Arguments: query (required), count (default 10), freshness
-// (day|week|month|year), domains (include list), provider (brave|exa|auto;
+// (day|week|month|year), domains (include list), provider
+// (deepseek|brave|exa|auto;
 // default from search.provider in settings, else auto), fresh (cache bypass).
 // There is no mode argument: search.mode in settings picks the fallback chain
 // or concurrent providers.
 //
-// Keys come from the environment (BRAVE_API_KEY, EXA_API_KEY). Under auto a
-// provider with no key is skipped with a note; a named provider with no key
-// is an error. Under auto Brave answers first and Exa is tried on network
+// Keys come from the environment (DEEPSEEK_API_KEY, BRAVE_API_KEY,
+// EXA_API_KEY). Under auto a provider with no key is skipped with a note,
+// except DeepSeek, which joins the chain only with a key while it is the
+// default; a named provider with no key is an error. Under auto the first
+// provider answers and the next is tried on network
 // error, timeout, HTTP 429 or quota exhaustion, 5xx, and zero results; a 4xx
 // the query caused does not fall back. A named provider never falls back.
 //
@@ -61,8 +65,8 @@ type websearchTool struct{}
 func (websearchTool) Name() string   { return "websearch" }
 func (websearchTool) ReadOnly() bool { return true }
 func (websearchTool) Description() string {
-	return "Search the web (Brave, with Exa as fallback): a compact numbered list of title, URL, snippet and publish date. " +
-		"Takes a query plus optional count, freshness (day|week|month|year), domains (include list), provider (brave|exa|auto) and fresh (bypass the 15-minute cache)."
+	return "Search the web (DeepSeek while it is the default, then Brave, with Exa as fallback): a compact numbered list of title, URL, snippet and publish date. " +
+		"Takes a query plus optional count, freshness (day|week|month|year), domains (include list), provider (deepseek|brave|exa|auto) and fresh (bypass the 15-minute cache)."
 }
 func (websearchTool) Schema() map[string]any {
 	return obj(map[string]any{
@@ -70,7 +74,7 @@ func (websearchTool) Schema() map[string]any {
 		"count":     map[string]any{"type": "integer", "description": "How many results (default 10, at most 20)."},
 		"freshness": map[string]any{"type": "string", "description": "Only recent results: day, week, month or year."},
 		"domains":   map[string]any{"type": "array", "items": map[string]any{"type": "string"}, "description": "Only these domains."},
-		"provider":  map[string]any{"type": "string", "description": "brave, exa or auto (default from settings, else auto). A named provider never falls back."},
+		"provider":  map[string]any{"type": "string", "description": "deepseek, brave, exa or auto (default from settings, else auto). A named provider never falls back."},
 		"fresh":     map[string]any{"type": "boolean", "description": "True bypasses the 15-minute cache and refreshes it."},
 	}, "query")
 }
@@ -130,7 +134,7 @@ func parseSearchArgs(raw json.RawMessage, defaultProvider string) (searchArgs, e
 		q.provider = defaultProvider
 	}
 	if !validSearchProvider(q.provider) {
-		return searchArgs{}, fmt.Errorf("unknown provider %q (have brave, exa, auto)", a.Provider)
+		return searchArgs{}, fmt.Errorf("unknown provider %q (have deepseek, brave, exa, auto)", a.Provider)
 	}
 	return q, nil
 }
@@ -285,14 +289,33 @@ type searchAdapter interface {
 	search(ctx context.Context, key string, q searchArgs) ([]searchResult, searchQuota, error)
 }
 
-// searchAdapters is the provider set in chain order: Brave, then Exa.
-func searchAdapters() []searchAdapter { return []searchAdapter{braveAdapter{}, exaAdapter{}} }
+// searchAdapters is every provider in chain order: DeepSeek, Brave, then Exa.
+func searchAdapters() []searchAdapter {
+	return []searchAdapter{deepseekAdapter{}, braveAdapter{}, exaAdapter{}}
+}
+
+// autoAdapters is the chain auto runs: Brave then Exa, with DeepSeek first
+// while it is the default (see deepseekDefaultActive) and its key is set. A
+// DeepSeek without a key is left out silently, so hosts that never set one
+// see no skip note and no new missing-key error. Named `deepseek` still
+// resolves through searchAdapters after the window closes.
+func autoAdapters() []searchAdapter {
+	var out []searchAdapter
+	for _, a := range searchAdapters() {
+		if a.name() == SearchProviderDeepSeek && !(deepseekDefaultActive() && deepseekKey() != "") {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
 
 // providerKeys reads every provider key from the environment.
 func providerKeys() map[string]string {
 	return map[string]string{
-		SearchProviderBrave: strings.TrimSpace(os.Getenv("BRAVE_API_KEY")),
-		SearchProviderExa:   strings.TrimSpace(os.Getenv("EXA_API_KEY")),
+		SearchProviderDeepSeek: deepseekKey(),
+		SearchProviderBrave:    strings.TrimSpace(os.Getenv("BRAVE_API_KEY")),
+		SearchProviderExa:      strings.TrimSpace(os.Getenv("EXA_API_KEY")),
 	}
 }
 
@@ -432,7 +455,7 @@ func orderedProviders(requested string) []searchAdapter {
 			}
 		}
 	}
-	return searchAdapters()
+	return autoAdapters()
 }
 
 // fallbackNote is one footer note: a skipped or failed provider and why.
@@ -512,12 +535,12 @@ func checkSearchKeys(requested string) error {
 		return nil
 	}
 	var missing []string
-	for _, a := range searchAdapters() {
+	for _, a := range autoAdapters() {
 		if keys[a.name()] == "" {
 			missing = append(missing, a.keyEnv()+" not set")
 		}
 	}
-	if len(missing) == len(searchAdapters()) {
+	if len(missing) == len(autoAdapters()) {
 		return errors.New(strings.Join(missing, "; "))
 	}
 	return nil
@@ -693,7 +716,7 @@ func normaliseSearchURL(raw string) string {
 	return u.String()
 }
 
-// fallbackSearch runs the Brave-then-Exa chain: the first provider with a key
+// fallbackSearch runs the auto chain (DeepSeek in its window, Brave, Exa): the first provider with a key
 // and a non-empty answer wins; failures and empty answers advance under auto,
 // while a named provider and a bad query return the real error.
 func fallbackSearch(ctx context.Context, q searchArgs) (searchAnswer, error) {
@@ -882,8 +905,14 @@ func latestQuotaText(providers []string) string {
 func searchCacheKey(q searchArgs, mode string) string {
 	domains := append([]string(nil), q.domains...)
 	sort.Strings(domains)
+	// The chain joins the key so a DeepSeek-window answer never serves after
+	// the cutoff (or without the key), and the reverse.
+	var chain []string
+	for _, a := range orderedProviders(q.provider) {
+		chain = append(chain, a.name())
+	}
 	raw := strings.Join([]string{
-		q.query, q.provider, mode,
+		q.query, q.provider, strings.Join(chain, "+"), mode,
 		strconv.Itoa(q.count), q.freshness, strings.Join(domains, ","),
 	}, "\x00")
 	sum := sha256.Sum256([]byte(raw))

@@ -312,7 +312,7 @@ type SearchSetting struct {
 // validSearchProvider reports whether p names a provider the tool accepts.
 func validSearchProvider(p string) bool {
 	switch p {
-	case SearchProviderAuto, SearchProviderBrave, SearchProviderExa:
+	case SearchProviderAuto, SearchProviderDeepSeek, SearchProviderBrave, SearchProviderExa:
 		return true
 	}
 	return false

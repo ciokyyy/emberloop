@@ -19,7 +19,8 @@ import (
 	"time"
 )
 
-// URL read: `read` accepts http(s):// and www. links through three tiers.
+// URL read: `read` accepts http(s):// and www. links through three tiers,
+// with DeepSeek Fetch ahead of them while it is the default (deepseek.go).
 //
 // Tier 1 is a plain fetch (browser User-Agent, redirects, one bounded retry
 // on 429) with in-process HTML to Markdown, JSON pretty-printing, plain text
@@ -1030,6 +1031,25 @@ func readURLCtx(ctx context.Context, root, target string, offset, limit int) (st
 	}
 	if skipJina != "" {
 		notes = append(notes, "jina skipped: "+skipJina)
+	}
+
+	// DeepSeek Fetch is the default first tier while deepseekDefaultActive
+	// and DEEPSEEK_API_KEY hold. It shares Jina's outbound rules (no
+	// credentials, no token-like parameters, no blocked address) and never
+	// serves :raw reads, which want the origin body. Any failure or thin
+	// answer falls through to the native tiers with a note.
+	if !raw && deepseekFetchActive(skipJina) {
+		dctx, dcancel := context.WithTimeout(ctx, urlTimeout()/2)
+		page, derr := fetchDeepSeek(dctx, fetchURL)
+		dcancel()
+		switch {
+		case derr != nil:
+			notes = append(notes, "deepseek fetch failed ("+derr.Error()+")")
+		case isChallengePage(page) || nonWSChars(page) < urlThinChars:
+			notes = append(notes, "deepseek fetch returned a thin or challenge page")
+		default:
+			return renderURL(root, fetchURL, page, "text/markdown", "tier0 (deepseek)", notes, selRanges, offset, limit)
+		}
 	}
 
 	if !directJina {
