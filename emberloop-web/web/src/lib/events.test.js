@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { cardForEvent, groupTranscript, compressBlockReason } from './events.js';
+import { cardForEvent, groupTranscript, compressBlockReason, parseReport } from './events.js';
 const ev = (seq, kind, text = '', status = '', mode = '') => ({ seq, kind, text, status, mode });
 
 describe('cardForEvent maps every Event kind to a card', () => {
@@ -43,6 +43,21 @@ describe('cardForEvent maps every Event kind to a card', () => {
     const c = cardForEvent(ev(1, 'prompt', 'after that', '', 'followup'));
     expect(c.card).toBe('user');
     expect(c.title).toBe('Follow-up');
+  });
+  it('parses grouped results as report notices without Steer or sender identity', () => {
+    const text = 'Subagents group-7 finished:\n- abc (worker): fixed the bug\n- def (scout): checked callers [failed]';
+    expect(parseReport(text)).toMatchObject({
+      groupId: 'group-7',
+      groupName: 'Unnamed group · group-7',
+      counts: { total: 2, workers: 1, scouts: 1, failed: 1 },
+    });
+    const c = cardForEvent({ ...ev(8, 'prompt', text, '', 'steer'), sender: 'system', user: 'u1' });
+    expect(c.card).toBe('report');
+    expect(c.report.seq).toBe(8);
+    expect(c.report.groupName).toBe('Unnamed group · group-7');
+    expect(c.report.counts.total).toBe(2);
+    expect(c).not.toHaveProperty('sender');
+    expect(c).not.toHaveProperty('senderId');
   });
   it('renders a Handoff prompt as a collapsed block, not a user message', () => {
     const c = cardForEvent({ seq: 1, kind: 'prompt', text: '# Handoff\nbody', handoff: true, sender: 'system' });
@@ -98,6 +113,19 @@ describe('groupTranscript', () => {
     expect(blocks).toHaveLength(1);
     expect(blocks[0].card).toBe('assistant');
     expect(blocks[0].body).toBe('hello');
+  });
+  it('keeps the parsed report on the transcript block so the notice can dismiss', () => {
+    const blocks = groupTranscript([ev(1, 'prompt', 'Subagents group-7 finished:\n- abc (worker): fixed the bug', '', 'steer')]);
+    expect(blocks[0].card).toBe('report');
+    expect(blocks[0].report.groupId).toBe('group-7');
+    expect(blocks[0].report.seq).toBe(1);
+    expect(blocks[0].report.counts).toMatchObject({ total: 1, workers: 1 });
+  });
+  it('keeps the prompt sender on the block so User messages offer their actions', () => {
+    const blocks = groupTranscript([{ ...ev(1, 'prompt', 'mine', '', ''), sender: 'user', user: 'u1' }]);
+    expect(blocks[0].card).toBe('user');
+    expect(blocks[0].sender).toBe('user');
+    expect(blocks[0].senderId).toBe('u1');
   });
   it('keeps user messages as separate blocks', () => {
     const blocks = groupTranscript([ev(1, 'prompt', 'a'), ev(2, 'prompt', 'b')]);

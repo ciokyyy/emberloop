@@ -82,4 +82,28 @@ describe('RunsGraph', () => {
     add.mockRestore();
     remove.mockRestore();
   });
+
+  // Inline, the graph must never swallow the page's own scroll: a vertical
+  // touch drag and a plain wheel belong to the page, and only ctrl/cmd+wheel
+  // (a trackpad pinch) zooms. The full-screen view owns every gesture.
+  it('leaves page scroll alone inline and claims every gesture full screen', async () => {
+    const { container } = render(RunsGraph, { props: { tickets } });
+    const graph = within(container).getByTestId('runs-graph');
+    const canvas = within(container).getByTestId('runs-canvas');
+    await vi.waitFor(() => expect(canvas.style.transform).toMatch(/scale\(1\)/));
+    expect(graph.getAttribute('data-fullscreen')).toBeNull();
+    expect(graph.style.touchAction).toBe('pan-y');
+    expect(canvas.parentElement.style.touchAction).not.toBe('none');
+    // A plain wheel keeps the page gesture (jsdom cannot measure the zoom, so
+    // assert the claimed default); ctrl or cmd wheel is the graph's pinch.
+    expect(await fireEvent.wheel(graph, { deltaY: -240, cancelable: true })).toBe(true);
+    expect(canvas.style.transform).toMatch(/scale\(1\)/);
+    expect(await fireEvent.wheel(graph, { deltaY: -240, ctrlKey: true, cancelable: true })).toBe(false);
+    container.remove();
+
+    const full = render(RunsGraph, { props: { tickets, fullscreen: true } });
+    const fullGraph = within(full.container).getByTestId('runs-graph');
+    expect(fullGraph.getAttribute('data-fullscreen')).toBe('');
+    expect(fullGraph.style.touchAction).toBe('none');
+  });
 });

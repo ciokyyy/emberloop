@@ -5,9 +5,19 @@
      open read-only in a drawer with no composer. -->
 <script>
   import { onMount, onDestroy } from 'svelte';
-  import { ChevronLeft, Check, X } from '@lucide/svelte';
+  import { Check, Circle, CircleAlert, CircleCheck, Pause, Play, Trash2 } from '@lucide/svelte';
   import Button from './ui/button.svelte';
-  import Badge from './ui/badge.svelte';
+  import Chip from './ui/chip.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import InfoHint from './ui/info-hint.svelte';
+  import PageHeader from './ui/page-header.svelte';
+  import Segmented from './ui/segmented.svelte';
+  import Skeleton from './ui/skeleton.svelte';
+  import { icons } from './icons.js';
+  import { createPhone } from './phone.svelte.js';
+  import { people, personFor } from './people.svelte.js';
   import Transcript from './Transcript.svelte';
   import Composer from './Composer.svelte';
   import Markdown from './Markdown.svelte';
@@ -43,6 +53,9 @@
     dropPendingEcho,
     ticketFinished,
     runFinished,
+    nextStep,
+    ticketTypeOf,
+    blockersLabel,
   } from './ticketPage.js';
   import { buildPath } from './router.js';
 
@@ -99,7 +112,14 @@
   let dSource = null;
   let dToken = 0;
 
+  // Phone: Status, Transcript and Facts are tabs; desktop shows all three.
+  const phone = createPhone();
+  let tab = $state('status');
+  const show = (name) => !phone.value || tab === name;
   const ticket = $derived(findTicket(run, ticketId));
+  const step = $derived(nextStep(ticket, run));
+  // The owner shows only on a multi-User host.
+  const ownerName = $derived(people.list.length > 1 ? (personFor(run?.owner)?.username ?? '') : '');
   const track = $derived(stateTrack(ticket));
   const gate = $derived(gateSummary(ticket));
   const agents = $derived(agentsOf(ticket));
@@ -435,137 +455,169 @@
 </script>
 
 <div class="min-h-0 flex-1 overflow-auto">
-<div class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6" data-testid="ticket-page">
-  <div class="flex items-center gap-3">
-    <Button variant="ghost" size="sm" onclick={goBack}><ChevronLeft />Run</Button>
-    <div class="min-w-0 flex-col leading-tight">
-      <h2 class="truncate text-lg font-semibold tracking-tight" data-testid="ticket-title">
-        {#if ticket}{ticket.num ? `#${ticket.num} ` : ''}{ticket.title || ticket.id}{:else}Ticket {ticketId}{/if}
-      </h2>
-      {#if ticket}
-        <p class="truncate text-xs text-muted-foreground">
-          {ticket.id}{ticket.branch ? ` · ${ticket.branch}` : ''}{ticket.tip ? ` · tip ${shortTip(ticket.tip)}` : ''}
-        </p>
-      {/if}
-    </div>
-    {#if ticket?.stateSince}
-      <span class="ml-auto shrink-0 text-xs text-muted-foreground" title={ticket.stateSince}>
-        {track.currentLabel} · {sinceLabel(ticket.stateSince)}
-      </span>
+<div class="mx-auto flex w-full max-w-6xl flex-col gap-4 px-4 py-6 md:px-6" data-testid="ticket-page">
+  <div class="flex flex-col gap-1">
+    <PageHeader
+      title={ticket ? `${ticket.num ? `#${ticket.num} ` : ''}${ticket.title || ticket.id}` : `Ticket ${ticketId}`}
+      titleAttrs={{ 'data-testid': 'ticket-title' }}
+      icon={icons.ticket}
+      onBack={goBack}
+      backLabel="Run"
+      class="animate-rise"
+    />
+    {#if ticket}
+      <p class="truncate text-caption text-fg-3 max-md:pl-1">
+        {ticket.id}{ticket.branch ? ` · ${ticket.branch}` : ''}{ticket.tip ? ` · tip ${shortTip(ticket.tip)}` : ''}
+      </p>
     {/if}
   </div>
 
-  {#if runStreamDown || wStreamDown}
-    <p role="status" class="flex items-center gap-2 rounded-xl border px-4 py-2 text-sm text-muted-foreground" data-testid="stream-reconnecting">
-      <span class="size-1.5 animate-pulse rounded-full bg-amber-400"></span>Reconnecting to live updates…
-    </p>
-  {/if}
   {#if runError}
-    <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{runError}</p>
-  {/if}
-  {#if ticket?.needsYou}
-    <p role="alert" class="rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-2 text-sm text-amber-200" data-testid="needs-you">
-      {ticket.needsYou}
-    </p>
-  {:else if ticket?.lastRefusal}
-    <p class="rounded-xl border px-4 py-2 text-sm text-muted-foreground" data-testid="last-refusal">{ticket.lastRefusal}</p>
-  {/if}
-
-  {#if ticketActionable}
-    <div class="flex flex-wrap items-center gap-2" data-testid="ticket-actions">
-      {#if steerOpen}
-        <form
-          class="flex min-w-0 flex-1 items-end gap-2"
-          onsubmit={(e) => {
-            e.preventDefault();
-            doSteer();
-          }}
-        >
-          <FloatingInput class="min-w-0 flex-1" label="Steer the worker" bind:value={steerText} placeholder="What should the worker do differently?" />
-          <Button type="submit" size="sm" disabled={acting || !steerText.trim()}>Send steer</Button>
-          <Button type="button" size="sm" variant="ghost" onclick={() => (steerOpen = false)}>Cancel</Button>
-        </form>
-      {:else}
-        <Button size="sm" variant="outline" disabled={acting || !ticket?.workerSession} onclick={() => (steerOpen = true)}>Steer</Button>
-        <Button size="sm" variant="outline" disabled={acting} onclick={doRetry}>Retry</Button>
-        <Button size="sm" variant="outline" disabled={acting} onclick={doPark}>
-          {ticket?.state === 'parked' ? 'Unpark' : 'Park'}
-        </Button>
-        {#if confirmDiscard}
-          <span class="flex items-center gap-2">
-            <Button size="sm" variant="destructive" disabled={acting} onclick={doDiscard}>Confirm discard</Button>
-            <Button size="sm" variant="ghost" onclick={() => (confirmDiscard = false)}>Cancel</Button>
-          </span>
-        {:else}
-          <Button size="sm" variant="ghost" disabled={acting} onclick={() => (confirmDiscard = true)}>Discard</Button>
-        {/if}
-      {/if}
-    </div>
-    {#if actionError}
-      <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{actionError}</p>
-    {/if}
-  {/if}
-
-  <!-- State track: the real row states. -->
-  {#if ticket}
-    <div class="flex flex-wrap items-center gap-1.5 text-xs" data-testid="state-track" aria-label="Ticket state">
-      {#each track.steps as s, i (s.id)}
-        {#if i > 0}<span class="text-muted-foreground" aria-hidden="true">›</span>{/if}
-        {#if s.state === 'current'}
-          {@const label = s.id === 'in-review' && roundNumber(ticket) > 0 ? `in review · round ${roundNumber(ticket)}` : s.id === 'in-review' ? 'in review' : s.label}
-          <span
-            class="rounded-full px-3 py-1 font-medium {track.alert?.kind === 'needs-you'
-              ? 'bg-amber-500/15 text-amber-300'
-              : ticket.state === 'merged'
-                ? 'bg-green-500/15 text-green-300'
-                : 'bg-blue-500/15 text-blue-300'}"
-          >
-            {label}
-          </span>
-        {:else if s.state === 'done'}
-          <span class="flex items-center gap-1 px-2 py-1 text-muted-foreground"><Check class="size-3" />{s.label}</span>
-        {:else}
-          <span class="px-2 py-1 text-muted-foreground">{s.label}</span>
-        {/if}
-      {/each}
-      {#if track.alert}
-        <Badge variant={track.alert.kind === 'needs-you' ? 'warning' : 'secondary'} class="ml-auto">{track.alert.label}</Badge>
-      {/if}
-    </div>
+    <ErrorState title="Could not load the Run" detail={runError} onRetry={loadRun} />
   {/if}
 
   {#if !run && !runError}
-    <p class="rounded-xl border px-4 py-2 text-sm text-muted-foreground">Loading the ticket…</p>
-  {:else if run && !ticket}
-    <div class="flex flex-col items-start gap-3">
-      <p class="rounded-xl border px-4 py-2 text-sm text-muted-foreground">Ticket {ticketId} is not on this Run.</p>
-      <Button variant="secondary" size="sm" onclick={goBack}>Back to the Run</Button>
+    <div role="status" aria-label="Loading the ticket" class="flex flex-col gap-3">
+      <Skeleton class="h-40 rounded-2xl" />
+      <Skeleton class="h-14 rounded-2xl" />
     </div>
+  {:else if run && !ticket}
+    <EmptyState icon={icons.ticket} title={`Ticket ${ticketId} is not on this Run`}>
+      {#snippet action()}
+        <Button variant="secondary" onclick={goBack}>Back to the Run</Button>
+      {/snippet}
+    </EmptyState>
   {:else if ticket}
-    <div class="flex min-h-0 flex-col gap-4 lg:flex-row">
+    <!-- Lead: status and the next action. Everything else sits below or behind a tab. -->
+    <section class="animate-rise flex flex-col gap-3 rounded-2xl border bg-card p-4 shadow-elev-1" data-testid="ticket-status">
+      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Chip tone={step.tone} dot>{step.label}</Chip>
+        {#if ticket.stateSince}
+          <span class="text-caption tabular-nums text-fg-3" title={ticket.stateSince}>{sinceLabel(ticket.stateSince)}</span>
+        {/if}
+        {#if runStreamDown || wStreamDown}
+          <span role="status" class="ml-auto flex items-center gap-1.5 text-caption text-fg-3" data-testid="stream-reconnecting">
+            <span class="size-1.5 rounded-full bg-status-needs-you motion-safe:animate-pulse"></span>Reconnecting to live updates…
+          </span>
+        {/if}
+      </div>
+      {#if ticket.needsYou}
+        <p role="alert" class="line-clamp-3 text-body text-status-needs-you" data-testid="needs-you">{ticket.needsYou}</p>
+      {:else}
+        <p class="text-body text-fg-1" data-testid="next-step">{step.next}</p>
+        {#if ticket.lastRefusal}
+          <p class="line-clamp-2 text-caption text-fg-3" data-testid="last-refusal">{ticket.lastRefusal}</p>
+        {/if}
+      {/if}
+      <div class="flex flex-wrap items-center gap-1.5" data-testid="ticket-chips">
+        <Chip tone={ticketTypeOf(ticket) === 'design' ? 'neutral' : 'outline'} icon={icons.ticket} title="Ticket type">{ticketTypeOf(ticket)}</Chip>
+        {#if ticket.blockers?.length}
+          <Chip tone="outline" title={`Blocked by ${ticket.blockers.join(', ')}`}>{blockersLabel(ticket.blockers)}</Chip>
+        {/if}
+        {#if ticket.warnings?.length}
+          <Chip tone="needs-you" icon={CircleAlert}>{ticket.warnings.length} {ticket.warnings.length === 1 ? 'warning' : 'warnings'}</Chip>
+          <InfoHint label="Chain warnings">
+            <ul class="flex list-inside list-disc flex-col gap-1">{#each ticket.warnings as warning}<li>{warning}</li>{/each}</ul>
+          </InfoHint>
+        {/if}
+        {#if ownerName}<Chip tone="outline" icon={icons.session} title="Run owner">{ownerName}</Chip>{/if}
+      </div>
+
+      {#if ticketActionable}
+        <div class="flex flex-wrap items-center gap-2 border-t pt-3" data-testid="ticket-actions">
+          {#if steerOpen}
+            <form
+              class="flex min-w-0 flex-1 flex-wrap items-end gap-2"
+              onsubmit={(e) => {
+                e.preventDefault();
+                doSteer();
+              }}
+            >
+              <FloatingInput class="min-w-0 flex-1 basis-60" label="Steer the worker" bind:value={steerText} placeholder="What should the worker do differently?" />
+              <Button type="submit" disabled={acting || !steerText.trim()}>Send steer</Button>
+              <Button type="button" variant="ghost" onclick={() => (steerOpen = false)}>Cancel</Button>
+            </form>
+          {:else}
+            <Button variant={step.action === 'steer' ? 'default' : 'outline'} disabled={acting || !ticket?.workerSession} onclick={() => (steerOpen = true)}><icons.steer aria-hidden="true" />Steer</Button>
+            {#if step.action === 'unpark'}
+              <Button disabled={acting} onclick={doPark}><Play aria-hidden="true" />Unpark</Button>
+            {/if}
+            <div class="ml-auto flex items-center gap-1">
+              <IconButton variant="outline" icon={icons.retry} label="Retry" disabled={acting} onclick={doRetry} />
+              {#if step.action !== 'unpark'}
+                <IconButton variant="outline" icon={Pause} label="Park" disabled={acting} onclick={doPark} />
+              {/if}
+              {#if confirmDiscard}
+                <Button variant="destructive" disabled={acting} onclick={doDiscard}>Confirm discard</Button>
+                <Button variant="ghost" onclick={() => (confirmDiscard = false)}>Cancel</Button>
+              {:else}
+                <IconButton variant="outline" icon={Trash2} label="Discard" disabled={acting} onclick={() => (confirmDiscard = true)} />
+              {/if}
+            </div>
+          {/if}
+        </div>
+        {#if actionError}
+          <ErrorState compact title={actionError} />
+        {/if}
+      {/if}
+    </section>
+
+    {#if phone.value}
+      <Segmented mode="tabs" label="Ticket sections" panel="ticket-tabpanel" value={tab} onchange={(next) => (tab = next)} items={[{ value: 'status', label: 'Status' }, { value: 'transcript', label: 'Transcript' }, { value: 'facts', label: 'Facts' }]} />
+    {/if}
+
+    <!-- State track: the real row states. -->
+    {#if show('status')}
+      <div class="flex flex-wrap items-center gap-1.5 text-caption" data-testid="state-track" aria-label="Ticket state">
+        {#each track.steps as s, i (s.id)}
+          {#if i > 0}<span class="text-fg-4" aria-hidden="true">›</span>{/if}
+          {#if s.state === 'current'}
+            {@const label = s.id === 'in-review' && roundNumber(ticket) > 0 ? `in review · round ${roundNumber(ticket)}` : s.id === 'in-review' ? 'in review' : s.label}
+            <span
+              class="rounded-full px-3 py-1 font-medium {track.alert?.kind === 'needs-you'
+                ? 'bg-status-needs-you/12 text-status-needs-you'
+                : ticket.state === 'merged'
+                  ? 'bg-status-done/12 text-status-done'
+                  : 'bg-status-working/12 text-status-working'}"
+            >
+              {label}
+            </span>
+          {:else if s.state === 'done'}
+            <span class="flex items-center gap-1 px-2 py-1 text-fg-3"><Check class="size-3" aria-hidden="true" />{s.label}</span>
+          {:else}
+            <span class="px-2 py-1 text-fg-3">{s.label}</span>
+          {/if}
+        {/each}
+        {#if track.alert}
+          <Chip tone={track.alert.kind === 'needs-you' ? 'needs-you' : 'neutral'} class="ml-auto">{track.alert.label}</Chip>
+        {/if}
+      </div>
+    {/if}
+
+    <div id={phone.value ? 'ticket-tabpanel' : undefined} class="flex min-h-0 flex-col gap-4 lg:flex-row" role={phone.value ? 'tabpanel' : undefined} aria-label={phone.value ? tab : undefined}>
       <!-- Main column: worker transcript with review rounds woven in. -->
       <div class="flex min-w-0 flex-1 flex-col gap-4">
-        {#if ticket.body}
+        {#if show('status') && ticket.body}
           {@const briefLines = ticket.body.split('\n')}
           {@const briefShown = briefOpen || briefLines.length <= 6 ? ticket.body : briefLines.slice(0, 6).join('\n')}
-          <div class="rounded-2xl border bg-card/60 px-4 py-3 text-xs text-muted-foreground" data-testid="ticket-brief">
-            <span class="font-medium text-foreground">Brief</span>
+          <div class="rounded-2xl border bg-card/60 px-4 py-3 text-caption text-fg-3" data-testid="ticket-brief">
+            <span class="font-medium text-fg-1">Brief</span>
             <span class="mx-1" aria-hidden="true">·</span>
             <Markdown text={briefShown} />
             {#if briefLines.length > 6}
-              <Button variant="ghost" size="sm" class="mt-1 h-auto p-0 text-xs max-md:min-h-11 max-md:px-2" onclick={() => (briefOpen = !briefOpen)}>
+              <Button variant="ghost" size="sm" class="mt-1 h-auto p-0 text-caption max-md:min-h-11 max-md:px-2" onclick={() => (briefOpen = !briefOpen)}>
                 {briefOpen ? 'Show less' : `Show ${briefLines.length - 6} more lines`}
               </Button>
             {/if}
           </div>
         {/if}
 
-        {#if ticket.workerSession}
-          <div class="overflow-hidden rounded-2xl border" data-testid="worker-transcript">
-            <div class="border-b bg-sidebar/60 px-4 py-2 text-xs font-medium text-muted-foreground">
-              Worker transcript
+        {#if show('transcript') && ticket.workerSession}
+          <div class="overflow-hidden rounded-2xl border bg-card shadow-elev-1" data-testid="worker-transcript">
+            <div class="flex items-center gap-2 border-b bg-sidebar/60 px-4 py-2 text-caption font-medium text-fg-3">
+              <icons.session class="size-3.5" aria-hidden="true" />Worker transcript
             </div>
-            <div class="flex h-[50vh] min-h-0 flex-col">
+            <div class="flex h-[60dvh] min-h-0 flex-col md:h-[50vh]">
               <Transcript
                 blocks={wBlocks}
                 hasMore={wHasMore}
@@ -578,14 +630,17 @@
               />
             </div>
           </div>
+        {:else if show('transcript') && phone.value}
+          <EmptyState icon={icons.session} title="No worker yet" description="The transcript appears once the worker starts." />
         {/if}
 
         <!-- Review rounds, oldest first: a divider plus two cards each. -->
+        {#if show('status')}
         {#each ticket.rounds ?? [] as round (round.n)}
           {@const cards = reviewCards(round)}
           <div class="flex items-center gap-3" data-testid="round-divider">
             <div class="h-px flex-1 bg-border"></div>
-            <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground">
+            <span class="rounded-full bg-muted px-3 py-0.5 text-caption tabular-nums text-fg-3">
               review round {round.n} · tip {shortTip(round.tip)}
             </span>
             <div class="h-px flex-1 bg-border"></div>
@@ -594,67 +649,65 @@
             {#each cards as card (card.type)}
               {@const agent = agentByRole[card.type]}
               {@const accent = harnessStyle(agent?.harness ?? '').accent}
-              <div class="animate-rise overflow-hidden rounded-2xl border bg-card" data-testid="review-card">
+              <div class="animate-rise overflow-hidden rounded-2xl border bg-card shadow-elev-1" data-testid="review-card">
                 <div class="flex items-center gap-2 px-3.5 py-2.5">
                   <span class="size-2 shrink-0 rounded-full" style="background: {accent}"></span>
-                  <span class="font-medium">{card.short}</span>
+                  <span class="text-body font-medium">{card.short}</span>
                   {#if card.verdict === 'pass' && card.held}
-                    <span class="rounded-full bg-green-500/10 px-2 text-xs text-green-300">pass held</span>
+                    <Chip tone="done">pass held</Chip>
                   {:else if card.verdict === 'pass'}
-                    <span class="rounded-full bg-green-500/10 px-2 text-xs text-green-300">pass</span>
+                    <Chip tone="done">pass</Chip>
                   {:else if card.verdict === 'changes'}
-                    <span class="rounded-full bg-amber-500/10 px-2 text-xs text-amber-300">changes</span>
+                    <Chip tone="needs-you">changes</Chip>
                   {:else if card.verdict === 'pending'}
-                    <span class="flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <span class="size-1.5 animate-pulse rounded-full bg-blue-500"></span>re-judging
-                    </span>
+                    <Chip tone="working" dot>re-judging</Chip>
                   {:else}
-                    <span class="rounded-full bg-muted px-2 text-xs text-muted-foreground">{card.verdict}</span>
+                    <Chip>{card.verdict}</Chip>
                   {/if}
                   {#if card.durationMs}
-                    <span class="ml-auto text-xs text-muted-foreground">{Math.round(card.durationMs / 1000)}s</span>
+                    <span class="ml-auto text-caption tabular-nums text-fg-3">{Math.round(card.durationMs / 1000)}s</span>
                   {/if}
                 </div>
                 {#if card.verdict === 'pass' && card.held}
-                  <div class="border-t bg-background/40 p-3 text-xs text-muted-foreground">
+                  <div class="border-t bg-background/40 p-3 text-caption text-fg-3">
                     not re-run: pass still covers the tip
                   </div>
                 {:else if (card.findings ?? []).length}
-                  <ul class="space-y-1.5 border-t bg-background/40 p-3 text-xs">
+                  <ul class="flex flex-col gap-2 border-t bg-background/40 p-3 text-caption">
                     {#each card.findings as f, j (f.file + ':' + f.line + ':' + f.problem + ':' + j)}
-                      <li>
+                      <li class="[overflow-wrap:anywhere]">
                         {#if f.severity === 'minor'}
-                          <span class="rounded bg-muted px-1 text-muted-foreground">minor</span>
+                          <span class="rounded bg-muted px-1 text-fg-3">minor</span>
                         {:else}
-                          <span class="rounded bg-red-500/10 px-1 text-red-300">{f.severity}</span>
+                          <span class="rounded bg-status-failed/12 px-1 text-status-failed">{f.severity}</span>
                         {/if}
                         <span class="font-mono"> {f.file}:{f.line}</span>
-                        <span class="text-muted-foreground"> {f.problem}</span>
+                        <span class="text-fg-3"> {f.problem}</span>
                       </li>
                     {/each}
                   </ul>
                 {:else if card.verdict === 'pass'}
-                  <div class="border-t bg-background/40 p-3 text-xs text-muted-foreground">No findings.</div>
+                  <EmptyState compact icon={icons.report} title="No findings" description="This review passed without notes." class="border-0" />
                 {/if}
               </div>
             {/each}
           </div>
           {#if (round.sentFindings ?? []).length}
-            <div class="animate-rise rounded-2xl border bg-card px-4 py-3 text-xs" data-testid="sent-findings-card">
-              <div class="mb-2 font-medium">Review findings sent to worker</div>
-              <ul class="space-y-2">
+            <div class="animate-rise rounded-2xl border bg-card px-4 py-3 text-caption shadow-elev-1" data-testid="sent-findings-card">
+              <div class="mb-2 text-body font-medium">Review findings sent to worker</div>
+              <ul class="flex flex-col gap-2">
                 {#each round.sentFindings as finding (finding.findingId)}
-                  <li class="space-y-1 border-t pt-2 first:border-0 first:pt-0">
+                  <li class="flex flex-col gap-1 border-t pt-2 first:border-0 first:pt-0">
                     <div class="flex flex-wrap items-center gap-1.5">
-                      <Badge variant={finding.blocking ? 'destructive' : 'secondary'}>{finding.blocking ? 'blocking' : 'non-blocking'}</Badge>
-                      <span class="text-muted-foreground">{finding.reviewer}</span>
-                      <code class="rounded bg-muted px-1">{finding.findingId}</code>
-                      <span class="font-mono">{finding.file}:{finding.line}</span>
-                      <span class="text-muted-foreground">{finding.severity}</span>
+                      <Chip tone={finding.blocking ? 'failed' : 'neutral'}>{finding.blocking ? 'blocking' : 'non-blocking'}</Chip>
+                      <span class="text-fg-3">{finding.reviewer}</span>
+                      <code class="rounded bg-muted px-1 [overflow-wrap:anywhere]">{finding.findingId}</code>
+                      <span class="font-mono [overflow-wrap:anywhere]">{finding.file}:{finding.line}</span>
+                      <span class="text-fg-3">{finding.severity}</span>
                     </div>
-                    <p class="text-muted-foreground">{finding.problem}</p>
+                    <p class="text-fg-3 [overflow-wrap:anywhere]">{finding.problem}</p>
                     {#if finding.disposition}
-                      <p data-testid="finding-disposition"><span class="font-medium text-foreground">Disposition:</span> {finding.disposition.disposition}{#if finding.disposition.reason} — {finding.disposition.reason}{/if}{#if finding.disposition.ticket} · Ticket {finding.disposition.ticket}{/if}</p>
+                      <p data-testid="finding-disposition"><span class="font-medium text-fg-1">Disposition:</span> {finding.disposition.disposition}{#if finding.disposition.reason} — {finding.disposition.reason}{/if}{#if finding.disposition.ticket} · Ticket {finding.disposition.ticket}{/if}</p>
                     {/if}
                   </li>
                 {/each}
@@ -665,20 +718,21 @@
             {#if round.sentToWorkerAt}
               <div class="flex items-center gap-3">
                 <div class="h-px flex-1 bg-border"></div>
-                <span class="rounded-full bg-muted px-3 py-0.5 text-xs text-muted-foreground">findings sent to worker</span>
+                <span class="rounded-full bg-muted px-3 py-0.5 text-caption text-fg-3">findings sent to worker</span>
                 <div class="h-px flex-1 bg-border"></div>
               </div>
             {/if}
-            <div class="animate-rise rounded-2xl border bg-card px-4 py-3 text-xs" data-testid="declined-card">
-              <div class="mb-1 font-medium">Declined with reason</div>
+            <div class="animate-rise rounded-2xl border bg-card px-4 py-3 text-caption shadow-elev-1" data-testid="declined-card">
+              <div class="mb-1 text-body font-medium">Declined with reason</div>
               {#each round.declined as d, k (d + ':' + k)}
-                <p class="text-muted-foreground">{d}</p>
+                <p class="text-fg-3">{d}</p>
               {/each}
             </div>
           {/if}
         {/each}
+        {/if}
 
-        {#if ticket.workerSession}
+        {#if show('transcript') && ticket.workerSession}
           <div class="pb-2" data-testid="worker-composer">
             <Composer
               status={workerStatus}
@@ -691,75 +745,79 @@
         {/if}
       </div>
 
-      <!-- Right panel: agents, acceptance, gate, follow-ups. -->
-      <aside class="w-full shrink-0 space-y-3 text-xs lg:w-80" data-testid="ticket-panel">
-        <div class="rounded-2xl border bg-card p-3" data-testid="agents">
-          <div class="mb-2 text-muted-foreground">Agents</div>
-          <div class="space-y-1">
+      <!-- Facts: agents, acceptance, gate, follow-ups. -->
+      {#if show('facts')}
+      <aside class="flex w-full shrink-0 flex-col gap-3 text-body lg:w-80" data-testid="ticket-panel">
+        <div class="rounded-2xl border bg-card p-4 shadow-elev-1" data-testid="agents">
+          <div class="mb-2 flex items-center gap-1">
+            <h3 class="text-title text-fg-1">Agents</h3>
+            <InfoHint label="About agents">Reviewers and scouts open read-only.</InfoHint>
+          </div>
+          <div class="flex flex-col gap-0.5">
             {#each agents as a (a.sessionId)}
               {@const accent = harnessStyle(a.harness ?? '').accent}
               <button
                 type="button"
                 onclick={() => openAgent(a)}
-                class="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm hover:bg-accent/60 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none"
+                class="motion-standard flex min-h-9 w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left text-body outline-none hover:bg-surface-3/60 focus-visible:ring-[3px] focus-visible:ring-ring/40 max-md:min-h-11"
               >
                 <span class="size-2 shrink-0 rounded-full" style="background: {accent}" title={a.harness || 'agent'}></span>
                 <span class="min-w-0 flex-1 truncate font-medium">{a.name || a.sessionId.slice(0, 8)}</span>
-                <span class="rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground">{agentRoleLabel(a.role)}</span>
+                <Chip>{agentRoleLabel(a.role)}</Chip>
               </button>
             {/each}
           </div>
-          <div class="mt-2 text-[11px] text-muted-foreground">Reviewers and scouts open read-only.</div>
         </div>
 
-        <div class="rounded-2xl border bg-card p-3" data-testid="acceptance">
-          <div class="mb-2 text-muted-foreground">Acceptance · {progress.done} of {progress.total}</div>
+        <div class="rounded-2xl border bg-card p-4 shadow-elev-1" data-testid="acceptance">
+          <h3 class="mb-2 text-title text-fg-1 tabular-nums">Acceptance · {progress.done} of {progress.total}</h3>
           {#if boxes.length}
-            <ul class="space-y-1 text-sm">
+            <ul class="flex flex-col gap-1.5 text-body">
               {#each boxes as b, i (b.text + ':' + i)}
-                <li class="flex gap-2 {b.checked ? '' : 'text-muted-foreground'}">
-                  {#if b.checked}<span class="text-green-400">✓</span>{:else}<span>○</span>{/if}<span class="min-w-0 [overflow-wrap:anywhere] [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-[0.85em]">{@html inlineMd(b.text)}</span>
+                <li class="flex gap-2 {b.checked ? 'text-fg-1' : 'text-fg-3'}">
+                  {#if b.checked}<CircleCheck class="mt-0.5 size-4 shrink-0 text-status-done" role="img" aria-label="Done" />{:else}<Circle class="mt-0.5 size-4 shrink-0 text-fg-4" role="img" aria-label="Open" />{/if}<span class="min-w-0 [overflow-wrap:anywhere] [&_code]:rounded [&_code]:bg-muted [&_code]:px-1 [&_code]:font-mono [&_code]:text-[0.85em]">{@html inlineMd(b.text)}</span>
                 </li>
               {/each}
             </ul>
           {:else}
-            <p class="text-muted-foreground">No checkboxes on this ticket.</p>
+            <EmptyState compact icon={icons.ticket} title="No checkboxes on this ticket" class="border-0 px-0" />
           {/if}
         </div>
 
-        <div class="rounded-2xl border bg-card p-3" data-testid="gate">
-          <div class="mb-1 text-muted-foreground">Gate</div>
+        <div class="rounded-2xl border bg-card p-4 shadow-elev-1" data-testid="gate">
+          <h3 class="mb-2 text-title text-fg-1">Gate</h3>
           {#if gate.length}
-            <ul class="space-y-1 text-sm">
+            <ul class="flex flex-col gap-1.5 text-body">
               {#each gate as g (g.type)}
-                <li class="flex items-center gap-1.5">
+                <li class="flex items-center gap-2">
                   <span>{g.short}</span>
                   {#if g.verdict === 'pass' && g.fresh}
-                    <span class="text-green-400">pass</span>
+                    <Chip tone="done">pass</Chip>
                   {:else if g.verdict === 'pass'}
-                    <span class="text-green-400">pass</span><span class="text-muted-foreground">· holds</span>
+                    <Chip tone="done">pass</Chip><span class="text-caption text-fg-3">· holds</span>
                   {:else if g.verdict === 'changes'}
-                    <span class="text-amber-300">changes</span>
+                    <Chip tone="needs-you">changes</Chip>
                   {:else}
-                    <span class="text-amber-300">pending{#if ticket.tip} @ {shortTip(ticket.tip)}{/if}</span>
+                    <Chip tone="needs-you">pending{#if ticket.tip} @ {shortTip(ticket.tip)}{/if}</Chip>
                   {/if}
                 </li>
               {/each}
             </ul>
           {:else}
-            <p class="text-muted-foreground">No reviewers required.</p>
+            <EmptyState compact icon={icons.subagent} title="No reviewers required" class="border-0 px-0" />
           {/if}
         </div>
 
-        <div class="rounded-2xl border bg-card p-3" data-testid="followups">
-          <div class="mb-1 text-muted-foreground">Follow-ups from worker</div>
+        <div class="rounded-2xl border bg-card p-4 shadow-elev-1" data-testid="followups">
+          <h3 class="mb-2 text-title text-fg-1">Follow-ups from worker</h3>
           {#if ticket.followups}
-            <p class="text-sm whitespace-pre-wrap">{ticket.followups}</p>
+            <p class="whitespace-pre-wrap text-body [overflow-wrap:anywhere]">{ticket.followups}</p>
           {:else}
-            <p class="text-muted-foreground">None yet.</p>
+            <EmptyState compact icon={icons.subagent} title="No follow-ups yet" class="border-0 px-0" />
           {/if}
         </div>
       </aside>
+      {/if}
     </div>
   {/if}
 </div>
@@ -768,17 +826,17 @@
 <!-- Read-only drawer for a reviewer or scout: transcript only, no composer. -->
 {#if drawer}
   <div class="fixed inset-0 z-50" data-testid="agent-drawer">
-    <button type="button" aria-label="Close transcript" class="absolute inset-0 animate-in fade-in-0 bg-black/40 backdrop-blur-sm" onclick={closeDrawer}></button>
-    <div class="absolute inset-y-0 right-0 flex w-full max-w-xl animate-in fade-in-0 slide-in-from-right-4 flex-col border-l bg-sidebar duration-300">
+    <button type="button" aria-label="Close transcript" class="motion-emphasis absolute inset-0 animate-in fade-in-0 bg-black/40 backdrop-blur-sm" onclick={closeDrawer}></button>
+    <div class="motion-emphasis absolute inset-y-0 right-0 flex w-full max-w-xl animate-in fade-in-0 slide-in-from-right-4 flex-col border-l bg-sidebar pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-elev-3">
       <div class="flex items-center gap-2 border-b p-3">
         <span class="size-2 shrink-0 rounded-full" style="background: {harnessStyle(drawer.harness ?? '').accent}"></span>
-        <span class="min-w-0 flex-1 truncate text-sm font-semibold">{drawer.name || drawer.sessionId.slice(0, 8)}</span>
-        <Badge>{agentRoleLabel(drawer.role)}</Badge>
-        <Button variant="ghost" size="icon-sm" onclick={closeDrawer} aria-label="Close"><X /></Button>
+        <span class="min-w-0 flex-1 truncate text-title text-fg-1">{drawer.name || drawer.sessionId.slice(0, 8)}</span>
+        <Chip>{agentRoleLabel(drawer.role)}</Chip>
+        <IconButton icon={icons.dismiss} label="Close" onclick={closeDrawer} />
       </div>
-      <p class="border-b px-4 py-2 text-xs text-amber-300">Read-only transcript. Reviewers cannot be steered.</p>
+      <p class="border-b px-4 py-2 text-caption text-status-needs-you">Read-only transcript. Reviewers cannot be steered.</p>
       {#if dError}
-        <p role="alert" class="m-3 rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{dError}</p>
+        <ErrorState compact title={dError} class="m-3" />
       {/if}
       <div class="flex min-h-0 flex-1 flex-col">
         <Transcript

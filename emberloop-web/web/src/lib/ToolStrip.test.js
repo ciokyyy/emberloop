@@ -156,3 +156,41 @@ describe('ToolStrip live gating', () => {
     expect(container.querySelector('[data-testid="toolstrip-stage"]')?.textContent).toContain('+50 earlier lines');
   });
 });
+
+describe('ToolStrip collapsed summary line', () => {
+  it('starts collapsed with one toggle line and an icon per tool kind', () => {
+    const { container } = render(ToolStrip, { props: { block: liveBlock() } });
+    const toggle = container.querySelector('[data-testid="toolstrip-history-toggle"]');
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(toggle.getAttribute('aria-label')).toBe('Show tools');
+    expect(container.querySelector('[data-testid="toolstrip-history"]')?.getAttribute('data-open')).toBe('false');
+    expect(container.querySelector('.ts-collapse')?.getAttribute('data-open')).toBe('false');
+    const kinds = [...container.querySelectorAll('[data-testid="toolstrip-kinds"] svg')].map((n) => n.getAttribute('data-kind'));
+    expect(kinds).toEqual(['read', 'bash']);
+  });
+  it('expands and collapses with the same line', async () => {
+    const { container } = render(ToolStrip, { props: { block: liveBlock() } });
+    const toggle = container.querySelector('[data-testid="toolstrip-history-toggle"]');
+    await fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(container.querySelector('.ts-collapse')?.getAttribute('data-open')).toBe('true');
+    await fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  });
+  it('opens a failed strip so the error shows', () => {
+    const block = stripOf([
+      toolEv(1, 'tool_call_started', { id: 't1', name: 'bash', status: 'running' }),
+      toolEv(2, 'tool_call_updated', { id: 't1', name: 'bash', output: 'boom', status: 'failed' }),
+    ]);
+    const { container } = render(ToolStrip, { props: { block } });
+    expect(container.querySelector('[data-testid="toolstrip-history-toggle"]')?.getAttribute('aria-expanded')).toBe('true');
+  });
+  it('keeps a long settled run to one summary line until expanded', () => {
+    const events = [];
+    for (let i = 1; i <= 12; i++) events.push(toolEv(i, 'tool_call_started', { id: `t${i}`, name: i % 2 ? 'read' : 'grep', status: 'completed' }));
+    const block = { ...stripOf(events), settled: true, elapsedMs: 9100 };
+    const { container } = render(ToolStrip, { props: { block } });
+    expect(container.querySelector('[data-testid="toolstrip-summary"]')?.textContent).toBe('12 tools · 9.1s');
+    expect(container.querySelector('[data-testid="toolstrip-history"]')?.getAttribute('data-open')).toBe('false');
+  });
+});

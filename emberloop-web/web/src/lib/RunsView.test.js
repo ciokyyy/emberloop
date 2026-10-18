@@ -41,7 +41,9 @@ describe('RunsView preview and live run', () => {
     stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));
     const { container } = render(RunsView, { props: { workDir: '/repo' } });
     expect(await within(container).findByText('First')).toBeTruthy();
-    expect(within(container).getAllByText('01-first').length).toBe(2);
+    // Blockers read as chips ("after 01"), never as sentences.
+    expect(within(container).getByText('after 01')).toBeTruthy();
+    expect(within(container).queryByTestId('preview-row-01-first')).toBeTruthy();
     expect(within(container).getByText('1/2')).toBeTruthy();
     expect(within(container).getAllByText('code').length).toBe(2);
   });
@@ -64,6 +66,29 @@ describe('RunsView preview and live run', () => {
     expect(within(container).queryByTestId('design-worker-fallback-01-first')).toBeNull();
     await fireEvent.click(await within(container).findByRole('button', { name: 'code' }));
     expect(await within(container).findByTestId('design-worker-fallback-01-first')).toBeTruthy();
+  });
+
+  // A 10-Ticket spec must stay scannable on a 390 px phone: one line per
+  // Ticket plus chips, never a paragraph of prose.
+  it('previews ten Tickets as compact rows with no prose', async () => {
+    seedPreview(
+      Array.from({ length: 10 }, (_, i) => ({
+        id: `${String(i + 1).padStart(2, '0')}-ticket-${i + 1}`,
+        num: i + 1,
+        title: `Ticket ${i + 1} title`,
+        blockers: i === 0 ? [] : [`${String(i).padStart(2, '0')}-ticket-${i}`],
+        done: i % 2,
+        total: 2,
+      })),
+    );
+    stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));
+    const { container } = render(RunsView, { props: { workDir: '/repo' } });
+    const table = await within(container).findByTestId('preview-table');
+    expect(table.querySelectorAll('[data-testid^="preview-row-"]')).toHaveLength(10);
+    // No paragraphs inside the rows: title, type and chips only.
+    expect(table.querySelectorAll('p')).toHaveLength(0);
+    expect(within(table).getByText('after 09')).toBeTruthy();
+    expect(within(container).getByTestId('start-bar')).toBeTruthy();
   });
 
   it('prompts for a sidebar pick with nothing selected', async () => {
@@ -164,7 +189,7 @@ describe('RunsView preview and live run', () => {
     await fireEvent.click(within(container).getByRole('button', { name: 'List' }));
     const table = await within(container).findByTestId('live-tickets');
     expect(within(table).getByText('queued')).toBeTruthy();
-    expect(within(table).getAllByText('code').some((node) => /read-only after the Worker starts/i.test(node.getAttribute('title') || ''))).toBe(true);
+    expect(within(table).getAllByText('code').some((node) => /read-only after the Worker starts/i.test(node.closest('[title]')?.getAttribute('title') || ''))).toBe(true);
     await fireEvent.click(within(table).getByRole('button', { name: 'worker' }));
     expect(onOpenSession).toHaveBeenCalledWith('sess-abcdef123456');
   });
@@ -791,5 +816,52 @@ describe('RunsView preview and live run', () => {
     await fireEvent.click(within(container).getByRole('button', { name: 'Resume' }));
     await waitFor(() => expect(calls.some(({ path }) => path.endsWith('/api/runs/run-paused/resume'))).toBe(true));
     expect(calls.some(({ path }) => path.endsWith('/api/runs/run-paused/resume'))).toBe(true);
+  });
+
+  // Phone: a list is the default so the page keeps its own scroll, the Chain
+  // facts open in a bottom sheet, and the graph is an opt-in full screen.
+  it('lists Tickets on a phone, sheets their facts and opens the graph full screen', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((q) => ({ matches: q === '(max-width: 767px)', media: q, addEventListener() {}, removeEventListener() {} })));
+    const live = () => ({
+      id: 'run-phone',
+      spec: preview.spec,
+      status: 'running',
+      tickets: [
+        {
+          id: '01-first',
+          num: 1,
+          title: 'First',
+          state: 'needs-you',
+          needsYou: 'same refusal 3 times',
+          workerSession: 'sess-abcdef123456',
+          chain: { worker: { position: 1, total: 2, backend: 'pig', model: 'auto' } },
+          lastRefusal: 'same refusal 3 times',
+        },
+        { id: '02-second', num: 2, title: 'Second', state: 'queued' },
+      ],
+    });
+    stubRuns(async (path) => {
+      const p = String(path);
+      if (p.includes('/api/specs/preview')) return { ok: true, json: async () => preview };
+      if (p.includes('/api/specs')) return { ok: true, json: async () => ({ specs: [specRow] }) };
+      return { ok: true, json: async () => ({ run: live() }) };
+    });
+    const { container } = render(RunsView, { props: { runId: 'run-phone', onNavigate: vi.fn() } });
+
+    const cards = await within(container).findByTestId('live-tickets-cards');
+    // The graph never sits inline on a phone.
+    expect(within(container).queryByTestId('runs-graph')).toBeNull();
+
+    // Chain facts open in a bottom sheet instead of a wide table row.
+    await fireEvent.click(within(cards).getByRole('button', { name: 'Details for First' }));
+    await screen.findByTestId('ticket-sheet');
+    const sheet = await screen.findByRole('dialog');
+    expect(sheet.textContent).toMatch(/Worker 1\/2 · pig\/auto/);
+    expect(within(sheet).getByRole('button', { name: 'Open Ticket' })).toBeTruthy();
+
+    // Graph is an explicit, full-screen opt-in that owns its own gestures.
+    await fireEvent.click(within(container).getByRole('button', { name: 'Graph' }));
+    const full = await screen.findByTestId('graph-fullscreen');
+    expect(within(full).getByTestId('runs-graph').getAttribute('data-fullscreen')).toBe('');
   });
 });

@@ -1,5 +1,10 @@
 <script>
-  import { ArrowLeft, Save, Trash2 } from '@lucide/svelte';
+  import { Save, Trash2 } from '@lucide/svelte';
+  import PageHeader from './ui/page-header.svelte';
+  import Skeleton from './ui/skeleton.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
+  import { icons } from './icons.js';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
 
@@ -82,27 +87,21 @@
   }
 </script>
 
-<main class="min-h-0 flex-1 overflow-auto" data-testid="project-settings-page">
+<div class="min-h-0 flex-1 overflow-auto" data-testid="project-settings-page">
   <div class="mx-auto flex w-full max-w-3xl flex-col gap-6 px-4 py-6 sm:px-6">
-    <Button variant="ghost" class="-ml-3 w-fit" onclick={onBack}>
-      <ArrowLeft />Back to Sessions
-    </Button>
-
+    <PageHeader title="Project settings" icon={icons.project} scope={project?.name ?? ''} scopeIcon={icons.project} onBack={onBack} backLabel="Back to Sessions" class="animate-rise" />
     {#if loading}
-      <p role="status">Loading Project settings…</p>
+      <div role="status" aria-label="Loading Project settings" class="flex flex-col gap-3">
+        <Skeleton class="h-24 rounded-2xl" />
+        <Skeleton class="h-24 rounded-2xl" />
+      </div>
     {:else if !project}
-      <section class="flex flex-col gap-2" data-testid="project-settings-missing">
-        <h1 class="text-xl font-semibold tracking-tight">Project not found</h1>
-        <p class="text-sm text-muted-foreground">This Project may have been removed.</p>
-      </section>
+      <EmptyState icon={icons.project} title="Project not found" description="This Project may have been removed." data-testid="project-settings-missing" />
     {:else}
-      <header class="flex flex-col gap-1">
-        <h1 class="text-xl font-semibold tracking-tight">{project.name} settings</h1>
-        <p class="break-all text-sm text-muted-foreground">{project.path}</p>
-      </header>
+      <p class="-mt-4 break-all text-caption text-fg-3">{project.path}</p>
 
       {#if error}
-        <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</p>
+        <ErrorState compact title={error} class="animate-rise" />
       {/if}
 
       <section class="flex flex-col gap-3 rounded-2xl border bg-card p-4" aria-labelledby="project-name-heading">
@@ -142,4 +141,4 @@
       </section>
     {/if}
   </div>
-</main>
+</div>

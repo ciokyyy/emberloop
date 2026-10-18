@@ -6,11 +6,11 @@
 
 **Blocked by:** 03-queue-item-control
 
-**Status:** open
+**Status:** done
 
-- [ ] Copy and Share work for User, assistant and report messages; failures show a message
-- [ ] Edit and resend fills the composer without sending; attachments carried over
-- [ ] Queued item Edit and Cancel call the new API and update the row live
-- [ ] Queued and delivered messages are visually distinct (markup and state, styling comes in 06)
-- [ ] Long-press and keyboard open the action menu; no hover-only control
-- [ ] `Card.test.js`, `Composer.test.js`, `Transcript.test.js` cover each action; `npm test` and `npm run build` pass; `web/README.md` maps tests
+- [x] Copy and Share work for User, assistant and report messages; failures show a message
+- [x] Edit and resend fills the composer without sending; attachments carried over
+- [x] Queued item Edit and Cancel call the new API and update the row live
+- [x] Queued and delivered messages are visually distinct (markup and state, styling comes in 06)
+- [x] Long-press and keyboard open the action menu; no hover-only control
+- [x] `Card.test.js`, `Composer.test.js`, `Transcript.test.js` cover each action; `npm test` and `npm run build` pass; `web/README.md` maps tests

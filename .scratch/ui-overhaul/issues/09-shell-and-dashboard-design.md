@@ -6,10 +6,10 @@
 
 **Blocked by:** 01-design-foundation
 
-**Status:** open
+**Status:** done
 
-- [ ] Dashboard answers "what needs me" in the first viewport on both sizes
-- [ ] Rows share one structure across Sessions, Runs and Projects
-- [ ] Every area uses the same page header pattern
-- [ ] No horizontal overflow; 44 px targets on phone; Back closes drawer
-- [ ] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass
+- [x] Dashboard answers "what needs me" in the first viewport on both sizes
+- [x] Rows share one structure across Sessions, Runs and Projects
+- [x] Every area uses the same page header pattern
+- [x] No horizontal overflow; 44 px targets on phone; Back closes drawer
+- [x] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass

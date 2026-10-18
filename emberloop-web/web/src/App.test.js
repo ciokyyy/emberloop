@@ -3,6 +3,7 @@ import { render, within, screen, fireEvent, cleanup } from '@testing-library/sve
 import App from './App.svelte';
 import { resetDiscovery } from './lib/runsDiscovery.svelte.js';
 import { stopLive } from './lib/live.js';
+import { readReportState } from './lib/reportState.js';
 
 // jsdom has no ResizeObserver; App measures the floating composer with one.
 beforeEach(() => {
@@ -121,8 +122,8 @@ describe('Project scope routes', () => {
     expect(within(drawer).getByTestId('project-switcher')).toBeTruthy();
     expect(within(drawer).getByRole('button', { name: 'Project scope' }).textContent).toContain('All projects');
 
-    await fireEvent.keyDown(within(drawer).getByRole('button', { name: 'Project scope' }), { key: 'ArrowDown' });
-    await fireEvent.pointerUp(await screen.findByRole('option', { name: 'Demo' }), { button: 0, pointerId: 1, pointerType: 'mouse' });
+    await fireEvent.click(within(drawer).getByRole('button', { name: 'Project scope' }));
+    await fireEvent.click(await screen.findByRole('option', { name: 'Demo' }));
     await vi.waitFor(() => expect(window.location.pathname).toBe('/p/project-one'));
     expect(screen.queryByTestId('drawer-scroll')).toBeNull();
   });
@@ -217,8 +218,8 @@ describe('Project scope routes', () => {
 
     try {
       const { container } = render(App);
-      expect(await within(container).findByRole('heading', { name: 'Demo settings' })).toBeTruthy();
-      await fireEvent.input(within(container).getByRole('textbox', { name: 'Project name' }), { target: { value: 'Renamed' } });
+      expect(await within(container).findByRole('heading', { level: 1, name: 'Project settings' })).toBeTruthy();
+      await fireEvent.input(await within(container).findByRole('textbox', { name: 'Project name' }), { target: { value: 'Renamed' } });
       await fireEvent.click(within(container).getByRole('button', { name: 'Save name' }));
       await vi.waitFor(() => expect(calls).toContainEqual({ path: '/api/projects/project-one', method: 'PATCH', body: { name: 'Renamed' } }));
 
@@ -409,7 +410,7 @@ describe('Non-blocking boot', () => {
 
     const { container } = render(App);
     expect(await within(container).findByTestId('dashboard')).toBeTruthy();
-    expect(within(container).getByRole('status').textContent).toContain('Loading Dashboard');
+    expect(within(container).getByRole('status', { name: 'Loading Dashboard' })).toBeTruthy();
     await vi.waitFor(() => expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/dashboard'))).toBe(true));
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/sessions'))).toBe(false);
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/runs'))).toBe(false);
@@ -489,6 +490,35 @@ describe('Non-blocking boot', () => {
     expect(within(container).queryByTestId('session-missing')).toBeNull();
   });
 
+  it('marks a live report read when it arrives in the open Session', async () => {
+    history.replaceState(null, '', '/s/s1');
+    localStorage.clear();
+    const session = { id: 's1', harness: 'fake', model: 'fake-model', title: 'Session A', projectId: 'p1', owner: 'u1', status: 'idle' };
+    const project = { id: 'p1', name: 'Demo', path: '/repo' };
+    const EventSource = fakeEvents();
+    vi.stubGlobal('EventSource', EventSource);
+    vi.stubGlobal('fetch', vi.fn(async (url) => {
+      const path = String(url);
+      if (path === '/api/sessions') return response([session]);
+      if (path === '/api/projects') return response([project]);
+      if (path.startsWith('/api/sessions/s1?')) return response({ session, events: [], reports: [], resumable: true, hasMore: false, firstSeq: 0 });
+      if (path === '/api/sessions/s1/queue') return response({ queue: [] });
+      if (path.endsWith('/api/runs')) return response({ runs: [] });
+      if (path.endsWith('/api/specs')) return response({ specs: [] });
+      return response([]);
+    }));
+
+    const { container } = render(App, { props: { user: { id: 'u1', username: 'Alice' } } });
+    await within(container).findByRole('button', { name: /Session A/ });
+    const stream = EventSource.instances.find((item) => item.url.includes('/api/sessions/s1/events'));
+    expect(stream).toBeTruthy();
+    stream.onmessage({ data: JSON.stringify({ seq: 1, kind: 'prompt', mode: 'steer', text: 'Subagents group-1 finished:\n- child-1 (worker): completed' }) });
+
+    await vi.waitFor(() => expect(readReportState('u1', 's1').readSeq).toBe(1));
+    expect(readReportState('u1', 's1').reports).toHaveLength(1);
+    expect(container.querySelector('[data-testid="report-unread"]')).toBeNull();
+  });
+
 
   it('renders Quota before its own read finishes without fetching either list', async () => {
     history.replaceState(null, '', '/quota');
@@ -533,14 +563,14 @@ describe('Non-blocking boot', () => {
     vi.stubGlobal('fetch', fetchMock);
 
     const { container } = render(App);
-    expect(within(container).getByRole('heading', { name: 'Runs' })).toBeTruthy();
+    expect(within(container).getByRole('heading', { level: 1, name: 'Runs' })).toBeTruthy();
     const sidebar = await within(container).findByTestId('runs-sidebar');
-    expect(within(sidebar).getByText('Loading Runs…')).toBeTruthy();
+    expect(within(sidebar).getByRole('status', { name: 'Loading Runs' })).toBeTruthy();
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/runs'));
     expect(fetchMock.mock.calls.some(([url]) => String(url).endsWith('/api/sessions'))).toBe(false);
 
     runs.resolve({ runs: [] });
-    expect(await within(sidebar).findByText('No Runs yet.')).toBeTruthy();
+    expect(await within(sidebar).findByText('No Runs yet')).toBeTruthy();
   });
   it('renders all 40 Run summaries after the cold Runs shell', async () => {
     history.replaceState(null, '', '/runs');
@@ -588,7 +618,10 @@ describe('Sidebar collapse', () => {
   const usersBody = [{ id: 'u1', username: 'cioky', admin: true, online: true }];
   const me = { id: 'u1', username: 'cioky', admin: true };
   const projectsBody = [{ id: 'p1', name: 'demo', path: '/tmp/el-e2e/repo' }];
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
   function stubApp() {
     // Each render boots from the URL: reset it, or a leaked /runs from an
     // earlier test opens the Runs view instead of the chat sidebar.
@@ -704,6 +737,86 @@ describe('Sidebar collapse', () => {
     expect(within(container).queryByLabelText('composer')).toBeNull();
     expect(within(container).queryByTestId('context-meter')).toBeNull();
   });
+  it('keeps the chat header to icon controls: status glyph, context ring, Git and the Session menu', async () => {
+    stubApp();
+    history.replaceState(null, '', '/s/s1');
+    vi.stubGlobal('EventSource', class { close() {} });
+    const usage = { seq: 9, kind: 'usage', text: JSON.stringify({ used: 150000, size: 1000000 }) };
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => {
+        if (String(u).includes('/git')) return { ok: true, json: async () => ({ isRepo: true, branch: 'main', files: ['a', 'b'], log: [] }) };
+        if (String(u).includes('/api/sessions/s1')) return { ok: true, json: async () => ({ session: sessionsBody[0], events: [usage], resumable: true, hasMore: false, firstSeq: 0 }) };
+        if (String(u).includes('/api/sessions')) return { ok: true, json: async () => sessionsBody };
+        if (String(u).includes('/api/projects')) return { ok: true, json: async () => projectsBody };
+        if (String(u).includes('/api/users')) return { ok: true, json: async () => usersBody };
+        return { ok: true, json: async () => [] };
+      }),
+    );
+    const { container } = render(App, { props: { user: me } });
+    const header = await vi.waitFor(() => {
+      const el = container.querySelector('[data-page-header]');
+      expect(el?.querySelector('[data-testid="context-meter"]')).toBeTruthy();
+      return el;
+    });
+    expect(within(header).getByRole('status', { name: 'Live' })).toBeTruthy();
+    expect(await within(header).findByRole('button', { name: 'Context 15% used' })).toBeTruthy();
+    // New Session lives in the phone Session menu, which stays icon-only too.
+    expect(within(header).getByRole('button', { name: 'Session menu' })).toBeTruthy();
+    const git = await within(header).findByRole('button', { name: 'Git: main, 2 changed' });
+    expect(git.textContent.trim()).toBe('');
+    expect(header.textContent).not.toMatch(/% ctx/);
+    for (const b of header.querySelectorAll('button')) expect(b.textContent.trim(), b.getAttribute('aria-label')).toBe('');
+  });
+  it('opens the phone Session menu from the chat header and closes it with system Back', async () => {
+    // The phone layout is what puts the sheet on the back stack.
+    vi.stubGlobal('matchMedia', (query) => ({ matches: query === '(max-width: 767px)', media: query, addEventListener() {}, removeEventListener() {} }));
+    stubApp();
+    vi.stubGlobal('EventSource', class { close() {} });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => {
+        if (String(u).includes('/queue')) return { ok: true, json: async () => ({ queue: [] }) };
+        if (String(u).includes('/git')) return { ok: true, json: async () => ({ isRepo: true, branch: 'main', files: [] }) };
+        if (String(u).includes('/api/sessions/s1')) return { ok: true, json: async () => ({ session: sessionsBody[0], events: [], resumable: true, hasMore: false, firstSeq: 0 }) };
+        if (String(u).includes('/api/sessions')) return { ok: true, json: async () => sessionsBody };
+        if (String(u).includes('/api/projects')) return { ok: true, json: async () => projectsBody };
+        if (String(u).includes('/api/users')) return { ok: true, json: async () => usersBody };
+        return { ok: true, json: async () => [] };
+      }),
+    );
+    const { container } = render(App, { props: { user: me } });
+    const header = await vi.waitFor(() => {
+      const el = container.querySelector('[data-page-header]');
+      expect(el?.querySelector('[data-testid="chat-menu"]')).toBeTruthy();
+      return el;
+    });
+    await fireEvent.click(within(header).getByRole('button', { name: 'Session menu' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Session' });
+    expect(sheet.textContent).toContain('New Session');
+    await vi.waitFor(() => expect(sheet.textContent).toContain('demo'));
+
+    await fireEvent.click(within(sheet).getByRole('button', { name: /Switch Project/ }));
+    expect(await screen.findByRole('dialog', { name: 'Project' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to Session' }));
+    expect(await screen.findByRole('dialog', { name: 'Session' })).toBeTruthy();
+
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await vi.waitFor(() => expect(screen.queryByRole('dialog', { name: 'Session' })).toBeNull());
+  });
+  it('keeps the composer dock above the keyboard and the home indicator', async () => {
+    stubApp();
+    history.replaceState(null, '', '/s/s1');
+    const { container } = render(App, { props: { user: me } });
+    const dock = await vi.waitFor(() => {
+      const el = container.querySelector('[data-testid="composer-dock"]');
+      expect(el).toBeTruthy();
+      return el;
+    });
+    expect(container.querySelector('.app-shell')).toBeTruthy();
+    expect(dock.className).toContain('var(--safe-bottom)');
+    expect(within(dock).getByLabelText('composer')).toBeTruthy();
+  });
   it('closes the Git panel on Escape and returns focus to its toggle', async () => {
     stubApp();
     history.replaceState(null, '', '/s/s1');
@@ -785,7 +898,7 @@ describe('Quota navigation', () => {
     const drawerNav = within(drawerQuotaSidebar).getByRole('navigation', { name: 'Quota and Providers navigation' });
     expect(drawerNav.className).toContain('overflow-visible');
     expect(drawerNav.className).not.toContain('overflow-auto');
-    expect(within(drawerNav).getByRole('link', { name: 'Quota' }).className).toContain('max-md:min-h-11');
+    expect(within(drawerNav).getByRole('link', { name: 'Quota' }).className).toContain('max-md:min-h-14');
     const areaTabs = screen.getByTestId('drawer-nav');
     for (const tab of within(areaTabs).getAllByRole('button')) expect(tab.className).toContain('min-h-14');
     expect(screen.getByRole('button', { name: 'Close menu' }).className).toContain('max-md:size-11');
@@ -887,7 +1000,7 @@ describe('Run summaries in the Session sidebar', () => {
     vi.stubGlobal('fetch', fetchMock);
     const { container } = render(App, { props: { user: { id: 'u1', username: 'alice', admin: true } } });
     const runRow = await within(container).findByRole('button', { name: /demo.*Run/i });
-    expect(runRow.className).toContain('border-amber-500/30');
+    expect(runRow.className).toContain('border-status-needs-you/30');
     expect(runRow.closest('section[aria-label="alice"]')).toBeTruthy();
     expect(fetchMock.mock.calls.some(([url]) => /\/api\/runs\/[^/]+$/.test(String(url)))).toBe(false);
   });

@@ -1,10 +1,18 @@
 <script>
-  import { onDestroy } from 'svelte';
-  import { Plus, SquarePen, Menu, FolderPlus, GitBranch, Search, LogOut, X } from '@lucide/svelte';
+  import { onDestroy, setContext } from 'svelte';
+  import { Plus, FolderPlus, Search, LogOut, Settings } from '@lucide/svelte';
   import Button from './lib/ui/button.svelte';
   import Input from './lib/ui/input.svelte';
   import Badge from './lib/ui/badge.svelte';
   import Sheet from './lib/ui/sheet.svelte';
+  import PageHeader from './lib/ui/page-header.svelte';
+  import IconButton from './lib/ui/icon-button.svelte';
+  import Skeleton from './lib/ui/skeleton.svelte';
+  import EmptyState from './lib/ui/empty-state.svelte';
+  import ErrorState from './lib/ui/error-state.svelte';
+  import { SHELL_KEY } from './lib/shell.js';
+  import { icons } from './lib/icons.js';
+  import { dotState } from './lib/owners.js';
   import Transcript from './lib/Transcript.svelte';
   import OwnerGroups from './lib/OwnerGroups.svelte';
   import AddProjectDialog from './lib/AddProjectDialog.svelte';
@@ -23,6 +31,12 @@
   import ProvidersPage from './lib/ProvidersPage.svelte';
   import MemoryPage from './lib/MemoryPage.svelte';
   import ContextMeter from './lib/ContextMeter.svelte';
+  import ChatMenu from './lib/ChatMenu.svelte';
+  import { isPhone, trackViewport } from './lib/viewport.js';
+  import { backOpen, closeBacks, holdBack, selfPopPending } from './lib/overlayBack.js';
+  import { scopePath } from './lib/projectScope.js';
+  import ChatStatus from './lib/ChatStatus.svelte';
+  import { activeTool } from './lib/toolstrip.js';
   import VersionBadge from './lib/VersionBadge.svelte';
   import Rail from './lib/Rail.svelte';
   import QuotaSidebar from './lib/QuotaSidebar.svelte';
@@ -32,7 +46,7 @@
   import ProjectSettingsPage from './lib/ProjectSettingsPage.svelte';
   import DrawerNav from './lib/DrawerNav.svelte';
   import { modelLabel } from './lib/harnesses.js';
-  import { groupTranscriptCached, createTranscriptCache, latestUsageCached, createUsageCache, withImageNote, compressBlockReason } from './lib/events.js';
+  import { groupTranscriptCached, createTranscriptCache, latestUsageCached, createUsageCache, withImageNote, compressBlockReason, parseReport } from './lib/events.js';
   import { parsePath, buildPath } from './lib/router.js';
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
@@ -40,6 +54,7 @@
   import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, suggestProject, addProject, renameProject, removeProject, updateProject, getGit, getDisk } from './lib/api.js';
   import { people, refreshPeople, personFor } from './lib/people.svelte.js';
   import { runsStore } from './lib/runsStore.js';
+  import { readReportState, writeReportState, rememberReports, receiveReport, setReportDismissed, markReportsRead } from './lib/reportState.js';
 
   // The signed-in User and the sign-out action, both supplied by Root.svelte.
   let { user = null, onSignOut = () => {} } = $props();
@@ -56,6 +71,7 @@
   let currentId = $state(null);
   let meta = $state(null);
   let events = $state([]);
+  let reportState = $state({ reports: [], dismissed: [], readSeq: 0, latestSeq: 0 });
   let lastSeq = $state(0);
   let connected = $state(true);
   let projects = $state([]);
@@ -72,6 +88,8 @@
   let gitOpen = $state(false);
   let compressOpen = $state(false);
   let compressBusy = $state(false);
+  // The context detail sheet is shared by the header ring and the phone menu.
+  let contextOpen = $state(false);
   let compressError = $state('');
   // A Backend that can compress sets compressible: in place (SDK pig) or by Handoff.
   // compressNote gives the reason Compress is off, when it is off.
@@ -142,8 +160,38 @@
     }
     return runsStore.subscribe((value) => { runs = value; });
   });
-  const isPhone = () => !!window.matchMedia?.('(max-width: 767px)').matches;
+  // Phones follow the visual viewport: the shell shrinks above the keyboard and
+  // sheets read the keyboard inset (lib/viewport.js sets the CSS variables).
+  $effect(() => trackViewport());
+
   let menuOpen = $state(false);
+  // Every page header (ui/page-header.svelte) renders the phone menu button
+  // from this context, so no page repeats the drawer wiring.
+  const MENU_LABELS = {
+    settings: 'Settings menu',
+    providers: 'Quota and Providers menu',
+    dashboard: 'Project switcher',
+    'project-settings': 'Project switcher',
+  };
+  setContext(SHELL_KEY, {
+    openMenu: () => (menuOpen = true),
+    get menuLabel() {
+      return MENU_LABELS[view] ?? 'Sessions';
+    },
+  });
+
+  // The Git panel is a sheet on phones: system Back closes it. On desktop the
+  // side panel leaves Back to the router.
+  $effect(() => {
+    if (!gitOpen || !isPhone()) return;
+    return holdBack(() => (gitOpen = false));
+  });
+  // Areas where something needs the User: a needs-you dot on the Rail and the
+  // drawer tabs. Runs are known only while the Run list is subscribed.
+  const attention = $derived({
+    chat: sessions.some((s) => dotState(s) === 'needs' && (!user || !s.owner || s.owner === user.id)),
+    runs: runs.some((r) => (r.counts?.needsYou ?? 0) > 0),
+  });
   // The phone drawer owns one transient history entry while open, so system
   // Back closes it instead of leaving the app. A navigation from the drawer
   // reuses that entry (replaceState); a plain close (scrim, Escape, X) pops it.
@@ -242,7 +290,7 @@
   // the deriveds on purpose: regroups stay driven by events/sessions/status.
   let transcriptCache = createTranscriptCache();
   let usageCache = createUsageCache();
-  const blocks = $derived([
+  const rawBlocks = $derived([
     ...groupTranscriptCached(events, sessionsById, { working: meta?.status === 'working' }, transcriptCache).map((b) =>
       b.card === 'user' && swappedTexts.some((t) => b.body === t || String(b.body ?? '').startsWith(`${t}\n`))
         ? { ...b, noAnim: true }
@@ -258,10 +306,58 @@
       events: [],
     })),
   ]);
+  const blocks = $derived(rawBlocks.filter((block) => !block.report || !reportState.dismissed.includes(Number(block.report.seq))));
+  const sidebarSessions = $derived(sessions.map((session) => {
+    const state = session.id === currentId ? reportState : readReportState(user?.id, session.id);
+    return {
+      ...session,
+      reportUnread: Math.max(Number(session.reportSeq) || 0, state.latestSeq) > state.readSeq,
+    };
+  }));
+  function syncReportState(id, eventList, readThrough = 0) {
+    if (!id || !user?.id) return;
+    const reports = eventList
+      .filter((event) => event.kind === 'prompt')
+      .map((event) => {
+        const report = parseReport(event.text);
+        return report ? { ...report, seq: event.seq } : null;
+      })
+      .filter(Boolean);
+    let next = rememberReports(readReportState(user.id, id), reports);
+    const latest = Math.max(Number(readThrough) || 0, next.latestSeq, ...reports.map((report) => Number(report.seq) || 0));
+    if (latest) next = markReportsRead(next, latest);
+    writeReportState(user.id, id, next);
+    if (currentId === id) reportState = next;
+  }
+  function noteIncomingReport(id, event) {
+    if (!id || !user?.id) return;
+    const report = parseReport(event.text);
+    if (!report) return;
+    const next = receiveReport(readReportState(user.id, id), { ...report, seq: event.seq }, currentId === id);
+    writeReportState(user.id, id, next);
+    if (currentId === id) reportState = next;
+    sessions = sessions.map((session) => session.id === id ? { ...session, reportSeq: event.seq } : session);
+  }
+  function changeReportDismissal(seq, dismissed) {
+    if (!currentId || !user?.id) return;
+    reportState = setReportDismissed(reportState, seq, dismissed);
+    writeReportState(user.id, currentId, reportState);
+  }
   const usage = $derived(latestUsageCached(events, usageCache));
   const status = $derived(meta?.status ?? 'idle');
   // Height of the floating composer stack: the transcript pads by it so the last block never hides.
   let overlayH = $state(176);
+
+  // The phone chat menu: the context label it shows and the scope row that
+  // switches Project without leaving the Session.
+  const menuContext = $derived.by(() => {
+    if (!usage) return 'No context usage yet';
+    const pct = Math.min(100, Math.round((usage.used / usage.size) * 100));
+    return `${pct}% context used`;
+  });
+  const menuProjectName = $derived(
+    activeProject?.name ?? (isProjectScoped ? (scopeProjectId === '' ? 'No project' : 'Project not found') : 'All projects'),
+  );
 
   // Routes: / is the Dashboard; /p/<id> scopes Sessions and Runs, while /s/<id>
   // stays canonical and derives its scope from the Session metadata.
@@ -278,7 +374,10 @@
 
   const goSession = (id) => navigate(buildPath({ name: 'session', id }));
   const openRow = (row) => {
-    if (row.kind !== 'run') return goSession(row.id);
+    if (row.kind !== 'run') {
+      if (currentId === row.id) syncReportState(row.id, [], reportState.latestSeq);
+      return goSession(row.id);
+    }
     const path = scopedProjectRouteId
       ? buildPath({ name: 'project-run', projectId: scopedProjectRouteId, runId: row.id })
       : buildPath({ name: 'run', runId: row.id });
@@ -287,14 +386,17 @@
 
   function navigate(path, { replace = false } = {}) {
     // Any navigation closes the phone drawer (backdrop taps close it
-    // through the dialog itself).
+    // through the dialog itself) and every open sheet, reusing their history
+    // entry for the destination so Back never replays a closed sheet.
     const fromDrawer = drawerEntry && history.state?.drawer;
     menuOpen = false;
+    const sheets = closeBacks();
     if (fromDrawer) {
       // The drawer's own entry becomes the destination: no dead Back step.
       drawerEntry = false;
       history.replaceState(null, '', path);
-    } else if (replace) history.replaceState(null, '', path);
+    } else if (sheets) history.replaceState(null, '', path);
+    else if (replace) history.replaceState(null, '', path);
     else if (window.location.pathname + window.location.search !== path) history.pushState(null, '', path);
     return applyRoute(path);
   }
@@ -322,6 +424,7 @@
     atSeq = 0;
     resumable = true;
     resumeNote = '';
+    reportState = { reports: [], dismissed: [], readSeq: 0, latestSeq: 0 };
   }
 
   function resolveProjectScope(projectId) {
@@ -577,6 +680,7 @@
     pendingSends = [];
     view = 'chat';
     currentId = id;
+    reportState = readReportState(user?.id, id);
     draftOpen = false;
     draftPickGeneration++;
     draftPick = null;
@@ -600,6 +704,7 @@
       if (token !== openToken || currentId !== id) return;
       meta = body.session;
       events = body.events ?? [];
+      syncReportState(id, body.reports ?? events, body.session?.reportSeq ?? 0);
       resumable = body.resumable ?? true;
       compressible = body.compressible ?? false;
       compressNote = body.compressNote ?? '';
@@ -639,6 +744,7 @@
       const body = await getSession(id, { before: firstSeq, turns: TAIL_TURNS });
       if (id !== currentId) return;
       events = [...(body.events ?? []), ...events];
+      syncReportState(id, body.events ?? []);
       hasMore = body.hasMore ?? false;
       firstSeq = body.firstSeq ?? firstSeq;
     } catch {
@@ -683,6 +789,7 @@
       if (e.seq <= lastSeq) return;
       lastSeq = e.seq;
       batch.push(e);
+      if (e.kind === 'prompt' && parseReport(e.text)) noteIncomingReport(id, e);
       if (isChunkEvent(e)) scheduleChunk();
       else flushBatch();
       if (e.kind === 'prompt') {
@@ -900,12 +1007,15 @@
       ignorePop = false;
       return;
     }
-    // Back with the drawer open only closes it.
+    // Back with the drawer open only closes it; a sheet closes itself in
+    // lib/overlayBack.js, and a sheet's own close pops its entry.
+    if (selfPopPending()) return;
     if (menuOpen) {
       drawerEntry = false;
       menuOpen = false;
       return;
     }
+    if (backOpen()) return;
     // Forward onto a stale drawer entry: stay on the page.
     if (e?.state?.drawer) return;
     applyRoute(window.location.pathname + window.location.search);
@@ -972,8 +1082,12 @@
 
 {#snippet projectSettingsLink()}
   {#if scopedProject}
-    <Button variant="ghost" class="justify-start" onclick={() => navigate(buildPath({ name: 'project-settings', projectId: scopedProject.id }))}>Project settings</Button>
+    <Button variant="ghost" size="sm" class="justify-start text-fg-2" onclick={() => navigate(buildPath({ name: 'project-settings', projectId: scopedProject.id }))}><Settings />Project settings</Button>
   {/if}
+{/snippet}
+
+{#snippet sideTitle(text)}
+  <h2 class="px-2 pt-1 text-title text-fg-1">{text}</h2>
 {/snippet}
 
 {#snippet rail2(inDrawer = false)}
@@ -982,7 +1096,7 @@
     {#if view === 'runs'}
       <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
       {@render projectSettingsLink()}
-      <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Specs and Runs</h1></div>
+      {@render sideTitle('Specs and Runs')}
       <RunsSidebar
         workDir={isProjectScoped ? (scopedProject?.path ?? '') : (meta?.workDir ?? '')}
         projectId={scopedProjectRouteId}
@@ -993,9 +1107,9 @@
       />
     {:else if view === 'project-settings'}
       <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
-      <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Project settings</h1></div>
+      {@render sideTitle('Project settings')}
     {:else if view === 'settings'}
-      <div class="px-2 pt-1.5 pb-1"><h1 class="text-base font-semibold tracking-tight">Settings</h1></div>
+      {@render sideTitle('Settings')}
       <SettingsNav current={route.section ?? null} onNavigate={navigate} />
     {:else if view === 'quota' || view === 'providers'}
       <QuotaSidebar onNavigate={navigate} inDrawer={inDrawer} current={view} />
@@ -1006,26 +1120,23 @@
       <ProjectSwitcher projects={projects} selectedId={switcherProjectId} onNavigate={navigate} />
       {@render projectSettingsLink()}
       {#if !inDrawer}
-      <div class="flex items-center justify-between px-2 pt-1">
-        <h1 class="text-sm font-semibold tracking-tight">{scopedProject?.name ?? (scopeProjectId === '' && isProjectScoped ? 'No project' : 'Sessions')}</h1>
-        <Button variant="ghost" size="icon-sm" onclick={newChat} aria-label="New Session"><SquarePen /></Button>
-      </div>
+        {@render sideTitle(scopedProject?.name ?? (scopeProjectId === '' && isProjectScoped ? 'No project' : 'Sessions'))}
       {/if}
       <Button variant="secondary" class="justify-start" onclick={newChat}><Plus />New chat</Button>
       <div class="relative">
-        <Search class="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted-foreground" />
-        <Input type="search" placeholder="Filter chats" aria-label="Filter chats" bind:value={chatQuery} class="h-9 rounded-full bg-muted pr-3 pl-10" />
+        <Search class="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-fg-3" aria-hidden="true" />
+        <Input type="search" placeholder="Filter chats" aria-label="Filter chats" bind:value={chatQuery} class="h-9 rounded-full bg-muted pr-3 pl-10 max-md:h-11" />
       </div>
       <div class="flex items-center justify-between px-2">
-        <span class="text-xs font-medium text-muted-foreground">Sessions</span>
-        <Button variant="ghost" size="icon-sm" class="size-6" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }} aria-label="Add project"><FolderPlus class="size-3.5" /></Button>
+        <h2 class="text-caption font-medium text-fg-3">Sessions</h2>
+        <IconButton icon={FolderPlus} label="Add project" class="size-7 max-md:size-11" onclick={() => { if (inDrawer) menuOpen = false; addOpen = true; }} />
       </div>
       <div class="min-h-0 flex-1 overflow-auto">
         {#if sessionsLoaded && (route.name !== 'session' || scopeProjectId !== null)}
           <OwnerGroups
             users={people.list}
             me={user}
-            {sessions}
+            sessions={sidebarSessions}
             {runs}
             {projects}
             {currentId}
@@ -1039,7 +1150,10 @@
             onRemove={remove}
           />
         {:else}
-          <p class="px-3 py-4 text-sm text-muted-foreground" role="status" data-testid="sessions-loading">{sessionsLoaded ? 'Loading Project scope…' : 'Loading Sessions…'}</p>
+          <div role="status" class="flex flex-col gap-1 px-1" data-testid="sessions-loading">
+            <span class="sr-only">{sessionsLoaded ? 'Loading Project scope…' : 'Loading Sessions…'}</span>
+            {#each [0, 1, 2, 3] as i (i)}<Skeleton class="h-12 rounded-xl" />{/each}
+          </div>
         {/if}
       </div>
     {/if}
@@ -1050,19 +1164,23 @@
 {#snippet accountFooter()}
   {#if user}
     <div class="animate-rise flex items-center gap-2 border-t pt-3" data-testid="account">
-      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
+      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-caption font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
       <div class="min-w-0 flex-1 leading-tight">
-        <p class="truncate text-sm font-medium">{user.username}</p>
-        {#if user.admin}<p class="text-xs text-muted-foreground">Admin</p>{/if}
+        <p class="truncate text-body font-medium text-fg-1">{user.username}</p>
+        {#if user.admin}<p class="text-caption text-fg-3">Admin</p>{/if}
       </div>
-      <Button variant="ghost" size="icon-sm" onclick={onSignOut} aria-label="Sign out" title="Sign out"><LogOut /></Button>
+      <IconButton icon={LogOut} label="Sign out" onclick={onSignOut} />
     </div>
   {/if}
 {/snippet}
 
-<div class="flex h-dvh">
-  <Rail view={areaView} collapsed={sideCollapsed} onToggleSidebar={toggleSidebar} onSelect={navigateArea} />
-  <aside data-testid="sidebar" inert={sideCollapsed || view === 'memory'} aria-hidden={sideCollapsed || view === 'memory'} class="flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] duration-300 ease-[var(--ease-smooth)] max-md:hidden {sideCollapsed || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
+{#snippet chatStatus()}
+  <ChatStatus {connected} {status} />
+{/snippet}
+
+<div class="app-shell flex">
+  <Rail view={areaView} collapsed={sideCollapsed} {attention} onToggleSidebar={toggleSidebar} onSelect={navigateArea} />
+  <aside data-testid="sidebar" inert={sideCollapsed || view === 'memory'} aria-hidden={sideCollapsed || view === 'memory'} class="motion-emphasis flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] max-md:hidden {sideCollapsed || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
     <div class="flex min-h-0 w-64 flex-1 flex-col gap-3 p-3" aria-hidden={sideCollapsed}>
       {#key view}
         {@render rail2(false)}
@@ -1070,12 +1188,8 @@
       {@render accountFooter()}
     </div>
   </aside>
-  <div class="flex min-w-0 flex-1 flex-col">
+  <main class="flex min-w-0 flex-1 flex-col">
     {#if view === 'settings'}
-      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
-        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Settings menu"><Menu /></Button>
-        <span class="truncate text-base font-semibold">{route.section ? (SETTINGS_PAGES[route.section]?.label ?? 'Settings') : 'Settings'}</span>
-      </header>
       {#if route.section}
         {#key route.section}
           <SettingsPage section={route.section} onBack={() => navigate('/settings')} admin={!!user?.admin} />
@@ -1084,29 +1198,14 @@
         <SettingsHub onNavigate={navigate} />
       {/if}
     {:else if view === 'quota'}
-      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
-        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
-      </header>
       <QuotaPage onBack={() => navigate('/')} onNavigate={navigate} />
     {:else if view === 'providers'}
-      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
-        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Quota and Providers menu"><Menu /></Button>
-      </header>
       <ProvidersPage admin={!!user?.admin} />
     {:else if view === 'memory'}
-      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
-        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
-      </header>
       <MemoryPage userId={user?.id ?? 'default'} onBack={() => navigate('/')} />
     {:else if view === 'dashboard'}
-      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
-        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Project switcher"><Menu /></Button>
-      </header>
       <DashboardPage {projects} onNavigate={navigate} />
     {:else if view === 'project-settings'}
-      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
-        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Project switcher"><Menu /></Button>
-      </header>
       <ProjectSettingsPage
         project={scopedProject}
         loading={!projectsLoaded}
@@ -1116,9 +1215,6 @@
         onRemove={removeFromSettings}
       />
     {:else if view === 'runs'}
-      <header class="flex items-center gap-3 px-4 py-2.5 md:hidden">
-        <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
-      </header>
       <RunsView
         workDir={isProjectScoped ? (scopedProject?.path ?? '') : (meta?.workDir ?? '')}
         projectId={scopedProjectRouteId}
@@ -1127,46 +1223,79 @@
         onOpenSession={goSession}
         onNavigate={navigate}
         onOpenMenu={() => (menuOpen = true)}
+        scopeLabel={isProjectScoped ? (scopedProject?.name ?? (scopeProjectId === '' ? 'No project' : 'Project not found')) : 'All projects'}
       />
     {:else}
-    <header class="flex items-center gap-2 px-3 py-2.5 backdrop-blur-xl sm:gap-3 sm:px-4">
-      <Button variant="ghost" size="icon-sm" class="md:hidden" onclick={() => (menuOpen = true)} aria-label="Sessions"><Menu /></Button>
-      <div class="flex min-w-0 flex-col leading-tight" data-testid="header-title">
-        <span class="truncate text-sm font-semibold">{meta?.title || activeProject?.name || (drafting ? 'New chat' : 'No Session')}</span>
-        <span class="truncate text-xs text-muted-foreground">{[creatorName ? `created by ${creatorName}` : '', meta?.title ? activeProject?.name : '', meta ? `${meta.harness} · ${modelLabel(meta.harness, meta.model)}${meta.effort ? ` · ${meta.effort}` : ''}` : drafting ? `${draftHarness} · ${modelLabel(draftHarness, draftModel)}${(draftHarness === 'claude' || draftHarness === 'pig') && draftEffort !== 'default' ? ` · ${draftEffort}` : ''}` : ''].filter(Boolean).join(' · ')}</span>
-      </div>
-      {#if connected}
-        <span class="size-2 shrink-0 rounded-full bg-green-500" title="Live" role="status" aria-label="Live" data-testid="live"></span>
-      {:else}
-        <Badge variant="warning" class="shrink-0" data-testid="reconnect"><span class="size-1.5 animate-pulse rounded-full bg-amber-500"></span>Reconnecting…</Badge>
-      {/if}
-      <div class="ml-auto flex shrink-0 gap-2">
-        {#if currentId && usage}
-          <span class="flex items-center self-center text-xs tabular-nums text-muted-foreground max-sm:hidden" title="{usage.used} of {usage.size} tokens" data-testid="header-context">{Math.min(100, Math.round((usage.used / usage.size) * 100))}% ctx</span>
-        {/if}
-        <Button variant="ghost" size="sm" class="md:hidden" onclick={newChat}><Plus />New</Button>
-        {#if activeProject}
-          <Button variant="outline" size="sm" id="git-toggle" onclick={() => (gitOpen = !gitOpen)} aria-pressed={gitOpen}>
-            <GitBranch /><span class="max-w-24 truncate max-sm:hidden">{git?.isRepo ? git.branch : 'Git'}</span>{#if git?.isRepo && git.files.length}<Badge class="px-1.5 py-0 text-[10px]">{git.files.length}</Badge>{/if}
-          </Button>
-        {/if}
-      </div>
-    </header>
+    <div class="px-3 py-1.5 sm:px-4">
+      <PageHeader
+        size="compact"
+        title={meta?.title || activeProject?.name || (drafting ? 'New chat' : 'No Session')}
+        scope={meta?.title ? (activeProject?.name ?? '') : ''}
+        scopeIcon={icons.project}
+        subtitle={[creatorName ? `created by ${creatorName}` : '', meta ? `${meta.harness} · ${modelLabel(meta.harness, meta.model)}${meta.effort ? ` · ${meta.effort}` : ''}` : drafting ? `${draftHarness} · ${modelLabel(draftHarness, draftModel)}${(draftHarness === 'claude' || draftHarness === 'pig') && draftEffort !== 'default' ? ` · ${draftEffort}` : ''}` : ''].filter(Boolean).join(' · ')}
+        titleAttrs={{ 'data-testid': 'header-title' }}
+        scopeAttrs={{ class: 'shrink-[2] max-sm:hidden' }}
+        meta={chatStatus}
+      >
+        {#snippet actions()}
+          {#if currentId && !drafting && !sessionMissing}
+            <ContextMeter
+              model={modelLabel(meta?.harness, meta?.model ?? '')}
+              {usage}
+              bind:open={contextOpen}
+              onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null}
+              busy={status === 'working'}
+              {compressing}
+              {compressNote}
+            />
+          {/if}
+          {#if activeProject}
+            <span class="relative inline-flex max-md:hidden">
+              <IconButton
+                icon={icons.git}
+                label={git?.isRepo ? `Git: ${git.branch}${git.files.length ? `, ${git.files.length} changed` : ''}` : 'Git status'}
+                id="git-toggle"
+                variant={gitOpen ? 'secondary' : 'ghost'}
+                aria-pressed={gitOpen}
+                onclick={() => (gitOpen = !gitOpen)}
+              />
+              {#if git?.isRepo && git.files.length}
+                <span class="pointer-events-none absolute right-0.5 top-0.5 size-2 rounded-full bg-status-needs-you ring-2 ring-background" data-testid="git-dirty" aria-hidden="true"></span>
+              {/if}
+            </span>
+          {/if}
+          {#if !sessionMissing}
+            <ChatMenu
+              model={meta ? modelLabel(meta.harness, meta.model) : ''}
+              context={menuContext}
+              projectName={menuProjectName}
+              {projects}
+              selectedId={switcherProjectId}
+              {git}
+              onNewSession={newChat}
+              onOpenGit={activeProject ? () => (gitOpen = true) : null}
+              onOpenContext={currentId && !drafting ? () => (contextOpen = true) : null}
+              onSelectScope={(value) => navigate(scopePath(value))}
+            />
+          {/if}
+        {/snippet}
+      </PageHeader>
+    </div>
 
     <DiskBanner status={disk} />
 
     {#if loadError}
-      <p role="alert" class="mx-3 rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive sm:mx-4">{loadError}</p>
+      <ErrorState compact title={loadError} class="mx-3 animate-rise sm:mx-4" />
     {/if}
 
     <div class="flex min-h-0 flex-1">
-      <main class="relative flex min-w-0 flex-1 flex-col">
+      <div class="relative flex min-w-0 flex-1 flex-col">
         {#if sessionMissing}
-          <div class="mx-auto flex w-full max-w-3xl flex-col items-center gap-3 px-4 py-24 text-center" data-testid="session-missing">
-            <p class="text-lg font-semibold tracking-tight">Session not found</p>
-            <p class="text-sm text-muted-foreground">It was deleted or the link is wrong. Pick another chat.</p>
-            <Button variant="secondary" onclick={() => navigate('/')}>Back to chats</Button>
-          </div>
+          <EmptyState icon={icons.session} title="Session not found" description="It was deleted or the link is wrong. Pick another chat." class="mx-auto w-full max-w-3xl py-16" data-testid="session-missing">
+            {#snippet action()}
+              <Button variant="secondary" onclick={() => navigate('/')}>Back to chats</Button>
+            {/snippet}
+          </EmptyState>
         {:else}
         {#if currentId && !resumable}
           <p data-testid="read-only" class="mx-4 rounded-xl bg-amber-500/10 px-4 py-2 text-sm text-amber-300">
@@ -1188,9 +1317,13 @@
           sessionId={currentId}
           {sessions}
           onOpenSession={goSession}
+          reports={reportState.reports}
+          dismissedReports={reportState.dismissed}
+          onDismissReport={(seq) => changeReportDismissal(seq, true)}
+          onRestoreReport={(seq) => changeReportDismissal(seq, false)}
         />
         {/if}
-        <div bind:clientHeight={overlayH} class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/90 to-transparent px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-10 sm:px-4">
+        <div bind:clientHeight={overlayH} data-testid="composer-dock" class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/90 to-transparent px-3 pb-[max(1.25rem,var(--safe-bottom))] pt-10 sm:px-4">
           <div class="pointer-events-auto mx-auto flex w-full max-w-3xl flex-col gap-2">
             {#if currentId && meta?.compressBlock}
               {@const bannerFor = currentId}
@@ -1216,10 +1349,15 @@
             {/if}
             {#if !sessionMissing}
             {#if failedDraftPrompt?.sessionId === currentId}
-              <div role="alert" data-testid="failed-draft-prompt" class="animate-rise flex flex-wrap items-center gap-2 rounded-2xl border bg-card p-3 text-sm">
-                <span class="min-w-0 flex-1">The first prompt was not sent.</span>
-                <Button variant="outline" disabled={sending} onclick={retryFailedDraftPrompt}>Retry first prompt</Button>
-              </div>
+              <ErrorState
+                compact
+                title="The first prompt was not sent."
+                retryLabel="Retry first prompt"
+                onRetry={retryFailedDraftPrompt}
+                busy={sending}
+                class="animate-rise"
+                data-testid="failed-draft-prompt"
+              />
             {/if}
             {#if drafting}
               <DraftBar bind:harness={draftHarness} bind:model={draftModel} bind:effort={draftEffort} />
@@ -1232,18 +1370,12 @@
             {/if}
               <Composer status="idle" busy={sending || !!draftPick} onSend={send} />
             {:else if currentId && resumable && !meta?.scout}
-              <Composer {status} busy={sending} sessionId={currentId} onSend={send} onStop={() => interruptSession(currentId)} />
-            {/if}
-            {#if currentId && !drafting}
-              <!-- The meter always renders, read-only on scout, ended and
-                   unresumable Sessions: only the Compress button and the
-                   composer stay gated by canCompress. -->
-              <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} {compressNote} />
+              <Composer {status} busy={sending} sessionId={currentId} activity={activeTool(blocks)} onSend={send} onStop={() => interruptSession(currentId)} />
             {/if}
             {/if}
           </div>
         </div>
-      </main>
+      </div>
 
       <div class="flex min-h-0 p-3 pl-0 max-lg:contents">
         {#if gitOpen && activeProject}
@@ -1252,22 +1384,22 @@
       </div>
     </div>
     {/if}
-  </div>
+  </main>
 </div>
 
 <Sheet bind:open={menuOpen} title={view === 'runs' ? 'Specs and Runs' : view === 'settings' ? 'Settings' : view === 'project-settings' ? 'Project settings' : view === 'dashboard' ? 'All projects' : view === 'quota' || view === 'providers' ? 'Quota and Providers' : view === 'memory' ? 'Memory' : 'Sessions'}>
   <div class="flex shrink-0 items-center gap-2" data-testid="drawer-head">
     {#if user}
-      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-xs font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
+      <span class="grid size-8 shrink-0 place-items-center rounded-full bg-muted text-caption font-semibold uppercase" aria-hidden="true">{user.username.slice(0, 1)}</span>
       <div class="min-w-0 flex-1 leading-tight" data-testid="account">
-        <p class="truncate text-sm font-medium">{user.username}</p>
-        {#if user.admin}<p class="text-xs text-muted-foreground">Admin</p>{/if}
+        <p class="truncate text-body font-medium text-fg-1">{user.username}</p>
+        {#if user.admin}<p class="text-caption text-fg-3">Admin</p>{/if}
       </div>
-      <Button variant="ghost" size="icon-sm" onclick={onSignOut} aria-label="Sign out" title="Sign out"><LogOut /></Button>
+      <IconButton icon={LogOut} label="Sign out" onclick={onSignOut} />
     {:else}
       <span class="flex-1"></span>
     {/if}
-    <Button variant="ghost" size="icon-sm" onclick={() => (menuOpen = false)} aria-label="Close menu"><X /></Button>
+    <IconButton icon={icons.dismiss} label="Close menu" onclick={() => (menuOpen = false)} />
   </div>
   <!-- One scroll region for the contextual lists: nothing nests a second scroller. -->
   <div class="-mx-1 min-h-0 flex-1 overflow-y-auto overscroll-contain px-1" data-testid="drawer-scroll">
@@ -1275,7 +1407,7 @@
       {@render rail2(true)}
     {/key}
   </div>
-  <DrawerNav view={areaView} onSelect={navigateArea} />
+  <DrawerNav view={areaView} {attention} onSelect={navigateArea} />
   <VersionBadge inline />
 </Sheet>
 <CompressDialog open={compressOpen} busy={compressBusy} error={compressError} {usage} onClose={() => (compressOpen = false)} onCompress={runCompress} />

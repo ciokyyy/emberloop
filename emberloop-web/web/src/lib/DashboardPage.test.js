@@ -52,15 +52,42 @@ describe('All projects Dashboard', () => {
 
     expect(await screen.findByText('Renamed Project')).toBeTruthy();
     expect(screen.getByText('Active Session')).toBeTruthy();
-    expect(screen.getByText('/repo/.scratch/demo/spec.md')).toBeTruthy();
+    expect(screen.getByText('demo')).toBeTruthy();
     expect(screen.getByText('Home Session')).toBeTruthy();
     expect(screen.queryByText('Idle Session')).toBeNull();
     expect(container.querySelectorAll('[data-testid="dashboard-project"]')).toHaveLength(2);
 
-    await fireEvent.click(screen.getByRole('button', { name: /Active Session Running/ }));
+    await fireEvent.click(screen.getByRole('button', { name: /Active Session/ }));
     expect(onNavigate).toHaveBeenLastCalledWith('/s/session-active');
-    await fireEvent.click(screen.getByRole('button', { name: '/repo/.scratch/demo/spec.md Needs you' }));
+    await fireEvent.click(screen.getByRole('button', { name: /demo/ }));
     expect(onNavigate).toHaveBeenLastCalledWith('/p/stable-project-id/runs/run-needs-you');
+    await fireEvent.click(screen.getByRole('button', { name: 'Open Renamed Project' }));
+    expect(onNavigate).toHaveBeenLastCalledWith('/p/stable-project-id');
+  });
+
+  it('leads with Needs you counts and lists those rows before Running', async () => {
+    vi.stubGlobal('EventSource', FakeEventSource);
+    vi.stubGlobal('fetch', vi.fn(async () => response({
+      groups: {
+        p1: {
+          sessions: [
+            { id: 's-run', title: 'Runs fine', status: 'working', harness: 'pig' },
+            { id: 's-need', title: 'Waits on you', status: 'needs-you', harness: 'claude' },
+          ],
+          runs: [],
+        },
+      },
+    })));
+    render(DashboardPage, { props: { projects: [{ id: 'p1', name: 'One', path: '/one' }] } });
+    const stats = await screen.findByTestId('dashboard-stats');
+    const [needs, running] = stats.querySelectorAll('[data-stat-value]');
+    expect(needs.textContent).toBe('1');
+    expect(running.textContent).toBe('1');
+    const titles = screen.getAllByTestId('dashboard-session').map((row) => row.textContent);
+    expect(titles[0]).toContain('Waits on you');
+    expect(titles[1]).toContain('Runs fine');
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeTruthy();
+    expect(screen.getByText('All projects')).toBeTruthy();
   });
 
   it('shows an empty state when the active payload has no groups', async () => {

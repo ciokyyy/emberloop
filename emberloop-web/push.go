@@ -383,6 +383,27 @@ func (d *Daemon) pushTurnDone(meta SessionMeta, status string, seq int64) {
 	go d.push.notify(payload)
 }
 
+// isGroupReportPrompt distinguishes group-mode results from the individual
+// prompt text used by deliver-each. Only group-mode reports use this format.
+func isGroupReportPrompt(text string) bool {
+	return strings.HasPrefix(text, "Subagents ") && strings.Contains(text, " finished:\n")
+}
+
+// pushSubagentsFinished replaces the ordinary turn-complete push after a
+// grouped report has been processed by its parent. The service worker only
+// shows the OS notification when no browser client is visible.
+func (d *Daemon) pushSubagentsFinished(meta SessionMeta, seq int64) {
+	if meta.Scout || meta.ParentID != "" || meta.Owner == "" {
+		return
+	}
+	payload := pushPayload(pushMessage{
+		Title: sessionTitle(meta), Body: "Subagents finished", Tag: "subagents:" + meta.ID,
+		SessionID: meta.ID, Cue: "notification", Key: "subagents:" + meta.ID + ":" + itoa(seq),
+		Path: "/s/" + meta.ID,
+	})
+	go d.push.notify(payload)
+}
+
 // pushSudo sends a notification when an agent asks to run sudo: the turn
 // cannot continue without the user, on any session depth.
 func (d *Daemon) pushSudo(meta SessionMeta, reqID, command string) {

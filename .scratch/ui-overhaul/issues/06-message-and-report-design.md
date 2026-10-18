@@ -6,11 +6,11 @@
 
 **Blocked by:** 01-design-foundation, 04-message-actions-logic, 05-report-notices-logic
 
-**Status:** open
+**Status:** done
 
-- [ ] A report never looks like a User message at 390 px or 1280 px
-- [ ] Actions are icon buttons with tooltip and accessible name; no hover-only access on phone
-- [ ] Queued versus delivered is readable in under a second
-- [ ] Reports tray readable with 1 and with 10 reports; no overflow
-- [ ] Console and a11y clean; screenshots at both sizes attached in the review
-- [ ] `npm test`, `npm run build` pass; `.emberloop/check` passes
+- [x] A report never looks like a User message at 390 px or 1280 px
+- [x] Actions are icon buttons with tooltip and accessible name; no hover-only access on phone
+- [x] Queued versus delivered is readable in under a second
+- [x] Reports tray readable with 1 and with 10 reports; no overflow
+- [x] Console and a11y clean; screenshots at both sizes attached in the review
+- [x] `npm test`, `npm run build` pass; `.emberloop/check` passes

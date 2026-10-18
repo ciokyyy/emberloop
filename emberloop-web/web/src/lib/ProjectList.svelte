@@ -1,8 +1,9 @@
 <!-- Project sections of one User group: a collapsible header per Project (a "+"
      starts a draft chat there), then that Project's Session rows. -->
 <script>
-  import { Folder, FolderOpen, ChevronRight, Plus, Trash2, Pencil } from '@lucide/svelte';
-  import Button from './ui/button.svelte';
+  import { ChevronRight, Plus, Trash2 } from '@lucide/svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import { icons } from './icons.js';
   import SessionList from './SessionList.svelte';
   import { isCollapsed, togglePref, readJSON, writeJSON } from './sidebar.js';
 
@@ -35,26 +36,28 @@
     {@const project = { id: sec.key, name: sec.name, path: sec.path }}
     <section aria-label={sec.name} class="animate-rise">
       <div
-        class="group flex items-center gap-1 rounded-xl px-1 py-1 text-sm transition-colors hover:bg-accent/50"
-        class:bg-accent={!!sec.key && sec.key === activeProjectId && !currentId}
+        class="motion-standard group flex items-center gap-1 rounded-xl px-1 hover:bg-surface-3/50"
+        class:bg-surface-3={!!sec.key && sec.key === activeProjectId && !currentId}
       >
         <button
-          class="flex min-w-0 flex-1 items-center gap-1.5 rounded-lg px-1.5 py-1 text-left focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none"
+          class="flex min-h-10 min-w-0 flex-1 items-center gap-2 rounded-lg px-1.5 text-left text-body focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none max-md:min-h-11"
           onclick={() => toggle(id)}
           aria-expanded={open}
           title={sec.path}
         >
-          <ChevronRight class="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 {open ? 'rotate-90' : ''}" />
-          {#if open}<FolderOpen class="size-4 shrink-0 text-muted-foreground" />{:else}<Folder class="size-4 shrink-0 text-muted-foreground" />{/if}
-          <span class="min-w-0 flex-1 truncate font-medium">{sec.name}</span>
-          {#if !open && sec.roots.length}<span class="text-xs text-muted-foreground">{sec.roots.length}</span>{/if}
+          <ChevronRight class="motion-standard size-4 shrink-0 text-fg-3 {open ? 'rotate-90' : ''}" aria-hidden="true" />
+          <icons.project class="size-4 shrink-0 text-fg-3" aria-hidden="true" />
+          <span class="min-w-0 flex-1 truncate font-medium text-fg-1">{sec.name}</span>
+          {#if !open && sec.roots.length}<span class="text-caption tabular-nums text-fg-3">{sec.roots.length}</span>{/if}
         </button>
         {#if sec.key}
-          <span class="flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
-            <Button variant="ghost" size="icon-sm" class="size-6" aria-label="Rename {sec.name}" onclick={() => onRename(project)}><Pencil class="size-3" /></Button>
-            <Button variant="ghost" size="icon-sm" class="size-6" aria-label="Remove {sec.name}" onclick={() => onRemove(project)}><Trash2 class="size-3" /></Button>
+          <!-- Rename and Remove are hover and keyboard actions on desktop; phone
+               has them in Project settings, so no hover-only control remains. -->
+          <span class="flex items-center opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100 max-md:hidden">
+            <IconButton icon={icons.edit} label="Rename {sec.name}" class="size-7" onclick={() => onRename(project)} />
+            <IconButton icon={Trash2} label="Remove {sec.name}" class="size-7" onclick={() => onRemove(project)} />
           </span>
-          <Button variant="ghost" size="icon-sm" class="size-6" aria-label="New chat in {sec.name}" onclick={() => onNew(sec.key)}><Plus class="size-3.5" /></Button>
+          <IconButton icon={Plus} label="New chat in {sec.name}" class="size-7 max-md:size-11" onclick={() => onNew(sec.key)} />
         {/if}
       </div>
       {#if open}

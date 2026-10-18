@@ -6,11 +6,11 @@
 
 **Blocked by:** none
 
-**Status:** open
+**Status:** done
 
-- [ ] Report Event renders as a notice kind with group name, counts and a one-line preview
-- [ ] Dismiss hides it; reload keeps it hidden; tray restores it
-- [ ] Unread marker shows on the Session row until the Session is opened
-- [ ] Push body "Subagents finished" is sent for group completion when no client is watching, and not for each-mode children
-- [ ] No Steer title or sender badge ever appears on a report
-- [ ] `events.test.js`, `Card.test.js`, `GroupCard.test.js`, `SessionList.test.js` and push trigger Go test cover this; `npm test`, `npm run build` and `.emberloop/check` pass
+- [x] Report Event renders as a notice kind with group name, counts and a one-line preview
+- [x] Dismiss hides it; reload keeps it hidden; tray restores it
+- [x] Unread marker shows on the Session row until the Session is opened
+- [x] Push body "Subagents finished" is sent for group completion when no client is watching, and not for each-mode children
+- [x] No Steer title or sender badge ever appears on a report
+- [x] `events.test.js`, `Card.test.js`, `GroupCard.test.js`, `SessionList.test.js` and push trigger Go test cover this; `npm test`, `npm run build` and `.emberloop/check` pass

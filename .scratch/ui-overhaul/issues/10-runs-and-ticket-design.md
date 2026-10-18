@@ -6,10 +6,10 @@
 
 **Blocked by:** 01-design-foundation
 
-**Status:** open
+**Status:** done
 
-- [ ] Preview of a 10-Ticket spec fits in two screens at 390 px without paragraph text
-- [ ] Graph never captures touch scroll on the page
-- [ ] Ticket page shows the next action without scrolling on both sizes
-- [ ] GitPanel and diff usable at 390 px (view-only is acceptable)
-- [ ] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass
+- [x] Preview of a 10-Ticket spec fits in two screens at 390 px without paragraph text
+- [x] Graph never captures touch scroll on the page
+- [x] Ticket page shows the next action without scrolling on both sizes
+- [x] GitPanel and diff usable at 390 px (view-only is acceptable)
+- [x] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass

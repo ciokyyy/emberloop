@@ -6,8 +6,8 @@
 
 **Blocked by:** 06-message-and-report-design, 08-mobile-chat-design, 12-states-auth-motion-design
 
-**Status:** open
+**Status:** done
 
-- [ ] E2E layout check covers every route in `router.js` at both sizes
-- [ ] Docs list the new components and tests
-- [ ] `npm test`, `npm run build`, `npm run test:e2e` and `.emberloop/check` pass
+- [x] E2E layout check covers every route in `router.js` at both sizes
+- [x] Docs list the new components and tests
+- [x] `npm test`, `npm run build`, `npm run test:e2e` and `.emberloop/check` pass

@@ -1,6 +1,10 @@
 <!-- Settings section: interface sounds. Per-device, stored in localStorage. -->
 <script>
+  import { Volume2 } from '@lucide/svelte';
   import Button from './ui/button.svelte';
+  import Panel from './ui/panel.svelte';
+  import Section from './ui/section.svelte';
+  import SettingRow from './ui/setting-row.svelte';
   import Select from './ui/select.svelte';
   import Slider from './ui/slider.svelte';
   import Switch from './ui/switch.svelte';
@@ -33,25 +37,19 @@
   }
 </script>
 
-<section class="animate-rise flex flex-col gap-2" data-testid="sound-settings">
-  <div class="px-1">
-    <h2 class="text-sm font-semibold">Sounds</h2>
-    <p class="text-xs text-muted-foreground">Short sounds when a turn finishes, an approval waits, or a Run needs you. This device only.</p>
-  </div>
-  <div class="divide-y divide-border overflow-hidden rounded-2xl border bg-card">
-    <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)_auto]">
-      <div class="min-w-0">
-        <div class="text-sm font-medium">Sound pack</div>
-        <div class="text-xs text-muted-foreground">Minimal is dry and quiet; the rest are louder personalities.</div>
-      </div>
+<Section
+  title="Sounds"
+  icon={Volume2}
+  hint="Short sounds when a turn finishes, an approval waits, or a Run needs you. This device only."
+  class="animate-rise"
+  data-testid="sound-settings"
+>
+  <Panel>
+    <SettingRow label="Sound pack" hint="Minimal is dry and quiet; the rest are louder personalities." width="field" controlClass="flex items-center gap-2">
       <Select aria-label="Sound pack" value={prefs.pack} items={packItems} onValueChange={(v) => v && save({ ...prefs, pack: v })} />
       <Button variant="outline" size="sm" onclick={preview}>Preview</Button>
-    </div>
-    <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_minmax(0,16rem)_3rem]">
-      <div class="min-w-0">
-        <div class="text-sm font-medium">Volume</div>
-        <div class="text-xs text-muted-foreground">Master volume for every sound on this device.</div>
-      </div>
+    </SettingRow>
+    <SettingRow label="Volume" hint="Master volume for every sound on this device." width="field" controlClass="flex items-center gap-3">
       <Slider
         label="Master volume"
         value={volumePct}
@@ -60,27 +58,19 @@
         step={1}
         onValueChange={(v) => save({ ...prefs, volume: v / 100 })}
       />
-      <span class="text-right text-xs tabular-nums text-muted-foreground">{volumePct}%</span>
-    </div>
-    <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_auto]">
-      <div class="min-w-0">
-        <div class="text-sm font-medium">Mute</div>
-        <div class="text-xs text-muted-foreground">Silence every sound without losing the volume.</div>
-      </div>
+      <span class="w-10 shrink-0 text-right text-caption tabular-nums text-fg-3">{volumePct}%</span>
+    </SettingRow>
+    <SettingRow label="Mute" hint="Silence every sound without losing the volume." inline>
       <Switch aria-label="Mute all sounds" checked={prefs.muted} onCheckedChange={(v) => save({ ...prefs, muted: v })} />
-    </div>
+    </SettingRow>
     {#each SOUND_EVENTS as ev (ev.id)}
-      <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_auto]">
-        <div class="min-w-0">
-          <div class="text-sm font-medium">{ev.label}</div>
-          <div class="text-xs text-muted-foreground">{ev.hint}</div>
-        </div>
+      <SettingRow label={ev.label} hint={ev.hint} inline>
         <Switch
           aria-label={`${ev.label} sound`}
           checked={prefs.events[ev.id] ?? true}
           onCheckedChange={(v) => save({ ...prefs, events: { ...prefs.events, [ev.id]: v } })}
         />
-      </div>
+      </SettingRow>
     {/each}
-  </div>
-</section>
+  </Panel>
+</Section>

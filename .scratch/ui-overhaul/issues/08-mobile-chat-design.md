@@ -6,10 +6,10 @@
 
 **Blocked by:** 06-message-and-report-design, 07-chat-chrome-design
 
-**Status:** open
+**Status:** done
 
-- [ ] At 390 px: no horizontal overflow, composer never covered by keyboard (emulated inset), all primary targets at least 44 px
-- [ ] Sheets close with Back and with an explicit close icon
-- [ ] Scroll-to-latest and composer do not overlap
-- [ ] Desktop layout screenshots unchanged within the Ticket's intent
-- [ ] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass
+- [x] At 390 px: no horizontal overflow, composer never covered by keyboard (emulated inset), all primary targets at least 44 px
+- [x] Sheets close with Back and with an explicit close icon
+- [x] Scroll-to-latest and composer do not overlap
+- [x] Desktop layout screenshots unchanged within the Ticket's intent
+- [x] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass

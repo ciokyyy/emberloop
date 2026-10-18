@@ -6,11 +6,11 @@
 
 **Blocked by:** none
 
-**Status:** open
+**Status:** done
 
-- [ ] Tokens, scales and the icon map exist and are used by the new primitives
-- [ ] All primitives render at 390 px and 1280 px with no overflow; icon-only buttons have tooltip and accessible name
-- [ ] Quota page rebuilt on the primitives, percent first, no horizontal scroll
-- [ ] `web/DESIGN.md` documents tokens, primitives, icon map and the three rules
-- [ ] Reduced-motion disables non-essential motion
-- [ ] `npm test` and `npm run build` pass in `emberloop-web/web/`; `web/README.md` maps new tests; `.emberloop/check` passes
+- [x] Tokens, scales and the icon map exist and are used by the new primitives
+- [x] All primitives render at 390 px and 1280 px with no overflow; icon-only buttons have tooltip and accessible name
+- [x] Quota page rebuilt on the primitives, percent first, no horizontal scroll
+- [x] `web/DESIGN.md` documents tokens, primitives, icon map and the three rules
+- [x] Reduced-motion disables non-essential motion
+- [x] `npm test` and `npm run build` pass in `emberloop-web/web/`; `web/README.md` maps new tests; `.emberloop/check` passes

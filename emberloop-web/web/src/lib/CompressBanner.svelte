@@ -1,6 +1,11 @@
-<!-- Banner for a Session whose Compress stopped on a credit or auth failure. -->
+<!-- One-line banner for a Session whose Compress stopped on a credit or auth failure.
+     Retry, Change model and Dismiss are icon actions with tooltips. -->
 <script>
-  import Button from './ui/button.svelte';
+  import { CircleAlert } from '@lucide/svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import InfoHint from './ui/info-hint.svelte';
+  import ErrorState from './ui/error-state.svelte';
+  import { icons } from './icons.js';
   import { compressSession, dismissCompress } from './api.js';
   let { sessionId, onChangeModel = () => {}, onDismissed = () => {} } = $props();
   let busy = $state(false);
@@ -25,11 +30,14 @@
     });
 </script>
 
-<div class="animate-rise flex flex-wrap items-center gap-2 rounded-2xl border border-amber-500/40 bg-card px-4 py-2.5 text-sm" role="status" data-testid="compress-banner">
-  <span class="font-medium">compress needs pig credits</span>
-  <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">Messages wait until compress succeeds or this banner is dismissed.</span>
-  <Button size="sm" disabled={busy} onclick={retry}>Retry</Button>
-  <Button variant="outline" size="sm" onclick={() => onChangeModel()}>Change compress model</Button>
-  <Button variant="ghost" size="sm" disabled={busy} onclick={dismiss}>Dismiss</Button>
-  {#if error}<p role="alert" class="w-full text-xs text-destructive">{error}</p>{/if}
+<div class="animate-rise flex flex-col gap-1 rounded-2xl border border-status-needs-you/40 bg-card py-1 pl-3 pr-1" role="status" data-testid="compress-banner">
+  <div class="flex min-w-0 items-center gap-1">
+    <CircleAlert class="mr-1 size-4 shrink-0 text-status-needs-you" aria-hidden="true" />
+    <span class="min-w-0 flex-1 truncate text-body font-medium"><span class="sm:hidden" aria-hidden="true">Needs pig credits</span><span class="max-sm:sr-only">compress needs pig credits</span></span>
+    <span class="max-sm:hidden"><InfoHint label="About the compress block">Messages wait until compress succeeds or this banner is dismissed.</InfoHint></span>
+    <IconButton icon={icons.retry} label="Retry" disabled={busy} onclick={retry} />
+    <IconButton icon={icons.model} label="Change compress model" onclick={() => onChangeModel()} />
+    <IconButton icon={icons.dismiss} label="Dismiss" disabled={busy} onclick={dismiss} />
+  </div>
+  {#if error}<ErrorState compact title={error} class="mx-1 mb-1" />{/if}
 </div>

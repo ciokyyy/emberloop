@@ -108,15 +108,19 @@ afterEach(() => {
 });
 
 describe('QuotaPage cards', () => {
-  it('renders the redesigned read-only header and a two-column-at-md card grid', async () => {
+  it('renders the redesigned read-only header and a card grid that goes two-column on a wide content column', async () => {
     stubFetch();
     render(QuotaPage);
     expect(await screen.findByRole('heading', { name: 'Quota' })).toBeTruthy();
     expect(screen.getByText('Read-only')).toBeTruthy();
-    expect(screen.getByText('Percent used per account window, and when it resets. Dollars and tokens are secondary. Updates live.')).toBeTruthy();
+    const about = screen.getByRole('button', { name: 'About quota' });
+    expect(screen.queryByText(/Percent used per account window/)).toBeNull();
+    await fireEvent.click(about);
+    expect(await screen.findByText('Percent used per account window, and when it resets. Dollars and tokens are secondary. Updates live.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Refresh all' })).toBeTruthy();
     const grid = screen.getByTestId('quota-card-grid');
-    expect(grid.classList.contains('md:grid-cols-2')).toBe(true);
+    expect(grid.classList.contains('@2xl:grid-cols-2')).toBe(true);
+    expect(grid.parentElement.classList.contains('@container')).toBe(true);
     expect([...grid.classList].some((name) => name.startsWith('sm:grid-cols-'))).toBe(false);
   });
   it('gives quota controls a 44px phone target', async () => {
@@ -150,9 +154,9 @@ describe('QuotaPage cards', () => {
     expect(within(claude).getByText('resets in 6d0h')).toBeTruthy();
 
     const bars = (label) => container.querySelector(`[aria-label="${label}"] > div`);
-    expect(bars('Claude 5-hour').className).toContain('bg-green-500');
-    expect(bars('OpenCode-Go 5-hour').className).toContain('bg-green-500');
-    expect(bars('OpenRouter Credits').className).toContain('bg-red-500');
+    expect(bars('Claude 5-hour').className).toContain('bg-status-done');
+    expect(bars('OpenCode-Go 5-hour').className).toContain('bg-status-done');
+    expect(bars('OpenRouter Credits').className).toContain('bg-status-failed');
     expect(within(container.querySelector('[data-key="opencode-go"]')).getByTestId('quota-state').textContent).toContain('stale');
     expect(within(container.querySelector('[data-key="opencode-go"]')).getByTestId('quota-updated').textContent).toBe('updated 12m ago · retrying');
     const opencode = container.querySelector('[data-key="opencode-go"]');
@@ -198,7 +202,7 @@ describe('QuotaPage cards', () => {
     expect(within(expired).getByTestId('quota-updated').textContent).toBe('last read 3h ago');
     expect(within(expired).getByTestId('quota-expired-callout').textContent).toContain('ChatGPT login expired');
     expect(within(expired).getByTestId('quota-hint').textContent).toBe('ChatGPT login expired. Reconnect in Providers.');
-    expect(within(expired).getByTestId('quota-windows').className).toContain('opacity-50');
+    expect(within(expired).getByTestId('quota-windows').dataset.dimmed).toBe('true');
     expect(within(expired).getAllByText('4%')).toHaveLength(2);
     expect(within(expired).getByRole('link', { name: 'Reconnect in Providers' }).getAttribute('href')).toBe('/providers');
   });

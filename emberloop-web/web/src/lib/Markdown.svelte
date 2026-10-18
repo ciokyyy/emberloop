@@ -93,6 +93,13 @@
     btn.className = cn(buttonVariants({ variant: 'ghost', size: 'icon-sm' }), 'md-copy absolute top-1.5 right-1.5 h-11 w-11 bg-background/70 opacity-70 backdrop-blur hover:opacity-100 sm:h-8 sm:w-8');
     btn.setAttribute('aria-label', 'Copy code');
     btn.innerHTML = COPY_SVG;
+    // One listener per injected button: the markdown root stays a plain,
+    // non-interactive container, so it needs no role or keyboard handler.
+    btn.addEventListener('click', () => {
+      const pre = btn.closest('pre');
+      const code = pre?.querySelector('code')?.textContent ?? pre?.textContent ?? '';
+      void copyCode(code, btn);
+    });
     return btn;
   }
 
@@ -133,16 +140,6 @@
     }, 1600);
   }
 
-  // One delegated listener on the root: innerHTML swaps on every stream frame
-  // never disturb it.
-  function onRootClick(e) {
-    const btn = e.target?.closest?.('.md-copy');
-    if (!btn || !root?.contains(btn)) return;
-    const pre = btn.closest('pre');
-    const code = pre?.querySelector('code')?.textContent ?? pre?.textContent ?? '';
-    void copyCode(code, btn);
-  }
-
   // Growing text fades in: only text that arrives after the first render is
   // wrapped, so history and settled messages never animate. Past the skip
   // backlog the text appears at once instead of churning splitText spans.
@@ -167,4 +164,4 @@
   });
 </script>
 
-<div bind:this={root} class="md {className}" onclick={onRootClick}>{@html html}</div>
+<div bind:this={root} class="md {className}">{@html html}</div>

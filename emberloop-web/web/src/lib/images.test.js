@@ -35,10 +35,10 @@ describe('Composer images', () => {
     const onSend = vi.fn();
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
     const q = within(container);
-    expect(q.getByText('Send').disabled).toBe(true);
+    expect(q.getByRole('button', { name: /^Send/ }).disabled).toBe(true);
     await fireEvent.change(q.getByLabelText('image files'), { target: { files: [png()] } });
     await vi.waitFor(() => expect(q.getByLabelText('attached images')).toBeTruthy());
-    await fireEvent.click(q.getByText('Send'));
+    await fireEvent.click(q.getByRole('button', { name: /^Send/ }));
     await tick();
     expect(onSend).toHaveBeenCalledWith('', 'prompt', [{ mime: 'image/png', data: 'iVBORw==' }], []);
     expect(q.queryByLabelText('attached images')).toBeNull();
@@ -56,7 +56,7 @@ describe('Composer images', () => {
     const q = within(container);
     await fireEvent.change(q.getByLabelText('image files'), { target: { files: [png()] } });
     await vi.waitFor(() => q.getByLabelText('attached images'));
-    await fireEvent.click(q.getByText('Send'));
+    await fireEvent.click(q.getByRole('button', { name: /^Send/ }));
     await vi.waitFor(() => expect(q.getByRole('alert')).toBeTruthy());
     expect(q.getByLabelText('attached images')).toBeTruthy();
   });

@@ -6,11 +6,11 @@
 
 **Blocked by:** none
 
-**Status:** open
+**Status:** done
 
-- [ ] A test streams growth into the last block while the reader scrolls up; scrollTop never moves down or jumps beyond the user's delta
-- [ ] Opening and closing a disclosure above the viewport does not move visible content
-- [ ] Prepending earlier history keeps the visible block in place
-- [ ] "Latest" button appears when unpinned and returns to bottom with one tap or click
-- [ ] Wheel, touch and keyboard unpin verified in vitest; phone-size e2e check in `web/e2e`
-- [ ] `npm test`, `npm run build`, `npm run test:e2e` pass in `emberloop-web/web/`
+- [x] A test streams growth into the last block while the reader scrolls up; scrollTop never moves down or jumps beyond the user's delta
+- [x] Opening and closing a disclosure above the viewport does not move visible content
+- [x] Prepending earlier history keeps the visible block in place
+- [x] "Latest" button appears when unpinned and returns to bottom with one tap or click
+- [x] Wheel, touch and keyboard unpin verified in vitest; phone-size e2e check in `web/e2e`
+- [x] `npm test`, `npm run build`, `npm run test:e2e` pass in `emberloop-web/web/`

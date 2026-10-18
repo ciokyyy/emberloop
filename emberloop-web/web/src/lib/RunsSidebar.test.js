@@ -201,4 +201,11 @@ describe('RunsSidebar run list', () => {
     await fireEvent.click(within(strip).getByRole('button', { name: /1 ticket need attention/i }));
     expect(onNavigate).toHaveBeenCalledWith('/runs/run-new');
   });
+
+  it('shows needs-you Runs with the needs-you glyph, not working', async () => {
+    stubRuns();
+    const { container } = render(RunsSidebar, { props: { workDir: '/repo', onNavigate: vi.fn() } });
+    await within(container).findByTestId('needs-you-strip');
+    expect(container.querySelector('[data-status="needs-you"]')).not.toBeNull();
+  });
 });

@@ -6,9 +6,9 @@
 
 **Blocked by:** 07-chat-chrome-design, 09-shell-and-dashboard-design, 10-runs-and-ticket-design, 11-settings-memory-providers-design
 
-**Status:** open
+**Status:** done
 
-- [ ] No text-only loading, empty or error state remains in routed pages
-- [ ] AuthScreen polished at both sizes
-- [ ] Motion durations come only from the scale
-- [ ] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass
+- [x] No text-only loading, empty or error state remains in routed pages
+- [x] AuthScreen polished at both sizes
+- [x] Motion durations come only from the scale
+- [x] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass

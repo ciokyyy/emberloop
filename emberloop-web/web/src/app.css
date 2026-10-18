@@ -22,6 +22,42 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-surface-2: var(--surface-2);
+  --color-surface-3: var(--surface-3);
+  --color-fg-1: var(--fg-1);
+  --color-fg-2: var(--fg-2);
+  --color-fg-3: var(--fg-3);
+  --color-fg-4: var(--fg-4);
+  --color-status-working: var(--status-working);
+  --color-status-needs-you: var(--status-needs-you);
+  --color-status-done: var(--status-done);
+  --color-status-failed: var(--status-failed);
+  --color-status-paused: var(--status-paused);
+  /* 4 px spacing scale: every p-, m-, gap- and size- step is n x 0.25rem. */
+  --spacing: 0.25rem;
+  /* Type scale: headline, title, body, caption, numeric (figures are tabular). */
+  --text-headline: 1.75rem;
+  --text-headline--line-height: 1.2;
+  --text-headline--font-weight: 600;
+  --text-headline--letter-spacing: -0.02em;
+  --text-title: 1.0625rem;
+  --text-title--line-height: 1.35;
+  --text-title--font-weight: 600;
+  --text-title--letter-spacing: -0.01em;
+  --text-body: 0.9375rem;
+  --text-body--line-height: 1.5;
+  --text-caption: 0.75rem;
+  --text-caption--line-height: 1.35;
+  --text-numeric: 1.75rem;
+  --text-numeric--line-height: 1;
+  --text-numeric--font-weight: 600;
+  --text-numeric--letter-spacing: -0.02em;
+  /* Elevation: 1 resting card, 2 popover, 3 sheet and dialog. */
+  --shadow-elev-1: 0 1px 2px rgb(0 0 0 / 0.28), inset 0 1px 0 rgb(255 255 255 / 0.03);
+  --shadow-elev-2: 0 6px 16px -4px rgb(0 0 0 / 0.45), 0 0 0 1px rgb(255 255 255 / 0.04);
+  --shadow-elev-3: 0 20px 48px -8px rgb(0 0 0 / 0.6), 0 0 0 1px rgb(255 255 255 / 0.05);
   --radius-sm: 0.5rem;
   --radius-md: 0.75rem;
   --radius-lg: 1rem;
@@ -29,19 +65,40 @@
   --radius-2xl: 1.5rem;
 }
 
-/* Dark only: no light theme. */
+/* Dark only: no light theme. web/DESIGN.md documents every token below.
+   shadcn names (background, card, popover, accent) alias the surface levels. */
 :root {
   color-scheme: dark;
-  --background: #212121;
-  --foreground: #ececec;
-  --card: #2a2a2a;
-  --card-foreground: #ececec;
-  --popover: #2f2f2f;
-  --popover-foreground: #ececec;
+  /* Surface levels: 0 canvas, 1 card, 2 raised (popover, sheet), 3 hover/selected. */
+  --surface-0: #212121;
+  --surface-1: #2a2a2a;
+  --surface-2: #2f2f2f;
+  --surface-3: #383838;
+  /* Text levels: 1 primary, 2 secondary, 3 caption (= muted-foreground), 4 disabled and decoration only. */
+  --fg-1: #ececec;
+  --fg-2: #c7c7cc;
+  --fg-3: #9b9ba1;
+  --fg-4: #6e6e73;
+  /* Status: working, needs-you, done, failed, paused. Always a dot or glyph plus a word. */
+  --status-working: #5aa9ff;
+  --status-needs-you: #ffb340;
+  --status-done: #3fd070;
+  --status-failed: #ff6b63;
+  --status-paused: #a1a1a8;
+  /* Motion scale: one easing (--ease-smooth), three durations. */
+  --dur-instant: 100ms;
+  --dur-standard: 180ms;
+  --dur-emphasis: 320ms;
+  --background: var(--surface-0);
+  --foreground: var(--fg-1);
+  --card: var(--surface-1);
+  --card-foreground: var(--fg-1);
+  --popover: var(--surface-2);
+  --popover-foreground: var(--fg-1);
   --sidebar: #171717;
   --muted: #303030;
-  --muted-foreground: #9b9ba1;
-  --accent: #383838;
+  --muted-foreground: var(--fg-3);
+  --accent: var(--surface-3);
   --primary: #ececec;
   --primary-foreground: #171717;
   --destructive: #f87171;
@@ -55,12 +112,33 @@
   --owner-4: #ff9f0a;
   --owner-5: #64d2ff;
   --owner-6: #ff375f;
+  /* Phone chrome: the shell takes the visible height and the phone bottom
+     padding drops the home-indicator inset while the keyboard covers it
+     (lib/viewport.js sets --app-height, --kb-inset and data-keyboard). */
+  --safe-bottom: env(safe-area-inset-bottom);
+  --kb-inset: 0px;
 }
 
-/* Streamed text: each new run of characters fades in once. Spans carry a
-   negative delay equal to their age, so a re-render never restarts them. */
+/* The app shell follows the visual viewport on phones, so the composer dock
+   sits above the on-screen keyboard instead of behind it. */
+.app-shell {
+  height: var(--app-height, 100dvh);
+}
+
+html[data-keyboard="open"] {
+  --safe-bottom: 0px;
+}
+
+/* Numeric style: figures are always tabular. */
+.text-numeric {
+  font-variant-numeric: tabular-nums lining-nums;
+}
+
+/* Streamed text: each new run of characters fades in once, over the emphasis
+   duration. Spans carry a negative delay equal to their age, so a re-render
+   never restarts them. */
 .stream-in {
-  animation: stream-in 0.45s var(--ease-smooth) both;
+  animation: stream-in var(--dur-emphasis) var(--ease-smooth) both;
 }
 @keyframes stream-in {
   from {
@@ -116,6 +194,11 @@
     }
   }
 }
+/* Let native scroll anchoring preserve the reader's position on height changes. */
+.transcript-scroll {
+  overflow-anchor: auto;
+}
+
 
 .diff-add {
   @apply bg-green-500/10;
@@ -152,7 +235,12 @@
    rise in; everything interactive transitions. Reduced motion turns it off. */
 @theme inline {
   --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
-  --animate-rise: rise 0.35s var(--ease-smooth) both;
+  --animate-rise: rise var(--dur-emphasis) var(--ease-smooth) both;
+  /* Every transition-* utility (hover, focus, disclosure) takes the standard
+     duration and the one curve, so only motion-instant and motion-emphasis
+     choose a different step. */
+  --default-transition-duration: var(--dur-standard);
+  --default-transition-timing-function: var(--ease-smooth);
   @keyframes rise {
     from {
       opacity: 0;
@@ -173,10 +261,10 @@
   textarea,
   [role="option"] {
     transition-property: color, background-color, border-color, box-shadow, opacity, transform;
-    transition-duration: 180ms;
+    transition-duration: var(--dur-standard);
     transition-timing-function: var(--ease-smooth);
   }
-  /* Animate <details> open and close: height from 0 to auto. */
+  /* Animate disclosure height; browser anchoring preserves the reader's position. */
   :root {
     interpolate-size: allow-keywords;
   }
@@ -185,26 +273,55 @@
     overflow: clip;
     opacity: 0;
     transition:
-      height 0.32s var(--ease-smooth),
-      opacity 0.25s var(--ease-smooth),
-      content-visibility 0.32s allow-discrete;
+      height var(--dur-emphasis) var(--ease-smooth),
+      opacity var(--dur-standard) var(--ease-smooth),
+      content-visibility var(--dur-emphasis) allow-discrete;
   }
   details[open]::details-content {
     height: auto;
     opacity: 1;
   }
-  html {
-    scroll-behavior: smooth;
-  }
 }
 
+/* Duration utilities for the motion scale: motion-instant, motion-standard,
+   motion-emphasis. Each sets the transition and the entry/exit animation
+   duration (tw-animate-css reads --tw-duration) plus the one easing curve, so
+   no component picks its own number. */
+@utility motion-instant {
+  --tw-duration: var(--dur-instant);
+  --tw-ease: var(--ease-smooth);
+  transition-duration: var(--dur-instant);
+  transition-timing-function: var(--ease-smooth);
+}
+@utility motion-standard {
+  --tw-duration: var(--dur-standard);
+  --tw-ease: var(--ease-smooth);
+  transition-duration: var(--dur-standard);
+  transition-timing-function: var(--ease-smooth);
+}
+@utility motion-emphasis {
+  --tw-duration: var(--dur-emphasis);
+  --tw-ease: var(--ease-smooth);
+  transition-duration: var(--dur-emphasis);
+  transition-timing-function: var(--ease-smooth);
+}
+
+/* Reduced motion: transitions and one-shot animations end at once. Only
+   feedback that carries state (a spinner, or any [data-motion="essential"]
+   element) keeps moving, slowly. */
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
+  }
+  .animate-spin,
+  [data-motion="essential"] {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
   }
 }
 

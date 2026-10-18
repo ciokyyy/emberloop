@@ -384,33 +384,66 @@ func (b *PigACPBackend) FollowUp(sessionID, text string) bool {
 	return shimQueueCmd(b.steerSock(sessionID), "follow_up", text, nil)
 }
 
-// QueuedMessages lists the steers and follow-ups pig has not delivered yet.
-func (b *PigACPBackend) QueuedMessages(sessionID string) []QueuedMessage {
+// NativeQueue lists the steers and follow-ups pig has not delivered yet.
+// A missing live socket means the Session has no native queue; an unreachable
+// current socket is reported separately so callers do not mistake it for empty.
+func (b *PigACPBackend) NativeQueue(sessionID string) ([]QueuedMessage, bool) {
+	b.sockMu.Lock()
+	_, hasSocket := b.socks[sessionID]
+	sock := b.socks[sessionID]
+	b.sockMu.Unlock()
+	if !hasSocket || sock == "" {
+		return []QueuedMessage{}, true
+	}
 	var resp struct {
-		Data pigQueue `json:"data"`
+		Success bool     `json:"success"`
+		Data    pigQueue `json:"data"`
 	}
-	if !shimCall(b.steerSock(sessionID), map[string]any{"op": "queue"}, &resp) {
-		return nil
+	if !shimCall(sock, map[string]any{"op": "queue"}, &resp) || !resp.Success {
+		return nil, false
 	}
+	return pigQueueMessages(resp.Data), true
+}
+
+func (b *PigACPBackend) QueuedMessages(sessionID string) []QueuedMessage {
+	queued, _ := b.NativeQueue(sessionID)
+	return queued
+}
+
+// ClearNativeQueue atomically asks pig for the exact messages cleared. It
+// distinguishes an unavailable shim from an empty queue.
+func (b *PigACPBackend) ClearNativeQueue(sessionID string) ([]QueuedMessage, bool) {
+	b.sockMu.Lock()
+	_, hasSocket := b.socks[sessionID]
+	sock := b.socks[sessionID]
+	b.sockMu.Unlock()
+	if !hasSocket || sock == "" {
+		return []QueuedMessage{}, true
+	}
+	var resp struct {
+		Success bool     `json:"success"`
+		Data    pigQueue `json:"data"`
+	}
+	if !shimCall(sock, map[string]any{"op": "clear_queue"}, &resp) || !resp.Success {
+		return nil, false
+	}
+	return pigQueueMessages(resp.Data), true
+}
+
+func pigQueueMessages(q pigQueue) []QueuedMessage {
 	var out []QueuedMessage
-	for _, t := range resp.Data.Steering {
-		out = append(out, QueuedMessage{Mode: "steer", Text: t})
+	for _, text := range q.Steering {
+		out = append(out, QueuedMessage{Mode: "steer", Text: text})
 	}
-	for _, t := range resp.Data.FollowUp {
-		out = append(out, QueuedMessage{Mode: "followup", Text: t})
+	for _, text := range q.FollowUp {
+		out = append(out, QueuedMessage{Mode: "followup", Text: text})
 	}
 	return out
 }
 
-// ClearQueued drops everything pig has queued and reports how many.
 func (b *PigACPBackend) ClearQueued(sessionID string) int {
-	var resp struct {
-		Data pigQueue `json:"data"`
-	}
-	if !shimCall(b.steerSock(sessionID), map[string]any{"op": "clear_queue"}, &resp) {
-		return 0
-	}
-	return len(resp.Data.Steering) + len(resp.Data.FollowUp)
+	queued, _ := b.ClearNativeQueue(sessionID)
+	return len(queued)
 }
 
 // agentDir is the per-Session pig agent dir root.

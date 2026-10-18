@@ -72,12 +72,15 @@ func (p promptSender) stamp(e *Event) {
 }
 
 // QueuedMessage is one not-yet-delivered Steer or Follow-up (or a plain
-// prompt that arrived while the Session worked).
+// prompt that arrived while the Session worked). ID remains stable while it
+// stays queued; ImageIDs names stored attachments, never their bytes.
 type QueuedMessage struct {
+	ID       string   `json:"id"`
 	Mode     string   `json:"mode"`
 	Text     string   `json:"text"`
-	ImageIDs []string `json:"imageIds,omitempty"`
+	ImageIDs []string `json:"imageIds"`
 	Degraded bool     `json:"degraded,omitempty"`
+	from     promptSender
 }
 
 // SessionMeta is the small metadata file per Session. ParentID names the
@@ -101,6 +104,9 @@ type SessionMeta struct {
 	// Subagents and Workers whose WorkDir is a worktree.
 	ProjectID string `json:"projectId,omitempty"`
 	Status    string `json:"status"`
+	// ReportSeq is the newest grouped Subagent report in this Session. The
+	// browser compares it with its per-User read cursor to mark unread Sessions.
+	ReportSeq int64 `json:"reportSeq,omitempty"`
 	// Capped marks a failed turn classified as a provider session limit. It
 	// is exposed to the Session list while Status remains failed internally.
 	Capped    bool      `json:"capped,omitempty"`

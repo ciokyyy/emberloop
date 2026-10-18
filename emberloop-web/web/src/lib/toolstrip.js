@@ -94,3 +94,35 @@ export function memoSegs(tag, line, compute) {
   segCache.set(key, segs);
   return segs;
 }
+
+// shortTool trims a tool name to a few characters for the Working indicator.
+export function shortTool(name = '', max = 14) {
+  const t = String(name ?? '').trim();
+  return t.length > max ? `${t.slice(0, max - 1)}…` : t;
+}
+
+// activeTool names the tool the agent runs right now: the current run of a
+// trailing live strip, else ''. Thinking counts as a tool here.
+export function activeTool(blocks = []) {
+  const tail = blocks[blocks.length - 1];
+  if (tail?.card !== 'toolstrip' || tail.settled) return '';
+  const run = tail.runs?.[tail.runs.length - 1];
+  if (!run) return '';
+  return run.thinking ? 'thinking' : String(run.name ?? '');
+}
+
+// kindSummary counts runs per tool kind in first-seen order, so a collapsed
+// strip can show one icon per kind: [{ kind: 'read', count: 3 }, ...].
+export function kindSummary(runs = []) {
+  const order = [];
+  const counts = {};
+  for (const run of runs) {
+    const kind = run.thinking ? 'thinking' : toolIcon(run.name);
+    if (!(kind in counts)) {
+      counts[kind] = 0;
+      order.push(kind);
+    }
+    counts[kind] += 1;
+  }
+  return order.map((kind) => ({ kind, count: counts[kind] }));
+}

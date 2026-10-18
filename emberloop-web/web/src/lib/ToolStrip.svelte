@@ -1,6 +1,8 @@
-<!-- Live tool strip: one card per burst of consecutive tool calls. The header
-  always shows the current tool; the stage below swaps its output as tools
-  start, and the history drawer keeps every previous tool newest-first. -->
+<!-- Live tool strip: one card per burst of consecutive tool calls. Collapsed by
+  default to one summary line: status, one icon per tool kind, the current tool
+  (or "N tools · 4.3s" once settled) and the timer. Expanding opens the stage
+  that swaps its output as tools start, and the history drawer that keeps every
+  previous tool newest-first. A failed strip starts open so the error shows. -->
 <script>
   import { untrack } from 'svelte';
   import {
@@ -19,6 +21,8 @@
     Brain,
   } from '@lucide/svelte';
   import Markdown from './Markdown.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import Skeleton from './ui/skeleton.svelte';
   import {
     highlightCode,
     highlightJson,
@@ -39,6 +43,7 @@
     splitOutputLines,
     outputKind,
     toolIcon,
+    kindSummary,
     prefersReducedMotion,
     memoSegs,
   } from './toolstrip.js';
@@ -66,7 +71,12 @@
   // history rows keep every line with the mount animation.
   const streamLive = $derived(!settled && !settledDone);
   const TAIL_LINES = 200;
-  let histOpen = $state(false);
+  // Collapsed by default. A strip that is already failed opens so the error shows.
+  let histOpen = $state(untrack(() => String(runs[runs.length - 1]?.status ?? '').toLowerCase() === 'failed'));
+  const KIND_MAX = 4;
+  const kinds = $derived(kindSummary(runs));
+  const shownKinds = $derived(kinds.slice(0, KIND_MAX));
+  const moreKinds = $derived(Math.max(0, kinds.length - KIND_MAX));
   let expanded = $state({});
   const toggleHist = () => (histOpen = !histOpen);
   const toggleRow = (key) => (expanded = { ...expanded, [key]: !expanded[key] });
@@ -131,7 +141,7 @@
     }
   });
   const wrapStyle = $derived(
-    `${reduced ? 'transition: none;' : 'transition: height .5s cubic-bezier(.22,1,.36,1);'}${stageH > 0 ? `height: ${stageH}px;` : ''}`,
+    `${reduced ? 'transition: none;' : 'transition: height var(--dur-emphasis) var(--ease-smooth);'}${stageH > 0 ? `height: ${stageH}px;` : ''}`,
   );
 
   // Streaming output stays pinned to the newest line.
@@ -168,10 +178,10 @@
     {#if run}
       {@const live = run.key === current?.key && !settled && !isDone(run.status)}
       {#if live}
-        <div class="ts-shimmer" data-testid="toolstrip-shimmer"></div>
+        <Skeleton data-testid="toolstrip-shimmer" class="mb-1 h-3 w-2/3" />
         <div class="ts-line mt-1 font-mono text-xs leading-5 text-muted-foreground">Writing tool call…</div>
       {:else}
-        <div class="ts-line font-mono text-xs leading-5 text-muted-foreground">No output.</div>
+        <EmptyState compact icon={Terminal} title="No output" class="border-0 px-0" />
       {/if}
     {/if}
   {:else if looksJson(full) && !run?.output}
@@ -219,87 +229,102 @@
   data-status={failed ? 'failed' : settledDone ? 'done' : 'running'}
   data-motion={reduced ? 'off' : 'on'}
 >
-  <!-- header: always visible -->
-  <div class="flex items-center gap-2.5 px-3.5 py-2.5">
+  <!-- summary line: always visible, the whole line toggles the details -->
+  <button
+    type="button"
+    class="motion-standard flex min-h-11 w-full min-w-0 items-center gap-2 px-3 py-2 text-left outline-none hover:bg-surface-3/50 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:ring-inset md:min-h-10"
+    onclick={toggleHist}
+    aria-expanded={histOpen}
+    aria-label={histOpen ? 'Hide tools' : 'Show tools'}
+    data-testid="toolstrip-history-toggle"
+  >
     <span class="grid size-5 shrink-0 place-items-center" data-testid="toolstrip-status">
-      {@render statusIcon(current?.status, failed ? 'size-4 text-destructive' : settledDone ? 'size-4 text-green-400' : 'size-4 text-ring')}
+      {@render statusIcon(current?.status, failed ? 'size-4 text-status-failed' : settledDone ? 'size-4 text-status-done' : 'size-4 text-status-working')}
     </span>
-    <span class="inline-flex min-w-0 items-center gap-1.5 font-medium">
-      <HeadGlyph class="size-3.5 shrink-0 text-muted-foreground" />
-      <span class="truncate">{current?.thinking ? 'Thinking' : (current?.name ?? 'tools')}</span>
+    <span class="flex shrink-0 items-center gap-1 text-fg-3" data-testid="toolstrip-kinds" aria-hidden="true">
+      {#each shownKinds as k (k.kind)}
+        {@const KindGlyph = glyphs[k.kind] ?? Wrench}
+        <KindGlyph class="size-3.5" data-kind={k.kind} />
+      {/each}
+      {#if moreKinds}<span class="text-caption tabular-nums">+{moreKinds}</span>{/if}
     </span>
-    {#if current?.server}
-      <span class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10px] text-muted-foreground">{current.server}</span>
-    {/if}
-    {#if toolTarget(current)}
-      <span class="ml-1 min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{toolTarget(current)}</span>
+    <span class="sr-only">{kinds.map((k) => k.kind).join(', ')}</span>
+    {#if settled}
+      <span class="min-w-0 flex-1 truncate text-body text-fg-2" data-testid="toolstrip-summary">{summary}</span>
     {:else}
-      <span class="flex-1"></span>
+      <span class="min-w-0 truncate text-body font-medium">{current?.thinking ? 'Thinking' : (current?.name ?? 'tools')}</span>
+      {#if current?.server}
+        <span class="shrink-0 rounded-full bg-muted px-2 py-0.5 text-caption text-fg-3">{current.server}</span>
+      {/if}
+      {#if toolTarget(current)}
+        <span class="min-w-0 flex-1 truncate font-mono text-caption text-fg-3 max-sm:hidden">{toolTarget(current)}</span>
+      {:else}
+        <span class="flex-1"></span>
+      {/if}
     {/if}
-    <div class="ml-auto flex shrink-0 items-center gap-2">
-      <span class="font-mono text-[11px] text-muted-foreground" data-testid="toolstrip-elapsed">{elapsed}</span>
-      <button
-        class="flex items-center gap-1.5 rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground transition hover:bg-accent hover:text-foreground"
-        onclick={toggleHist}
-        aria-expanded={histOpen}
-        aria-label="Tool history"
-        data-testid="toolstrip-history-toggle"
-      >
-        <History class="size-3.5" />
-        <span data-testid="toolstrip-count">{historyList.length}</span>
-        <ChevronDown class="size-3.5 transition-transform duration-300" style={histOpen ? 'transform: rotate(180deg);' : ''} />
-      </button>
-    </div>
-  </div>
-  <!-- progress hairline -->
-  <div class="h-px bg-border"><div class="h-px bg-ring transition-[width] duration-500" style="width: {progress}%;" data-testid="toolstrip-progress"></div></div>
+    <span class="ml-auto flex shrink-0 items-center gap-2">
+      <span class="font-mono text-caption tabular-nums text-fg-3" data-testid="toolstrip-elapsed">{elapsed}</span>
+      <span class={settled ? 'sr-only' : 'flex items-center gap-1 text-caption tabular-nums text-fg-3'}>
+        {#if !settled}<History class="size-3.5" aria-hidden="true" />{/if}<span data-testid="toolstrip-count">{historyList.length}</span>
+      </span>
+      <ChevronDown class="motion-standard size-4 shrink-0 text-fg-3 transition-transform" style={histOpen ? 'transform: rotate(180deg);' : ''} aria-hidden="true" />
+    </span>
+  </button>
+  {#if !settled}
+    <!-- progress hairline -->
+    <div class="h-px bg-border"><div class="motion-emphasis h-px bg-status-working transition-[width]" style="width: {progress}%;" data-testid="toolstrip-progress"></div></div>
+  {/if}
 
-  {#if settled}
-    <div class="border-t bg-background/40 px-3.5 py-2.5 text-sm text-muted-foreground" data-testid="toolstrip-summary">{summary}</div>
-  {:else if current}
-    <!-- the swapping stage -->
-    <div class="ts-stage" style={wrapStyle} data-live={streamLive ? 'true' : undefined}>
-      <div
-        bind:this={scrollEl}
-        class="ts-scroll border-t bg-background/40 p-3.5"
-        style="max-height: {STRIP_MAX_HEIGHT}px;"
-        data-testid="toolstrip-stage"
-        data-kind={outputKind(current.name)}
-        role={failed ? 'alert' : undefined}
-      >
-        {#if prevRun && !reduced}
-          <div class="ts-prev">{@render runOutput(prevRun)}</div>
-        {/if}
-        {#key current.key}
-          <div class={reduced ? undefined : 'ts-cur'}>{@render runOutput(current)}</div>
-        {/key}
+  {#if !settled && current}
+    <!-- the swapping stage: collapsed with the strip, still mounted so streaming keeps its place -->
+    <div class="ts-collapse {histOpen ? 'open' : ''}" inert={!histOpen} data-open={histOpen ? 'true' : 'false'}>
+      <div>
+        <div class="ts-stage" style={wrapStyle} data-live={streamLive ? 'true' : undefined}>
+          <div
+            bind:this={scrollEl}
+            class="ts-scroll border-t bg-background/40 p-3.5"
+            style="max-height: {STRIP_MAX_HEIGHT}px;"
+            data-testid="toolstrip-stage"
+            data-kind={outputKind(current.name)}
+            role={failed ? 'alert' : undefined}
+          >
+            {#if prevRun && !reduced}
+              <div class="ts-prev">{@render runOutput(prevRun)}</div>
+            {/if}
+            {#key current.key}
+              <div class={reduced ? undefined : 'ts-cur'}>{@render runOutput(current)}</div>
+            {/key}
+          </div>
+        </div>
       </div>
     </div>
   {/if}
 
   <!-- history: every previous tool, newest first; each row opens its output -->
-  <div class="ts-history {histOpen ? 'open' : ''}" data-testid="toolstrip-history" data-open={histOpen ? 'true' : 'false'}>
+  <div class="ts-history {histOpen ? 'open' : ''}" inert={!histOpen} data-testid="toolstrip-history" data-open={histOpen ? 'true' : 'false'}>
     <div>
       <div class="space-y-1 border-t bg-background/40 p-2">
         {#each historyList as run (run.key)}
           {@const RowGlyph = glyphs[toolIcon(run.name)] ?? Wrench}
+          {@const rowStatus = String(run.status ?? '').toLowerCase()}
           <div data-testid="toolstrip-history-row">
             <button
-              class="flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-sm hover:bg-accent/50"
+              type="button"
+              class="motion-standard flex min-h-11 w-full items-center gap-2.5 rounded-xl px-2.5 py-2 text-left text-body outline-none hover:bg-surface-3/50 focus-visible:ring-[3px] focus-visible:ring-ring/40 md:min-h-9"
               onclick={() => toggleRow(run.key)}
               aria-expanded={!!expanded[run.key]}
             >
-              {@render statusIcon(run.status, isDone(run.status) && String(run.status).toLowerCase() !== 'failed' ? 'size-3.5 shrink-0 text-green-400' : String(run.status).toLowerCase() === 'failed' ? 'size-3.5 shrink-0 text-destructive' : 'size-3.5 shrink-0 text-muted-foreground')}
+              {@render statusIcon(run.status, rowStatus === 'failed' ? 'size-3.5 shrink-0 text-status-failed' : isDone(run.status) ? 'size-3.5 shrink-0 text-status-done' : 'size-3.5 shrink-0 text-status-working')}
               <span class="inline-flex min-w-0 items-center gap-1.5 font-medium">
-                <RowGlyph class="size-3.5 shrink-0 text-muted-foreground" />
+                <RowGlyph class="size-3.5 shrink-0 text-fg-3" aria-hidden="true" />
                 <span class="truncate">{run.thinking ? 'Thinking' : run.name}</span>
               </span>
               {#if toolTarget(run)}
-                <span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{toolTarget(run)}</span>
+                <span class="min-w-0 flex-1 truncate font-mono text-caption text-fg-3 max-sm:hidden">{toolTarget(run)}</span>
               {:else}
                 <span class="flex-1"></span>
               {/if}
-              <ChevronRight class="ml-auto size-3.5 shrink-0 text-muted-foreground transition-transform" style={expanded[run.key] ? 'transform: rotate(90deg);' : ''} />
+              <ChevronRight class="motion-standard ml-auto size-3.5 shrink-0 text-fg-3 transition-transform" style={expanded[run.key] ? 'transform: rotate(90deg);' : ''} aria-hidden="true" />
             </button>
             {#if expanded[run.key]}
               <div class="px-2.5 pb-2">
@@ -308,7 +333,7 @@
             {/if}
           </div>
         {:else}
-          <div class="px-2.5 py-2 text-xs text-muted-foreground">No previous tools yet.</div>
+          <EmptyState compact icon={Terminal} title="No previous tools yet" class="border-0 px-0" />
         {/each}
       </div>
     </div>
@@ -327,10 +352,10 @@
     position: absolute;
     inset: 0 0 auto 0;
     pointer-events: none;
-    animation: ts-out 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: ts-out var(--dur-emphasis) var(--ease-smooth) both;
   }
   .ts-cur {
-    animation: ts-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: ts-in var(--dur-emphasis) var(--ease-smooth) both;
   }
   @keyframes ts-in {
     from {
@@ -356,7 +381,7 @@
     }
   }
   .ts-line {
-    animation: ts-line-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: ts-line-in var(--dur-standard) var(--ease-smooth) both;
   }
   /* While live, per-line entrances would restart every delta and never
      complete: lines appear at once, and the tool-switch swap keeps the
@@ -375,44 +400,32 @@
       transform: none;
     }
   }
-  .ts-shimmer {
-    height: 1rem;
-    border-radius: 0.5rem;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
-    background-size: 200% 100%;
-    animation: ts-shimmer 1.6s linear infinite;
-  }
-  @keyframes ts-shimmer {
-    from {
-      background-position: -200% 0;
-    }
-    to {
-      background-position: 200% 0;
-    }
-  }
+  .ts-collapse,
   .ts-history {
     display: grid;
     grid-template-rows: 0fr;
     transition:
-      grid-template-rows 0.45s cubic-bezier(0.22, 1, 0.36, 1),
-      opacity 0.3s;
+      grid-template-rows var(--dur-emphasis) var(--ease-smooth),
+      opacity var(--dur-standard) var(--ease-smooth);
     opacity: 0;
   }
+  .ts-collapse.open,
   .ts-history.open {
     grid-template-rows: 1fr;
     opacity: 1;
   }
+  .ts-collapse > div,
   .ts-history > div {
     overflow: hidden;
   }
   @media (prefers-reduced-motion: reduce) {
     .ts-prev,
     .ts-cur,
-    .ts-line,
-    .ts-shimmer {
+    .ts-line {
       animation: none;
     }
     .ts-stage,
+    .ts-collapse,
     .ts-history {
       transition: none;
     }

@@ -1,10 +1,14 @@
-<!-- Floating composer. The send-mode buttons state what a send will do. -->
+<!-- Floating composer. Icon controls with tooltips; the send-mode switch and the
+     send button glyph state what a send will do. Enter sends, Shift+Enter breaks a line. -->
 <script>
   import { onDestroy } from 'svelte';
   import WorkingIndicator from './WorkingIndicator.svelte';
-  import { availableModes, resolveComposerMode } from './composer.js';
-  import Button from './ui/button.svelte';
-  import { BookmarkPlus, Mic, Square, Loader, Paperclip, X, Images } from '@lucide/svelte';
+  import { COMPOSER_EDIT_EVENT, availableModes, resolveComposerMode } from './composer.js';
+  import IconButton from './ui/icon-button.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
+  import { icons } from './icons.js';
+  import { ArrowUp, BookmarkPlus, Mic, Square, Loader, Paperclip, X, Images } from '@lucide/svelte';
   import { sttSupport, startRecording, transcribe, STT_MAX_BYTES } from './stt.js';
   import VoiceBubble from './VoiceBubble.svelte';
   import { readVoicePrefs, onVoicePrefs } from './voicePrefs.js';
@@ -18,7 +22,8 @@
   const sounds = soundPlayer();
   let voiceSeq = 0;
 
-  let { status = 'idle', busy = false, sessionId = '', onSend = () => {}, onStop = null } = $props();
+  // activity names the running tool for the Working indicator.
+  let { status = 'idle', busy = false, sessionId = '', activity = '', onSend = () => {}, onStop = null } = $props();
 
   // A fresh key per tick: start and stop never dedup each other. The
   // throttle still applies, so a stop inside 400ms of its start stays silent.
@@ -32,6 +37,8 @@
   // Stored references: { id, name, url } into the Session's image gallery.
   // They ride the next send as stable ids; the agent reads their files.
   let refs = $state([]);
+  let editAsPrompt = $state(false);
+  let editNotice = $state('');
   let gallery = $state(false);
   let galleryImages = $state([]);
   let galleryLoadedFor = '';
@@ -82,9 +89,16 @@
     }
     dropAudio();
   });
-  const mode = $derived(resolveComposerMode({ status, selected }));
+  const mode = $derived(editAsPrompt ? 'prompt' : resolveComposerMode({ status, selected }));
   const workingModes = availableModes('working');
-  const headerOpen = $derived(availableModes(status).length > 1);
+  const headerOpen = $derived(!editAsPrompt && availableModes(status).length > 1);
+  // The mode glyph on the send button and in the switch is the same icon, so the active mode reads without words.
+  const MODE_ICONS = { prompt: ArrowUp, steer: icons.steer, followup: icons.followUp };
+  const MODE_NAMES = { prompt: 'Send', steer: 'Send as Steer', followup: 'Send as Follow-up' };
+  const MODE_SWITCH = { steer: { icon: icons.steer, label: 'Steer' }, followup: { icon: icons.followUp, label: 'Follow-up' } };
+  const sendLabel = $derived(editAsPrompt ? 'Send as new prompt' : MODE_NAMES[mode]);
+  const SendGlyph = $derived(MODE_ICONS[mode] ?? ArrowUp);
+  const remembering = $derived(text.startsWith('/remember '));
   const canSend = $derived(!busy && voice !== 'transcribing' && (text.trim() !== '' || images.length > 0 || refs.length > 0));
 
   // A new Session starts with an empty tray: refs point at another
@@ -95,7 +109,40 @@
       refs = [];
       gallery = false;
       galleryLoadedFor = '';
+      if (editAsPrompt) {
+        text = '';
+        images = [];
+        editAsPrompt = false;
+        editNotice = '';
+      }
     }
+  });
+  function applyMessageEdit(event) {
+    const detail = event.detail ?? {};
+    if (!sessionId || detail.sessionId !== sessionId) return;
+    text = String(detail.text ?? '');
+    images = [];
+    refs = [...new Set(detail.imageIds ?? [])].map((id, index) => ({
+      id: String(id),
+      name: isAudioId(id) ? 'Voice message' : `Image ${index + 1}`,
+      url: imageSrc(sessionId, String(id)),
+    }));
+    dropAudio();
+    gallery = false;
+    editAsPrompt = true;
+    editNotice = 'Editing a copy; history stays unchanged.';
+    sendError = '';
+    imageNote = '';
+    box?.focus();
+  }
+
+  $effect(() => {
+    const id = sessionId;
+    const onEdit = (event) => {
+      if (event.detail?.sessionId === id) applyMessageEdit(event);
+    };
+    window.addEventListener(COMPOSER_EDIT_EVENT, onEdit);
+    return () => window.removeEventListener(COMPOSER_EDIT_EVENT, onEdit);
   });
 
   // The gallery lists every image attached in this Session. Clicking one
@@ -125,6 +172,7 @@
     const sent = images;
     const sentRefs = refs;
     const sentAudio = audio;
+    const sentAsNewPrompt = editAsPrompt;
     if ((!t && sent.length === 0 && sentRefs.length === 0) || busy) return;
     // Clear at once: the transcript shows the message while it travels.
     // A failed send puts the draft, the images and the refs back.
@@ -138,6 +186,10 @@
       const ids = sentRefs.map((r) => r.id);
       if (sentAudio) await onSend(t, mode, toWire(sent), ids, { blob: sentAudio.blob, durationMs: sentAudio.durationMs, peaks: sentAudio.peaks });
       else await onSend(t, mode, toWire(sent), ids);
+      if (sentAsNewPrompt) {
+        editAsPrompt = false;
+        editNotice = '';
+      }
       if (sentAudio?.url) URL.revokeObjectURL(sentAudio.url);
     } catch {
       text = t;
@@ -274,7 +326,7 @@
        shut when idle. It always lists the working modes, so the buttons do
        not change mid fade-out. -->
   <div
-    class="grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none {headerOpen
+    class="grid transition-[grid-template-rows,opacity] motion-emphasis motion-reduce:transition-none {headerOpen
       ? 'grid-rows-[1fr] opacity-100'
       : 'grid-rows-[0fr] opacity-0'}"
     aria-hidden={!headerOpen}
@@ -282,22 +334,21 @@
     data-testid="mode-header"
   >
     <div class="min-h-0 overflow-hidden">
-      <div class="flex items-center gap-1 px-2 pt-1">
+      <div class="flex min-w-0 items-center gap-2 px-2 pt-1">
         <div class="flex gap-0.5 rounded-full bg-background/60 p-0.5" role="group" aria-label="Send mode">
           {#each workingModes as opt (opt.id)}
-            <button
-              type="button"
+            <IconButton
+              icon={MODE_SWITCH[opt.id].icon}
+              label={MODE_SWITCH[opt.id].label}
               aria-pressed={selected === opt.id}
+              data-mode={opt.id}
+              variant={selected === opt.id ? 'default' : 'ghost'}
+              class={selected === opt.id ? '' : 'text-fg-3 hover:text-fg-1'}
               onclick={() => (selected = opt.id)}
-              class="rounded-full px-3 py-1 text-xs font-medium transition-colors {selected === opt.id
-                ? 'bg-primary text-primary-foreground'
-                : 'text-muted-foreground hover:text-foreground'}"
-            >
-              {opt.label}
-            </button>
+            />
           {/each}
         </div>
-        <WorkingIndicator {status} class="ml-auto px-1" />
+        <WorkingIndicator {status} tool={activity} class="ml-auto min-w-0 px-1" />
       </div>
     </div>
   </div>
@@ -318,7 +369,11 @@
       {/each}
       {#each refs as r (r.id)}
         <li class="relative" title={r.name}>
-          <img src={r.url} alt={r.name} class="size-14 rounded-lg border object-cover" />
+          {#if isAudioId(r.id)}
+            <span class="grid size-14 place-items-center rounded-lg border bg-background text-xs">Voice</span>
+          {:else}
+            <img src={r.url} alt={r.name} class="size-14 rounded-lg border object-cover" />
+          {/if}
           <button
             type="button"
             aria-label={`remove ${r.name}`}
@@ -347,7 +402,7 @@
           {/each}
         </div>
       {:else}
-        <p class="text-xs text-muted-foreground">No images attached in this Session yet.</p>
+        <EmptyState compact icon={Images} title="No images in this Session yet" />
       {/if}
     </div>
   {/if}
@@ -361,9 +416,7 @@
           <span class="w-[3px] shrink-0 rounded-full bg-primary/80" style="height: {Math.max(10, Math.round(v * 100))}%"></span>
         {/each}
       </div>
-      <Button type="button" variant="ghost" size="icon" aria-label="cancel recording" title="Cancel recording" onclick={cancelRecording}>
-        <X />
-      </Button>
+      <IconButton icon={icons.dismiss} label="Cancel recording" onclick={cancelRecording} />
     </div>
   {/if}
   {#if audio}
@@ -390,7 +443,7 @@
         bind:value={text}
         onkeydown={key}
         onpaste={paste}
-        placeholder={status === 'working' ? 'Steer or follow up…' : 'Send a prompt…'}
+        placeholder={editAsPrompt ? 'Edit this prompt…' : status === 'working' ? 'Steer or follow up…' : 'Send a prompt…'}
         class="max-h-40 w-full resize-none bg-transparent px-3 pb-2 pt-2 text-[15px] outline-none placeholder:text-muted-foreground"
       ></textarea>
     </div>
@@ -404,44 +457,42 @@
       aria-label="image files"
       onchange={picked}
     />
-    <Button type="button" variant="ghost" size="icon" aria-label="attach image" title="Attach image" onclick={() => picker.click()}>
-      <Paperclip />
-    </Button>
-    <Button type="button" variant="ghost" size="icon" aria-label="Session image gallery" title="Session image gallery" aria-pressed={gallery} disabled={!sessionId} onclick={toggleGallery}>
-      <Images />
-    </Button>
-    {#if support.ok && voicePrefs.enabled}
-      <Button
-        type="button"
-        variant={voice === 'recording' ? 'destructive' : 'ghost'}
-        size="icon"
-        aria-label={voice === 'recording' ? 'stop recording' : 'record voice'}
-        title="Record a voice message"
-        disabled={voice === 'transcribing'}
-        onclick={toggleMic}
-      >
-        {#if voice === 'recording'}
-          <Square class="animate-pulse" />
-        {:else if voice === 'transcribing'}
-          <Loader class="animate-spin" />
-        {:else}
-          <Mic />
-        {/if}
-      </Button>
-    {/if}
-    {#if onStop && status === 'working'}
-      <Button type="button" variant="destructive" size="icon" aria-label="stop" title="Stop the running turn" onclick={onStop}>
-        <Square />
-      </Button>
-    {/if}
-    <Button type="button" variant="ghost" size="sm" aria-label="remember as rule" title="Remember as a Rule (sends /remember)" onclick={remember}><BookmarkPlus class="sm:hidden" /><span class="max-sm:sr-only">Remember</span></Button>
-    <Button type="submit" size="default" class="ml-auto sm:ml-0" disabled={!canSend} title={canSend ? 'Send' : busy ? 'Sending the previous message…' : 'Type a message or attach an image'}>Send</Button>
+    <div class="flex items-center gap-0.5">
+      <IconButton icon={Paperclip} label="Attach image" onclick={() => picker.click()} />
+      <IconButton icon={Images} label="Session image gallery" aria-pressed={gallery} variant={gallery ? 'secondary' : 'ghost'} disabled={!sessionId} onclick={toggleGallery} />
+      {#if support.ok && voicePrefs.enabled}
+        <IconButton
+          icon={voice === 'recording' ? Square : voice === 'transcribing' ? Loader : Mic}
+          spin={voice === 'transcribing'}
+          label={voice === 'recording' ? 'Stop recording' : 'Record voice'}
+          variant={voice === 'recording' ? 'destructive' : 'ghost'}
+          class={voice === 'recording' ? '[&_svg]:animate-pulse' : ''}
+          disabled={voice === 'transcribing'}
+          onclick={toggleMic}
+        />
+      {/if}
+    </div>
+    <div class="ml-auto flex items-center gap-1 sm:ml-0">
+      <IconButton
+        icon={BookmarkPlus}
+        label="Remember as rule"
+        aria-pressed={remembering}
+        variant={remembering ? 'secondary' : 'ghost'}
+        class={remembering ? 'text-status-done' : ''}
+        onclick={remember}
+      />
+      {#if onStop && status === 'working'}
+        <IconButton icon={Square} label="Stop" variant="destructive" onclick={onStop} />
+      {/if}
+      <IconButton icon={SendGlyph} label={sendLabel} type="submit" variant="default" size="icon" data-testid="send" data-mode={mode} disabled={!canSend} />
+    </div>
   </div>
+  {#if editNotice}<p data-testid="edit-notice" class="truncate px-3 pb-1 text-xs text-muted-foreground">{editNotice}</p>{/if}
   {#if sendError}
-    <p role="alert" class="px-3 pb-1 text-xs text-destructive">{sendError}</p>
+    <ErrorState compact title={sendError} class="mx-3 mb-1" />
   {/if}
   {#if imageNote}
-    <p data-testid="image-note" class="px-3 pb-1 text-xs text-destructive">{imageNote}</p>
+    <ErrorState compact title={imageNote} class="mx-3 mb-1" data-testid="image-note" />
   {/if}
   {#if voiceNote || (voicePrefs.enabled && !support.ok)}
     <p data-testid="voice-note" class="px-3 pb-1 text-xs text-muted-foreground">{voiceNote || support.reason}</p>

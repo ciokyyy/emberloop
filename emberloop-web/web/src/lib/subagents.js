@@ -80,3 +80,15 @@ export function groupCounts(states = []) {
   const running = states.length - done - failed;
   return { total: states.length, done, failed, running, allDone: states.length > 0 && done + failed === states.length, anyFailed: failed > 0 };
 }
+
+// reportCountsText is the one counts line a report notice and the Reports tray
+// show: total first, then only the non-zero breakdown.
+export function reportCountsText(report = {}) {
+  const counts = report.counts ?? {};
+  const total = counts.total ?? report.members?.length ?? 0;
+  const parts = [`${total} agent${total === 1 ? '' : 's'}`];
+  if (counts.workers) parts.push(`${counts.workers} worker${counts.workers === 1 ? '' : 's'}`);
+  if (counts.scouts) parts.push(`${counts.scouts} scout${counts.scouts === 1 ? '' : 's'}`);
+  if (counts.failed) parts.push(`${counts.failed} failed`);
+  return parts.join(' · ');
+}

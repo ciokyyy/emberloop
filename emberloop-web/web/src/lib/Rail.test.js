@@ -9,7 +9,7 @@ describe('rail collapse toggle', () => {
     const onToggleSidebar = vi.fn();
     const { getByRole } = render(Rail, { props: { view: 'chat', collapsed: false, onToggleSidebar } });
     const btn = getByRole('button', { name: 'Collapse sidebar' });
-    expect(btn.getAttribute('title')).toMatch(/Ctrl/);
+    expect(btn.getAttribute('aria-keyshortcuts')).toMatch(/Control\+B/);
     await fireEvent.click(btn);
     expect(onToggleSidebar).toHaveBeenCalledOnce();
   });

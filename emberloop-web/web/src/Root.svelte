@@ -4,7 +4,8 @@
   import { onDestroy, onMount } from 'svelte';
   import App from './App.svelte';
   import AuthScreen from './lib/AuthScreen.svelte';
-  import Button from './lib/ui/button.svelte';
+  import ErrorState from './lib/ui/error-state.svelte';
+  import Skeleton from './lib/ui/skeleton.svelte';
   import { UNAUTHORIZED, getAuthState, getMe, logout } from './lib/api.js';
 
   // checking: probing the session. out: sign-in screen. in: the app.
@@ -63,8 +64,22 @@
 {:else if phase === 'out'}
   <AuthScreen {status} onSignedIn={signedIn} />
 {:else if phase === 'offline'}
-  <main class="animate-rise flex min-h-dvh flex-col items-center justify-center gap-4 px-4 text-center">
-    <p class="text-sm text-muted-foreground">Can't reach the Daemon.</p>
-    <Button variant="secondary" onclick={boot}>Try again</Button>
+  <main class="flex min-h-dvh items-center justify-center p-4">
+    <ErrorState
+      title="Can't reach the Daemon"
+      detail="The local server did not answer. Check that it is running, then try again."
+      onRetry={boot}
+      class="animate-rise w-full max-w-sm"
+    />
+  </main>
+{:else}
+  <!-- Probing the session: the first paint is a placeholder, never a blank page. -->
+  <main class="flex min-h-dvh items-center justify-center p-4">
+    <div role="status" aria-label="Checking the session" class="flex w-full max-w-sm flex-col gap-3">
+      <Skeleton class="h-14 rounded-2xl" />
+      <Skeleton class="h-11 rounded-xl" />
+      <Skeleton class="h-11 rounded-xl" />
+      <Skeleton class="h-11 rounded-xl" />
+    </div>
   </main>
 {/if}

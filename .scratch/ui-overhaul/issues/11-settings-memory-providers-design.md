@@ -6,10 +6,10 @@
 
 **Blocked by:** 01-design-foundation
 
-**Status:** open
+**Status:** done
 
-- [ ] Memory first viewport shows summary and pending approvals, not prose
-- [ ] Providers cards match Quota cards; connect flows unchanged in behaviour
-- [ ] Chain editor usable at 390 px
-- [ ] Pages with no breakpoints today (Profile, Notifications, PromotionQueue) lay out correctly on phone
-- [ ] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass
+- [x] Memory first viewport shows summary and pending approvals, not prose
+- [x] Providers cards match Quota cards; connect flows unchanged in behaviour
+- [x] Chain editor usable at 390 px
+- [x] Pages with no breakpoints today (Profile, Notifications, PromotionQueue) lay out correctly on phone
+- [x] Console and a11y clean; `npm test`, `npm run build`, `.emberloop/check` pass

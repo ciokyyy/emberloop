@@ -24,6 +24,15 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   fake Backend drives the API and lifecycle HTTP/SSE seams.
 - Session tools: `steer_test.go`, `steer_child_test.go`, `spawn_test.go` and
   `submitgate_test.go`.
+- Session queue control: `GET /api/sessions/<id>/queue` lists `id`, `mode`,
+  `text` and `imageIds`; `PATCH /queue/<itemId>` edits text and
+  `DELETE /queue/<itemId>` removes one item, while `DELETE /queue` still clears
+  all. IDs stay stable while queued; the API controls both Daemon-pending and
+  pig-native entries. Queue access follows other Session actions: all callers
+  authenticated by the API gate, including machine clients, may inspect or
+  change it. Unknown ids return 404; delivered ids return 409. Degraded claude
+  Steers report `followup`. `web/src/lib/api.js` wraps each operation;
+  `steer_test.go` and `api_test.go` cover queue and access behavior.
 - SSR spike and request rendering: `ssr_test.go` exercises the embedded Dashboard bundle in `modernc.org/quickjs` (no cgo), tests Chromium hydration when installed, and benchmarks warm renders. Signed-in `/` requests render the Dashboard with prefetched payload under a 200ms deadline only when the accepted ticket 03 SSR bundle is embedded; errors log and serve the shell. Run `npm run build` in `web/` first.
 
 - UI routing: `ui.go` matches route patterns from `router.js` before serving the shell; unmatched page paths get an HTML 404, while missing assets and `/api/*` remain 404s. `ui_assets_test.go` pins route coverage and fallback status.
@@ -182,11 +191,27 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   path without a folder field. `/p/<id>/settings` supports rename, removal
   (chats and files stay) and gist editing, with no override fields. `/s/<id>`
   stays canonical and derives scope from Session metadata. Account pages remain
-  global; the switcher and Dashboard are available in the phone drawer.
+  global; the switcher and Dashboard are available in the phone drawer. The
+  Dashboard leads with Needs you and Running counts and rows, then Projects.
+  Every area header is `ui/page-header.svelte` (title, scope chip, actions; the
+  phone menu comes from App's shell context, a drill-down Back replaces it on
+  phone). Session, Run and Project lists share `ui/row.svelte`; the Project
+  switcher is a searchable popover.
   Browser Settings: `/settings` is the hub on phones and redirects to `/settings/agents` on desktop. Each concern has a stable `/settings/<section>` route, grouped Workspace and You in `SettingsNav.svelte`; each page shows its Global, Admin or You scope and a phone return link. Agents has one ordered chain per Session and Run role (Orchestrator, Subagent, Scout, Ticket worker, Designer worker, Spec reviewer, Standards reviewer), at most three `{harness, model, effort}` entries; effort choices and catalog-known `image_input` capabilities come from `/api/models`. Design Chain entries with known image-input absence show an advisory warning; unknown metadata stays silent and never blocks saving. The Daemon migrates legacy role settings and Run Chain aliases to canonical chains; configured legacy role keys mirror primaries for `el settings role` compatibility. Daemon-backed pages share a first-change Revert/Save bar. Runs labels the global cap “Maximum tickets per Run (spec)” and explains that `max_tickets` caps each Run while a spec value can only lower it. Memory combines its legacy decider controls with admin-only host-global extractor model/effort, embedding model, automatic extraction and validated recall weights; settings are searchable by control name, and redacted user turns egress to the extractor/embedder. A Find tool block under Memory edits the find tool decision model: `findsettings.go` serves `find` in the settings view (saved value, pinned default, `from_env` lock for `EL_DECISION_MODEL`, quick-pick suggestions) and an admin-only `find.decision_model` write to the shared `decision_model` key, canonicalized onto the Jev pin, empty clears; `findsettings_test.go` covers it.
   Browser Session wiring injects the environment into Claude and Pig ACP/SDK tool paths when `agent-browser` exists in the el bin directory and browser support is enabled. It scopes Session and screenshot values, defaults allowed domains to localhost (admin `browser.allowed_domains` widens the allowlist), adds the el bin directory to `PATH`, and uses a discovered Chromium/Chrome executable; absent binaries or disabled support inject nothing. Session end closes the named browser, shutdown closes all browsers in the Daemon namespace, and the disk janitor removes stale inactive screenshot directories.
   Design Worker and the standards Reviewer of a design Ticket receive a Daemon-reserved `PORT`, unique among live and restored design Sessions; other roles do not. The assignment persists in Session metadata. `.emberloop/preview` reads `PORT`, starts the worktree dev server and prints its URL. Session end stops processes carrying that Session's `EL_PREVIEW_SESSION` marker whose cwd is inside its worktree; pause, merge-end and abandon use Session end before worktree removal. Failed starts release their reservation. `preview_process_test.go` covers role scoping, persistence, port uniqueness, failed starts and Session-isolated process cleanup.
   Profile, notification and device preference components retain their existing behavior. `model_efforts_test.go`, `settings_test.go`, `SettingsPage.test.js`, `SettingsHub.test.js`, `SettingsRoutes.test.js` and `router.test.js` cover model capabilities, editing, migration, grouping, routes, phone navigation and the save bar.
+- Grouped Subagent result prompts remain Steers for the parent, but `events.js`
+  maps them to report notices before User-message classification and keeps the
+  parsed report (seq, group name, counts) on the transcript block, so the notice
+  shows its group and dismisses itself. `GET /api/sessions` exposes the latest
+  `reportSeq`; a Session snapshot includes all
+  grouped report Events for tray hydration. Dismissal and cached report contents
+  are per-User/Session browser state keyed by Event seq; the Reports tray restores
+  them, and Session rows retain an unread dot until opened. The parent gets a
+  “Subagents finished” push after a grouped report is processed; the service
+  worker shows it only without a visible client. Each-mode child prompts do not
+  use the group-completion push.
 - Browser boot: the Dashboard and global pages do not wait for Session or Run
   lists. Project scope loads Sessions asynchronously; `/runs` and
   `/p/<id>/runs` load summaries in `RunsSidebar`. `runsStore` shares one summary
@@ -195,6 +220,40 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   returning to a Project scope refreshes before selecting its last/newest
   Session. `router.test.js` and `App.test.js` cover URL round trips, scope,
   global routes, Dashboard and drawer navigation.
+- Browser Runs and Ticket pages lead with state and the next action. Run detail
+  shows the status chip, merged count and actions, then needs-you Tickets, then
+  the Tickets; the picked-spec preview is one line per Ticket plus rows of
+  chips, never prose. A phone lists the Tickets and opens one Ticket's Chain
+  and verdicts in `ui/bottom-sheet.svelte`; the graph is an opt-in full-screen
+  dialog that owns every gesture, and inline it sets `touch-action: pan-y`,
+  leaves a plain wheel to the page and zooms only on ctrl/cmd+wheel. The Ticket
+  page opens with status, the one next step (`nextStep` in `ticketPage.js`) and
+  its one control, plus type, blocker, warning and owner chips; on a phone
+  Status, Transcript and Facts are tabs, the tablist naming its `panel`.
+  `GitPanel` is a side panel on desktop, a two-step overlay card under `lg`
+  (file list, then the read-only diff with a Back button) and full bleed with
+  safe-area insets under `md`. `phone.svelte.js` `createPhone()` is the phone
+  breakpoint flag (`md`, 767 px) for Runs and Tickets; `ui/segmented.svelte` is
+  the shared view switch and tablist.
+- Phone chat shell: `web/src/lib/viewport.js` follows `window.visualViewport`
+  on phones and publishes `--app-height`, `--kb-inset` and
+  `html[data-keyboard]`; `.app-shell` takes the visible height and the composer
+  dock pads with `--safe-bottom`, so the composer sits above the on-screen
+  keyboard and the home-indicator inset drops while the keyboard covers it. The
+  phone chat header is the title, the status glyph, the context ring and one
+  `ChatMenu` button whose sheet holds New Session, Git, the model/context row
+  and the Project scope (one sheet, a Project view); the model row renders only
+  while a context ring is mounted, and a draft picks its model in the composer's
+  `DraftBar`. The drawer keeps the Project switcher, the Session list and the
+  five area tabs. `overlayBack.js` holds the sheets' one transient history
+  entry on phones only (desktop dialogs keep the router's Back): system Back
+  closes the top sheet, a UI close pops the entry, `carryBack` hands it to a
+  sheet opening next, `closeBacks` lets a navigation take it over, and App
+  leaves popstate routing alone while a sheet is open. Bottom sheets, the
+  context sheet, the message-action sheet and the Git panel take part;
+  `Transcript`'s Latest jump stays inside the padding it reserves for the
+  composer dock.
+- Final browser component and layout map: `web/README.md` maps routed pages and implementation tests; `web/DESIGN.md` maps the shared primitives and responsive rules. `web/e2e/tests/layout-sweep.e2e.ts` visits every route pattern from `web/src/lib/router.js` at 390 px and 1280 px, checking document/main/page-scroller overflow, one page header and h1, phone primary targets of at least 44 px, and no hover-only control. `quota-layout.e2e.ts` keeps the additional 800 px Quota probe; `npm run test:e2e` runs both.
 
 ## Adapter retry
 
@@ -264,5 +323,6 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
 - `emberloop-web/el/AGENTS.md` — the el library, its file map, and its Go workflow; indexes tools, MCP server, state database, and test data
 - `emberloop-web/spike/README.md` — the Backend spike probes
 - `emberloop-web/web/README.md` — the Svelte source and embedded build
+- `emberloop-web/web/DESIGN.md` — the UI design system: tokens, type, spacing, elevation, the one motion scale, icon map, primitives (including the compact empty/error rows), the icon, disclosure, responsive and state rules, and the auth and first-run layout
 - `emberloop-web/cmd/emberloop-web/main.go` — the loopback-only Daemon binary
 - `emberloop-web/memory/AGENTS.md` — memory engine, tests, embeddings, hybrid Memory and Episode recall scoring, and injection contracts

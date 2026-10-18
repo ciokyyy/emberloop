@@ -7,7 +7,9 @@
 // buries text faster than any fade can play (and the pace jump means the
 // fade would never complete), so apply() skips wrapping once the caller's
 // backlog passes SKIP_FADE_BACKLOG; slow streams keep the fade.
-export const FADE_MS = 450;
+// FADE_MS is the emphasis duration (--dur-emphasis in app.css): the span's
+// negative delay and the CSS animation must agree.
+export const FADE_MS = 320;
 export const SKIP_FADE_BACKLOG = 1500;
 
 export function fadeNewText(now = () => performance.now()) {

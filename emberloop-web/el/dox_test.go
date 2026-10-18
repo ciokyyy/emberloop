@@ -7,7 +7,9 @@ package el
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -40,29 +42,13 @@ func doxIndexEntries(content string) []string {
 	return out
 }
 
-// doxTreeProblems scans root for AGENTS.md files and reports index gaps:
-// a doc no parent lists, or a listed child with no file. Empty means clean.
+// doxTreeProblems scans repository-owned AGENTS.md files and reports index
+// gaps: a doc no parent lists, or a listed child with no file. Git-ignored
+// local docs are not part of a checkout's tree. Empty means clean.
 func doxTreeProblems(root string) []string {
-	var docs []string // repo-relative paths of every AGENTS.md
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return nil
-		}
-		// Sibling worktrees carry their own copy of the tree; they are not
-		// part of this checkout's index.
-		if info.IsDir() && (info.Name() == ".git" || info.Name() == ".emberloop-worktrees" || info.Name() == ".el-worktrees" || info.Name() == "node_modules") {
-			return filepath.SkipDir
-		}
-		if !info.IsDir() && info.Name() == "AGENTS.md" {
-			rel, err := filepath.Rel(root, path)
-			if err == nil {
-				docs = append(docs, filepath.ToSlash(rel))
-			}
-		}
-		return nil
-	})
+	docs, err := doxAgentDocs(root)
 	if err != nil {
-		return []string{"walk " + root + ": " + err.Error()}
+		return []string{"scan " + root + ": " + err.Error()}
 	}
 	sort.Strings(docs)
 
@@ -136,21 +122,57 @@ func doxTreeProblems(root string) []string {
 	return problems
 }
 
-// doxRepoRoot finds the checkout root from a package directory: the first
-// ancestor holding an emberloop-web subdirectory (the one Go module).
+// doxAgentDocs uses Git to omit ignored worktree-local files. Standalone
+// fixture trees in unit tests have no Git metadata, so they are walked.
+func doxAgentDocs(root string) ([]string, error) {
+	cmd := exec.Command("git", "-C", root, "ls-files", "--cached", "--others", "--exclude-standard", "-z")
+	if output, err := cmd.Output(); err == nil {
+		var docs []string
+		for _, path := range strings.Split(string(output), "\x00") {
+			if path != "" && filepath.Base(filepath.FromSlash(path)) == "AGENTS.md" {
+				docs = append(docs, filepath.ToSlash(path))
+			}
+		}
+		return docs, nil
+	}
+	var docs []string
+	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		if info.IsDir() && (info.Name() == ".git" || info.Name() == ".emberloop-worktrees" || info.Name() == ".el-worktrees" || info.Name() == "node_modules") {
+			return filepath.SkipDir
+		}
+		if !info.IsDir() && info.Name() == "AGENTS.md" {
+			rel, err := filepath.Rel(root, path)
+			if err == nil {
+				docs = append(docs, filepath.ToSlash(rel))
+			}
+		}
+		return nil
+	})
+	return docs, err
+}
+
+// doxRepoRoot finds the checkout root from this test's source location, not
+// the test process's working directory, which may vary with the caller.
 func doxRepoRoot(t *testing.T) string {
 	t.Helper()
-	dir, err := os.Getwd()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate dox_test.go")
+	}
+	file, err := filepath.Abs(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for {
+	for dir := filepath.Dir(file); ; {
 		if _, err := os.Stat(filepath.Join(dir, "emberloop-web")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatal("no emberloop-web directory found above " + dir)
+			t.Fatal("no emberloop-web directory above " + file)
 		}
 		dir = parent
 	}
@@ -159,6 +181,26 @@ func doxRepoRoot(t *testing.T) string {
 func TestDoxTreeIndexIsComplete(t *testing.T) {
 	if problems := doxTreeProblems(doxRepoRoot(t)); len(problems) > 0 {
 		t.Errorf("DOX tree index is incomplete:\n- %s", strings.Join(problems, "\n- "))
+	}
+}
+
+func TestDoxRepoRootIgnoresWorkingDirectory(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(original); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	}()
+
+	root := doxRepoRoot(t)
+	if _, err := os.Stat(filepath.Join(root, "emberloop-web", "el", "dox_test.go")); err != nil {
+		t.Fatalf("resolved root %q does not contain this test: %v", root, err)
 	}
 }
 
@@ -226,5 +268,20 @@ func TestDoxTreeProblemsRequiresTheParentIndex(t *testing.T) {
 	problems := doxTreeProblems(root)
 	if len(problems) != 1 || !strings.Contains(problems[0], "b/AGENTS.md") {
 		t.Fatalf("a doc listed only by a non-parent must be flagged, got %v", problems)
+	}
+}
+
+func TestDoxTreeProblemsSkipsGitIgnoredDocs(t *testing.T) {
+	root := t.TempDir()
+	if output, err := exec.Command("git", "-C", root, "init", "-q").CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, output)
+	}
+	writeDoxDoc(t, root, "AGENTS.md", "No child docs.")
+	writeDoxDoc(t, root, "local/AGENTS.md", "Ignored local instructions.")
+	if err := os.WriteFile(filepath.Join(root, ".gitignore"), []byte("local/AGENTS.md\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if problems := doxTreeProblems(root); len(problems) != 0 {
+		t.Fatalf("ignored local docs should not affect the repository index, got %v", problems)
 	}
 }

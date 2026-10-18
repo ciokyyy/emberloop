@@ -14,11 +14,12 @@ describe('ProjectSettingsPage', () => {
   it('edits the Project name and gist without exposing override fields', async () => {
     const onRename = vi.fn(async (_project, name) => ({ ...project, name }));
     const onSaveGist = vi.fn(async (_project, gist) => ({ ...project, gist }));
-    const { getByRole, queryByText } = render(ProjectSettingsPage, {
+    const { getByRole, getByText, queryByText } = render(ProjectSettingsPage, {
       props: { project, onRename, onSaveGist },
     });
 
-    expect(getByRole('heading', { name: 'Emberloop settings' })).toBeTruthy();
+    expect(getByRole('heading', { name: 'Project settings' })).toBeTruthy();
+    expect(getByText('Emberloop', { selector: '[data-scope-chip] *' })).toBeTruthy();
     expect(getByRole('textbox', { name: 'Project name' }).value).toBe('Emberloop');
     expect(getByRole('textbox', { name: 'Project gist' }).value).toBe('A browser UI and local Daemon.');
     expect(queryByText(/override/i)).toBeNull();
@@ -59,7 +60,7 @@ describe('ProjectSettingsPage', () => {
 
   it('distinguishes loading from a removed Project', () => {
     const loading = render(ProjectSettingsPage, { props: { loading: true } });
-    expect(loading.getByRole('status').textContent).toMatch(/loading project settings/i);
+    expect(loading.getByRole('status', { name: /loading project settings/i })).toBeTruthy();
     loading.unmount();
 
     const missing = render(ProjectSettingsPage, { props: { loading: false } });

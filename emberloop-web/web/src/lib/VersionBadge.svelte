@@ -56,9 +56,9 @@ button here would stop being a tiny diagnostic line. -->
 
 {#if commit && inline}
 <div class="flex shrink-0 items-center justify-center gap-2 pt-1 text-[11px] leading-none text-muted-foreground" data-testid="version-inline">
-  <button class="min-h-8 cursor-pointer px-1 transition-colors hover:text-foreground" onclick={copy}>{copied ? 'copied' : label}</button>
+  <button class="min-h-11 cursor-pointer px-1 transition-colors hover:text-foreground" onclick={copy}>{copied ? 'copied' : label}</button>
   {#if stale}
-    <button class="min-h-8 cursor-pointer px-1 underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground" onclick={() => window.location.reload()}>update available — reload</button>
+    <button class="min-h-11 cursor-pointer px-1 underline decoration-dotted underline-offset-2 transition-colors hover:text-foreground" onclick={() => window.location.reload()}>update available — reload</button>
   {/if}
 </div>
 {:else if commit}

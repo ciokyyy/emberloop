@@ -2,6 +2,8 @@
 
 One spec, from the 2026-10-17 conversation with the User. It redesigns the Emberloop browser UI as one coherent product on desktop and phone, fixes the scroll defect, adds message actions, and turns Subagent reports into dismissible notices. Work splits into `code` Tickets (behaviour, with plain semantic UI) and `design` Tickets (layout, styling, icons, copy, states), per the Designer agents spec. Design Tickets run on the Designer Chain and are reviewed by the design Reviewer, who inspects the rendered page through the `agent-browser` CLI at 390 px and 1280 px.
 
+> Amended 2026-10-17: no design Reviewer seat. The standards Reviewer judges the rendered result of design Tickets; "design Reviewer" below means that Reviewer.
+
 ## Problem Statement
 
 1. The UI looks like a good developer tool, not a product. It has no deliberate visual system: tokens exist, but spacing, type scale, elevation and icon use vary page to page.

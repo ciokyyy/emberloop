@@ -1,54 +1,82 @@
-import { describe, it, expect, vi } from 'vitest';
-import { render, within, fireEvent } from '@testing-library/svelte';
+import { describe, it, expect, vi, afterEach } from 'vitest';
+import { render, screen, fireEvent } from '@testing-library/svelte';
 import ContextMeter from './ContextMeter.svelte';
 
-describe('ContextMeter compress button', () => {
-  it('hides the button when the Session cannot compress', () => {
-    const { container } = render(ContextMeter, { props: { model: 'm', usage: { used: 1, size: 2 } } });
-    expect(within(container).queryByText('Compress')).toBeNull();
+afterEach(() => {
+  document.body.innerHTML = '';
+});
+
+const mount = (props = {}) => render(ContextMeter, { props: { model: 'm', usage: { used: 1, size: 2 }, ...props } });
+const openSheet = async () => {
+  await fireEvent.click(screen.getByTestId('context-meter'));
+  return screen.findByTestId('context-sheet');
+};
+
+describe('ContextMeter ring', () => {
+  it('is one icon button named by the percent, with no visible text', () => {
+    const { container } = mount({ usage: { used: 150000, size: 1000000 } });
+    const ring = container.querySelector('[data-testid="context-meter"]');
+    expect(ring.tagName).toBe('BUTTON');
+    expect(ring.getAttribute('aria-label')).toBe('Context 15% used');
+    expect(ring.textContent.trim()).toBe('');
+    expect(ring.querySelector('svg')).toBeTruthy();
   });
-  it('calls onCompress when idle', async () => {
-    const onCompress = vi.fn();
-    const { container } = render(ContextMeter, { props: { model: 'm', usage: { used: 1, size: 2 }, onCompress } });
-    await fireEvent.click(within(container).getByText('Compress'));
-    expect(onCompress).toHaveBeenCalledOnce();
+  it('names the empty state when there is no usage yet', () => {
+    const { container } = mount({ usage: null });
+    expect(container.querySelector('[data-testid="context-meter"]').getAttribute('aria-label')).toBe('Context: no usage yet');
   });
-  it('disables the button while the Session works', () => {
-    const { container } = render(ContextMeter, { props: { model: 'm', usage: null, onCompress: () => {}, busy: true } });
-    expect(within(container).getByText('Compress').closest('button').disabled).toBe(true);
-  });
-  it('shows progress while compressing', () => {
-    const { container } = render(ContextMeter, { props: { model: 'm', usage: null, onCompress: () => {}, compressing: true } });
-    const btn = within(container).getByText('Compressing…').closest('button');
-    expect(btn.disabled).toBe(true);
+  it('warms the ring near the limit', () => {
+    const { container } = mount({ usage: { used: 95, size: 100 } });
+    expect(container.querySelector('[data-testid="context-meter"]').className).toContain('text-status-failed');
   });
 });
 
-describe('ContextMeter compress reason', () => {
-  it('disables Compress and shows the reason it cannot run', () => {
+describe('ContextMeter detail sheet', () => {
+  it('stays closed until the ring is tapped, then shows model and tokens', async () => {
+    mount({ model: 'gpt-x', usage: { used: 150000, size: 1000000 } });
+    expect(screen.queryByTestId('context-sheet')).toBeNull();
+    const sheet = await openSheet();
+    expect(sheet.textContent).toContain('gpt-x');
+    expect(screen.getByTestId('context-pct').textContent).toBe('15%');
+    expect(screen.getByTestId('context-tokens').textContent).toBe('150k of 1M tokens');
+  });
+  it('hides Compress when the Session cannot compress', async () => {
+    mount();
+    await openSheet();
+    expect(screen.queryByRole('button', { name: 'Compress' })).toBeNull();
+  });
+  it('calls onCompress when idle and closes the sheet', async () => {
+    const onCompress = vi.fn();
+    mount({ onCompress });
+    await openSheet();
+    await fireEvent.click(screen.getByRole('button', { name: 'Compress' }));
+    expect(onCompress).toHaveBeenCalledOnce();
+    await vi.waitFor(() => expect(screen.queryByTestId('context-sheet')).toBeNull());
+  });
+  it('disables Compress while the Session works', async () => {
+    mount({ usage: null, onCompress: () => {}, busy: true });
+    await openSheet();
+    expect(screen.getByRole('button', { name: 'Compress' }).disabled).toBe(true);
+    expect(screen.getByTestId('compress-hint').textContent).toContain('idle');
+  });
+  it('shows progress while compressing', async () => {
+    mount({ usage: null, onCompress: () => {}, compressing: true });
+    await openSheet();
+    expect(screen.getByRole('button', { name: 'Compress' }).disabled).toBe(true);
+    expect(screen.getByTestId('compress-hint').textContent).toContain('Compressing');
+  });
+  it('disables Compress and shows the reason it cannot run', async () => {
     const onCompress = vi.fn();
     const reason = 'no compress model: pick one in Settings';
-    const { container } = render(ContextMeter, { props: { model: 'm', usage: null, onCompress, compressNote: reason } });
-    const btn = within(container).getByText('Compress').closest('button');
-    expect(btn.disabled).toBe(true);
-    expect(btn.title).toBe(reason);
-    expect(within(container).getByText(reason)).toBeTruthy();
+    mount({ usage: null, onCompress, compressNote: reason });
+    await openSheet();
+    expect(screen.getByRole('button', { name: 'Compress' }).disabled).toBe(true);
+    expect(screen.getByTestId('compress-hint').textContent).toBe(reason);
   });
-});
-describe('ContextMeter read-only meter', () => {
-  it('shows the usage even when the Session cannot compress', () => {
-    const { container } = render(ContextMeter, { props: { model: 'm', usage: { used: 150000, size: 1000000 } } });
-    expect(within(container).queryByText('Compress')).toBeNull();
-    expect(container.querySelector('[data-testid="context-meter"]')).toBeTruthy();
-    expect(within(container).getByText(/15%/)).toBeTruthy();
-  });
-  it('keeps the meter row on one line and hides the window on phones', () => {
-    const { container } = render(ContextMeter, { props: { model: 'm', usage: { used: 1500, size: 4000 } } });
-    const meter = container.querySelector('[data-testid="context-meter"]');
-    expect(meter.className).toMatch(/whitespace-nowrap/);
-    const size = meter.querySelector('span span');
-    expect(size.textContent).toMatch(/4\.0k/);
-    expect(size.className).toMatch(/hidden/);
-    expect(size.className).toMatch(/sm:inline/);
+  it('shows the usage even when the Session cannot compress', async () => {
+    mount({ usage: { used: 150000, size: 1000000 } });
+    await openSheet();
+    expect(screen.getByTestId('context-pct').textContent).toBe('15%');
+    expect(screen.queryByRole('button', { name: 'Compress' })).toBeNull();
   });
 });

@@ -2,6 +2,8 @@
 <script>
   import { Play, Pause, FileText, X } from '@lucide/svelte';
   import { flatPeaks, fmtDuration } from './voiceMeta.js';
+  import EmptyState from './ui/empty-state.svelte';
+  import { icons } from './icons.js';
 
   let {
     src = '',
@@ -70,7 +72,7 @@
     >
       {#each bars as h, i (i)}
         <span
-          class="w-[3px] shrink-0 rounded-full transition-colors duration-150 {i / bars.length < frac ? 'bg-primary' : 'bg-foreground/25'}"
+          class="w-[3px] shrink-0 rounded-full transition-colors motion-standard {i / bars.length < frac ? 'bg-primary' : 'bg-foreground/25'}"
           style="height: {Math.max(8, Math.min(100, h))}%"
         ></span>
       {/each}
@@ -101,9 +103,13 @@
     {/if}
   </div>
   {#if open}
-    <p class="animate-rise text-sm leading-snug whitespace-pre-wrap [overflow-wrap:anywhere]" data-testid="voice-transcript">
-      {#if transcript}{transcript}{:else if transcriptEditable}<span class="text-muted-foreground">Edit the transcript in the message box.</span>{:else}<span class="text-muted-foreground">No transcript.</span>{/if}
-    </p>
+    {#if transcript}
+      <p class="animate-rise text-sm leading-snug whitespace-pre-wrap [overflow-wrap:anywhere]" data-testid="voice-transcript">{transcript}</p>
+    {:else if transcriptEditable}
+      <p class="animate-rise text-sm leading-snug text-muted-foreground" data-testid="voice-transcript">Edit the transcript in the message box.</p>
+    {:else}
+      <EmptyState compact icon={icons.session} title="No transcript" class="animate-rise" data-testid="voice-transcript" />
+    {/if}
   {/if}
   {#if src}
     <audio

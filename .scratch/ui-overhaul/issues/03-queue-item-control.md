@@ -6,11 +6,11 @@
 
 **Blocked by:** none
 
-**Status:** open
+**Status:** done
 
-- [ ] `GET .../queue` returns items with `id`, `mode`, `text`, `imageIds`
-- [ ] `PATCH .../queue/<id>` replaces text; `DELETE .../queue/<id>` removes one; other items keep order
-- [ ] Delivered or unknown id returns 409 or 404 with a clear message
-- [ ] Pig native queue and Daemon pending queue both covered; claude degrade reports `followup`
-- [ ] Owner and admin rules match other Session actions
-- [ ] Daemon tests in `steer_test.go`/`api_test.go` with the fake Backend; `emberloop-web/AGENTS.md` states the contract; `.emberloop/check` passes
+- [x] `GET .../queue` returns items with `id`, `mode`, `text`, `imageIds`
+- [x] `PATCH .../queue/<id>` replaces text; `DELETE .../queue/<id>` removes one; other items keep order
+- [x] Delivered or unknown id returns 409 or 404 with a clear message
+- [x] Pig native queue and Daemon pending queue both covered; claude degrade reports `followup`
+- [x] Owner and admin rules match other Session actions
+- [x] Daemon tests in `steer_test.go`/`api_test.go` with the fake Backend; `emberloop-web/AGENTS.md` states the contract; `.emberloop/check` passes

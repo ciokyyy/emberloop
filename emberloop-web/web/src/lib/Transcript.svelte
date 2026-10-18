@@ -6,8 +6,13 @@
   import { tick, untrack } from 'svelte';
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import Button from './ui/button.svelte';
+  import ReportsTray from './ReportsTray.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import Skeleton from './ui/skeleton.svelte';
   import Card from './Card.svelte';
+  import { icons } from './icons.js';
   import { isNearBottom, applyAnchor, blockIndexForSeq } from './transcript.js';
+  import { getQueue } from './api.js';
 
   const ESTIMATE = 320;
   const OVERSCAN = 8;
@@ -23,7 +28,115 @@
     sessionId = null,
     sessions = [],
     onOpenSession = null,
+    reports = [],
+    dismissedReports = [],
+    onDismissReport = () => {},
+    onRestoreReport = () => {},
   } = $props();
+  let queueItems = $state([]);
+  let queueAssignments = $state({});
+  let canceledBlockKeys = $state([]);
+  let queueRequest = 0;
+  let queueSession = '';
+  const queueLabel = (mode) => mode === 'steer' ? 'Steer' : mode === 'followup' ? 'Follow-up' : 'Prompt';
+
+  function matchesQueueBlock(block, item) {
+    if (block.title !== queueLabel(item.mode) || String(block.body ?? '') !== String(item.text ?? '')) return false;
+    const blockImages = block.imageIds ?? [];
+    const queueImages = item.imageIds ?? [];
+    return blockImages.length === queueImages.length && blockImages.every((id, index) => id === queueImages[index]);
+  }
+
+  async function refreshQueue(id = sessionId) {
+    if (!id) {
+      queueItems = [];
+      queueAssignments = {};
+      return;
+    }
+    const request = ++queueRequest;
+    try {
+      const body = await getQueue(id);
+      if (request !== queueRequest || id !== sessionId) return;
+      queueItems = body.queue ?? [];
+      const ids = new Set(queueItems.map((item) => item.id));
+      queueAssignments = Object.fromEntries(Object.entries(queueAssignments).filter(([itemId]) => ids.has(itemId)));
+    } catch {
+      // Queue controls are best-effort; a failed read keeps the last good rows.
+    }
+  }
+
+  function queueChanged(change) {
+    if (change.type === 'edit') {
+      const block = queueView.byId.get(change.id);
+      if (block) queueAssignments = { ...queueAssignments, [change.id]: block.key };
+      queueItems = queueItems.map((item) => item.id === change.id ? { ...item, text: change.text } : item);
+    } else if (change.type === 'remove') {
+      const block = queueView.byId.get(change.id);
+      if (block) canceledBlockKeys = [...new Set([...canceledBlockKeys, block.key])];
+      queueItems = queueItems.filter((item) => item.id !== change.id);
+      const next = { ...queueAssignments };
+      delete next[change.id];
+      queueAssignments = next;
+    }
+    void refreshQueue(sessionId);
+  }
+
+  const queueView = $derived.by(() => {
+    const available = queueItems.filter((item) => item.mode === 'steer' || item.mode === 'followup');
+    const remaining = available.slice();
+    const byKey = new Map();
+    const byId = new Map();
+    for (const item of available) {
+      const assignedKey = queueAssignments[item.id];
+      if (assignedKey == null) continue;
+      const block = blocks.find((candidate) => String(candidate.key) === String(assignedKey));
+      if (!block || canceledBlockKeys.includes(block.key) || block.card !== 'user' || block.sender !== 'user') continue;
+      byKey.set(block.key, item);
+      byId.set(item.id, block);
+      const index = remaining.findIndex((candidate) => candidate.id === item.id);
+      if (index !== -1) remaining.splice(index, 1);
+    }
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const block = blocks[i];
+      if (block.card !== 'user' || block.sender !== 'user' || byKey.has(block.key) || canceledBlockKeys.includes(block.key)) continue;
+      let index = -1;
+      for (let j = remaining.length - 1; j >= 0; j--) {
+        if (matchesQueueBlock(block, remaining[j])) { index = j; break; }
+      }
+      if (index === -1) continue;
+      const [item] = remaining.splice(index, 1);
+      byKey.set(block.key, item);
+      byId.set(item.id, block);
+    }
+    return { byKey, byId, extra: remaining };
+  });
+  $effect(() => {
+    const assignments = {};
+    for (const [id, block] of queueView.byId) {
+      if (queueAssignments[id] == null) assignments[id] = block.key;
+    }
+    if (Object.keys(assignments).length) queueAssignments = { ...queueAssignments, ...assignments };
+  });
+
+  $effect(() => {
+    const id = sessionId;
+    blocks.length;
+    blocks[blocks.length - 1]?.key;
+    if (id !== queueSession) {
+      queueSession = id;
+      queueItems = [];
+      canceledBlockKeys = [];
+      queueAssignments = {};
+    }
+    if (!id) return;
+    void refreshQueue(id);
+  });
+  $effect(() => {
+    const id = sessionId;
+    if (!id) return;
+    const timer = setInterval(() => void refreshQueue(id), 3000);
+    return () => clearInterval(timer);
+  });
 
   let scrollEl = $state(null);
   let sentinel = $state(null);
@@ -53,12 +166,17 @@
     const key = inst.options.getItemKey(index);
     const prev = measuredAt.get(key);
     const now = typeof performance !== 'undefined' ? performance.now() : 0;
-    if (prev && now - prev.t < MEASURE_MS && Math.abs(size - prev.size) < MEASURE_PX) return prev.size;
+    const disclosure = el.querySelector('details');
+    const liveThinking = disclosure?.matches('[data-card="thinking"][data-live="true"]') ?? false;
+    // Measure disclosure transitions each frame for native anchoring; keep
+    // live thought streaming throttled.
+    if (prev && now - prev.t < MEASURE_MS && Math.abs(size - prev.size) < MEASURE_PX && (!disclosure || liveThinking)) return prev.size;
     measuredAt.set(key, { size, t: now });
     if (measuredAt.size > 500) measuredAt.delete(measuredAt.keys().next().value);
     return size;
   }
 
+  const noScrollAdjustment = () => false;
   const virtualizer = createVirtualizer({
     count: blocks.length,
     getScrollElement: () => scrollEl,
@@ -66,6 +184,9 @@
     overscan: OVERSCAN,
     getItemKey: (i) => blocks[i]?.key ?? i,
     measureElement: throttledMeasure,
+    // Height changes are anchored by the browser; only history prepends use
+    // the explicit correction in loadEarlier().
+    shouldAdjustScrollPositionOnItemSizeChange: noScrollAdjustment,
   });
 
   // Rebind count, keys and scroll element after mount and on every list change.
@@ -81,6 +202,7 @@
           getScrollElement: () => el,
           getItemKey: (i) => blocks[i]?.key ?? i,
           measureElement: throttledMeasure,
+          shouldAdjustScrollPositionOnItemSizeChange: noScrollAdjustment,
         });
       } catch {
         // Unmounted scroll element (or jsdom): the next run rebinds.
@@ -91,7 +213,7 @@
   const virtualRows = $derived.by(() => {
     try {
       const rows = $virtualizer.getVirtualItems();
-      if (rows.length > 0) return { virtual: true, rows: rows.map((r) => ({ index: r.index, start: r.start, key: r.key })) };
+      if (rows.length > 0) return { virtual: true, rows: rows.map((r) => ({ index: r.index, start: r.start, end: r.end, key: r.key })) };
     } catch {
       // Fall through to the plain list below.
     }
@@ -163,9 +285,9 @@
     glideFrame = requestAnimationFrame(step);
   }
 
-  // Glide only ever moves down, so any upward scroll is the user: unpin at
-  // once. A downward scroll never unpins (mid-glide the gap is large); it
-  // re-pins once near the bottom. No flag to leak when a step fires no event.
+  // Input releases the pin synchronously, before a queued follow frame can
+  // write a new scroll position. Browser anchoring remains responsible for
+  // height changes while the reader is away from the bottom.
   let lastTop = 0;
   let lastHeight = 0;
   let jumpUntil = 0;
@@ -188,16 +310,22 @@
     // Wheel, touch and key input still unpin.
     if (movedUp && !shrunk && !nearBottom && performance.now() > jumpUntil) {
       stuck = false;
+      cancelGlide();
       return;
     }
     if (!stuck && nearBottom && !movedUp) stuck = true;
   }
 
-  // Wheel, touch and key input away from the bottom unpin before the next
-  // glide frame can pull the view back.
+  function cancelGlide() {
+    if (!glideFrame) return;
+    if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(glideFrame);
+    glideFrame = 0;
+  }
+
   function onUserUp() {
     jumpUntil = 0;
     stuck = false;
+    cancelGlide();
   }
   function onWheel(e) {
     if (e.deltaY < 0) onUserUp();
@@ -212,7 +340,8 @@
     touchY = y;
   }
   function onKey(e) {
-    if (['ArrowUp', 'PageUp', 'Home'].includes(e.key)) onUserUp();
+    const spaceUp = e.shiftKey && (e.key === ' ' || e.code === 'Space' || e.key === 'Spacebar');
+    if (['ArrowUp', 'PageUp', 'Home'].includes(e.key) || spaceUp) onUserUp();
   }
 
   // Follow the transcript while pinned, including while the last card grows
@@ -228,19 +357,32 @@
     untrack(() => glideToBottom());
   });
 
-  // A card that animates its height (the tool strip) or a composer that
-  // resizes grows the content with no block change. Follow every frame of it
-  // while pinned, so the view glides down instead of lagging behind.
+  // The live tool stage can keep growing after its Event is rendered. Observe
+  // only that final stage: disclosures elsewhere rely on browser anchoring and
+  // must not trigger another follow-to-bottom pass.
   $effect(() => {
-    const node = contentEl;
+    const content = contentEl;
     const el = scrollEl;
-    if (!node || !el || typeof ResizeObserver === 'undefined') return;
+    const lastIndex = blocks.length - 1;
+    const last = blocks[lastIndex];
+    const lastRun = last?.runs?.[last.runs.length - 1];
+    last?.body;
+    last?.events?.length;
+    lastRun?.output;
+    lastRun?.status;
+    virtualRows.rows;
+    const pinned = stuck;
+    if (!content || !el || !pinned || lastIndex < 0 || last?.card !== 'toolstrip' || typeof ResizeObserver === 'undefined') return;
+    const key = String(last.key ?? lastIndex);
+    const row = Array.from(content.querySelectorAll('[data-block-key]')).find((candidate) => candidate.getAttribute('data-block-key') === key);
+    const stage = row?.querySelector('[data-testid="toolstrip-stage"]');
+    if (!stage) return;
     const ro = new ResizeObserver(() => {
       lastHeight = el.scrollHeight;
       nearBottom = isNearBottom(el);
       if (stuck) glideToBottom();
     });
-    ro.observe(node);
+    ro.observe(stage);
     return () => ro.disconnect();
   });
 
@@ -248,10 +390,19 @@
     if (!hasMore || loadingEarlier || !onLoadEarlier) return;
     const el = scrollEl;
     const before = el ? { scrollHeight: el.scrollHeight, scrollTop: el.scrollTop } : null;
-    await onLoadEarlier();
-    await tick();
-    await new Promise((r) => requestAnimationFrame(r));
-    if (el && before) applyAnchor(el, before);
+    const previousOverflowAnchor = el?.style.overflowAnchor ?? '';
+    if (el) el.style.overflowAnchor = 'none';
+    try {
+      await onLoadEarlier();
+      await tick();
+      await new Promise((resolve) => {
+        if (typeof requestAnimationFrame === 'undefined') resolve();
+        else requestAnimationFrame(resolve);
+      });
+      if (el && before) applyAnchor(el, before);
+    } finally {
+      if (el) el.style.overflowAnchor = previousOverflowAnchor;
+    }
   }
 
   // Auto-load on scroll up; the button covers observers-less browsers and tests.
@@ -301,6 +452,7 @@
   function jumpLatest() {
     const el = scrollEl;
     if (!el) return;
+    cancelGlide();
     stuck = true;
     jumpUntil = performance.now() + 1500;
     // Render and measure the last row first, so the end is real, not estimated.
@@ -313,45 +465,67 @@
   }
 </script>
 
-<div bind:this={scrollEl} onscroll={onScroll} onwheel={onWheel} ontouchstart={onTouchStart} ontouchmove={onTouchMove} onkeydown={onKey} class="flex flex-1 scroll-auto flex-col overflow-auto px-3 pt-4 sm:px-4" style="padding-bottom: {bottomPad}px">
-  <div bind:this={contentEl} class="mx-auto flex w-full max-w-3xl flex-col gap-4">
+<!-- Keyboard-focusable scroll region; arrow keys release stick-to-bottom. -->
+<!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+<div bind:this={scrollEl} data-testid="transcript-scroll" role="region" aria-label="Transcript" tabindex="0" onscroll={onScroll} onwheel={onWheel} ontouchstart={onTouchStart} ontouchmove={onTouchMove} onkeydown={onKey} class="transcript-scroll flex flex-1 scroll-auto flex-col overflow-auto px-3 pt-4 sm:px-4" style="padding-bottom: {bottomPad}px">
+  {#if reports.length}
+    <div class="sticky top-0 z-20 self-end w-full max-w-sm">
+      <ReportsTray {reports} dismissed={dismissedReports} onRestore={onRestoreReport} />
+    </div>
+  {/if}
+  <div bind:this={contentEl} data-testid="transcript-content" class="mx-auto flex w-full max-w-3xl flex-col gap-4">
     {#if hasMore}
       <div bind:this={sentinel} class="flex justify-center py-1" data-testid="load-earlier">
-        <Button variant="ghost" size="sm" disabled={loadingEarlier} onclick={loadEarlier}>
-          {#if loadingEarlier}
-            <span class="size-3.5 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-foreground" aria-hidden="true"></span>
-            Loading earlier…
-          {:else}
-            Load earlier
-          {/if}
-        </Button>
+        {#if loadingEarlier}
+          <div role="status" aria-label="Loading earlier messages" class="flex w-full flex-col gap-2 py-2">
+            <Skeleton class="h-3 w-2/3" />
+            <Skeleton class="h-3 w-1/2" />
+          </div>
+        {:else}
+          <Button variant="ghost" size="sm" onclick={loadEarlier}>Load earlier</Button>
+        {/if}
       </div>
     {/if}
     {#if useVirtual}
-      <div style="position: relative; height: {totalSize}px; width: 100%;">
-        {#each virtualRows.rows as row (row.key)}
+      <div data-testid="transcript-virtual-list" class="flex w-full flex-col">
+        <div aria-hidden="true" class="shrink-0" style="height: {virtualRows.rows[0]?.start ?? 0}px;"></div>
+        {#each virtualRows.rows as row, rowIndex (row.key)}
+          {@const previous = virtualRows.rows[rowIndex - 1]}
           {@const b = blocks[row.index]}
+          {#if previous}
+            <div aria-hidden="true" class="shrink-0" style="height: {Math.max(0, row.start - previous.end)}px;"></div>
+          {/if}
           {#if b}
-            <div data-index={row.index} data-block-key={b.key} use:measure class="absolute top-0 left-0 w-full" style="transform: translateY({row.start}px); content-visibility: auto; contain-intrinsic-size: auto 320px;">
+            <div data-index={row.index} data-block-key={b.key} use:measure class="w-full shrink-0">
               <div class="pb-4">
-                <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} />
+                <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} {onDismissReport} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
               </div>
             </div>
           {/if}
         {/each}
+        {#if virtualRows.rows.length > 0}
+          <div aria-hidden="true" class="shrink-0" style="height: {Math.max(0, totalSize - virtualRows.rows[virtualRows.rows.length - 1].end)}px;"></div>
+        {/if}
       </div>
     {:else}
       {#each blocks as b (b.key)}
         <div data-block-key={b.key} style="content-visibility: auto; contain-intrinsic-size: auto 320px;">
-          <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} />
+          <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} {onDismissReport} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
         </div>
       {:else}
-        <p class="py-24 text-center text-2xl font-semibold tracking-tight text-muted-foreground">{emptyHint}</p>
+        {#if emptyHint}<EmptyState icon={icons.session} title={emptyHint} class="my-10" />{/if}
       {/each}
     {/if}
+    {#each queueView.extra as item (item.id)}
+      {@const queuedBlock = { key: `queue-${item.id}`, card: 'user', title: queueLabel(item.mode), body: item.text, imageIds: item.imageIds ?? [], sender: 'user', senderId: '' }}
+      <Card block={queuedBlock} {sessionId} queuedItem={item} onQueueChange={queueChanged} />
+    {/each}
   </div>
-  {#if !stuck && !nearBottom && blocks.length}
-    <div class="sticky bottom-2 flex justify-center">
+  {#if !stuck && blocks.length}
+    <!-- The transcript reserves the composer dock in its own padding, so the
+         sticky jump stays above it. -->
+    <div class="sticky bottom-2 flex justify-center" data-testid="latest-jump">
       <Button variant="secondary" size="sm" class="shadow-lg" onclick={jumpLatest}>↓ Latest</Button>
     </div>
   {/if}

@@ -3,6 +3,7 @@ import { render, within, fireEvent } from '@testing-library/svelte';
 import { tick } from 'svelte';
 import Composer from './Composer.svelte';
 import { writeVoicePrefs, DEFAULT_VOICE } from './voicePrefs.js';
+import { COMPOSER_EDIT_EVENT, markdownToPlainText } from './composer.js';
 
 const { mockStart, mockTranscribe } = vi.hoisted(() => ({
   mockStart: vi.fn(),
@@ -23,16 +24,16 @@ describe('Composer send mode', () => {
   it('prompts for steer or follow-up while working', () => {
     const { container } = render(Composer, { props: { status: 'working', busy: false, onSend: () => {} } });
     expect(within(container).getByLabelText('message').placeholder).toBe('Steer or follow up…');
-    expect(within(container).getByText('Follow-up')).toBeTruthy();
+    expect(within(container).getByRole('button', { name: 'Follow-up' })).toBeTruthy();
   });
   it('sends as follow-up when follow-up is picked', async () => {
     const onSend = vi.fn();
     const { container } = render(Composer, { props: { status: 'working', busy: false, onSend } });
-    await fireEvent.click(within(container).getByText('Follow-up'));
+    await fireEvent.click(within(container).getByRole('button', { name: 'Follow-up' }));
     await tick();
     await fireEvent.input(within(container).getByLabelText('message'), { target: { value: 'later' } });
     await tick();
-    await fireEvent.click(within(container).getByText('Send'));
+    await fireEvent.click(within(container).getByRole('button', { name: /^Send/ }));
     await tick();
     expect(onSend).toHaveBeenCalledWith('later', 'followup', [], []);
   });
@@ -41,7 +42,7 @@ describe('Composer send mode', () => {
     const box = within(container).getByLabelText('message');
     await fireEvent.input(box, { target: { value: 'hello' } });
     await tick();
-    await fireEvent.click(within(container).getByText('Send'));
+    await fireEvent.click(within(container).getByRole('button', { name: /^Send/ }));
     await tick();
     expect(box.value).toBe('hello');
     expect(within(container).getByRole('alert').textContent).toMatch(/failed/i);
@@ -51,7 +52,7 @@ describe('Composer send mode', () => {
     const { container } = render(Composer, { props: { status: 'working', busy: false, onSend } });
     await fireEvent.input(within(container).getByLabelText('message'), { target: { value: 'wait' } });
     await tick();
-    await fireEvent.click(within(container).getByText('Send'));
+    await fireEvent.click(within(container).getByRole('button', { name: /^Send/ }));
     await tick();
     expect(onSend).toHaveBeenCalledWith('wait', 'steer', [], []);
   });
@@ -62,13 +63,61 @@ describe('Composer send mode', () => {
     const box = within(container).getByLabelText('message');
     await fireEvent.input(box, { target: { value: 'hello' } });
     await tick();
-    await fireEvent.click(within(container).getByText('Send'));
+    await fireEvent.click(within(container).getByRole('button', { name: /^Send/ }));
     await tick();
     expect(box.value).toBe('');
     reject(new Error('down'));
     await new Promise((r) => setTimeout(r, 0));
     await tick();
     expect(box.value).toBe('hello');
+  });
+});
+
+describe('Composer icon controls', () => {
+  it('has no visible text button: every control is an icon with a name', () => {
+    const { container } = render(Composer, { props: { status: 'working', busy: false, sessionId: 's1', onSend: () => {}, onStop: () => {} } });
+    const textual = [...container.querySelectorAll('button')].filter((b) => b.textContent.trim() !== '' && !b.querySelector('.sr-only'));
+    expect(textual).toHaveLength(0);
+    for (const b of container.querySelectorAll('button')) expect(b.getAttribute('aria-label'), b.outerHTML).toBeTruthy();
+  });
+  it('marks the active mode and moves the send glyph with it', async () => {
+    const { container } = render(Composer, { props: { status: 'working', busy: false, onSend: () => {} } });
+    const q = within(container);
+    const steer = q.getByRole('button', { name: 'Steer' });
+    const follow = q.getByRole('button', { name: 'Follow-up' });
+    expect(steer.getAttribute('aria-pressed')).toBe('true');
+    expect(follow.getAttribute('aria-pressed')).toBe('false');
+    expect(q.getByTestId('send').getAttribute('data-mode')).toBe('steer');
+    expect(q.getByTestId('send').getAttribute('aria-label')).toBe('Send as Steer');
+    await fireEvent.click(follow);
+    await tick();
+    expect(follow.getAttribute('aria-pressed')).toBe('true');
+    expect(steer.getAttribute('aria-pressed')).toBe('false');
+    expect(q.getByTestId('send').getAttribute('data-mode')).toBe('followup');
+    expect(q.getByTestId('send').getAttribute('aria-label')).toBe('Send as Follow-up');
+    expect(q.getByTestId('send').innerHTML).not.toBe(steer.innerHTML);
+  });
+  it('sends a plain prompt when idle, with no mode switch to read', () => {
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
+    const q = within(container);
+    expect(q.getByTestId('send').getAttribute('aria-label')).toBe('Send');
+    expect(q.getByTestId('mode-header').getAttribute('aria-hidden')).toBe('true');
+  });
+  it('Enter still sends and Shift+Enter does not', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
+    const box = within(container).getByLabelText('message');
+    await fireEvent.input(box, { target: { value: 'go' } });
+    await tick();
+    await fireEvent.keyDown(box, { key: 'Enter', shiftKey: true });
+    expect(onSend).not.toHaveBeenCalled();
+    await fireEvent.keyDown(box, { key: 'Enter' });
+    await tick();
+    expect(onSend).toHaveBeenCalledWith('go', 'prompt', [], []);
+  });
+  it('shows the running tool beside the activity glyph', () => {
+    const { container } = render(Composer, { props: { status: 'working', busy: false, activity: 'bash', onSend: () => {} } });
+    expect(within(container).getByTestId('working-tool').textContent).toBe('bash');
   });
 });
 
@@ -104,11 +153,11 @@ describe('Composer voice message', () => {
   });
 
   async function start(q) {
-    await fireEvent.click(q.getByLabelText('record voice'));
+    await fireEvent.click(q.getByLabelText('Record voice'));
     await tick();
   }
   async function stop(q) {
-    await fireEvent.click(q.getByLabelText('stop recording'));
+    await fireEvent.click(q.getByLabelText('Stop recording'));
     await tick();
   }
 
@@ -149,10 +198,10 @@ describe('Composer voice message', () => {
     await start(q);
     await stop(q);
     await vi.waitFor(() => expect(q.getByTestId('voice-status').textContent).toContain('Transcribing'));
-    expect(q.getByText('Send').disabled).toBe(true);
+    expect(q.getByRole('button', { name: /^Send/ }).disabled).toBe(true);
     finish('more');
     await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('typed more'));
-    expect(q.getByText('Send').disabled).toBe(false);
+    expect(q.getByRole('button', { name: /^Send/ }).disabled).toBe(false);
   });
 
   it('lets the user edit the transcript, then sends text plus the recording', async () => {
@@ -164,7 +213,7 @@ describe('Composer voice message', () => {
     await vi.waitFor(() => expect(q.getByLabelText('message').value).toBe('hello world'));
     await fireEvent.input(q.getByLabelText('message'), { target: { value: 'hello there' } });
     await tick();
-    await fireEvent.click(q.getByText('Send'));
+    await fireEvent.click(q.getByRole('button', { name: /^Send/ }));
     await tick();
     expect(onSend).toHaveBeenCalledWith('hello there', 'prompt', [], [], {
       blob: stopOut.blob,
@@ -199,7 +248,7 @@ describe('Composer voice message', () => {
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
     const q = within(container);
     await start(q);
-    await fireEvent.click(q.getByLabelText('cancel recording'));
+    await fireEvent.click(q.getByLabelText('Cancel recording'));
     await tick();
     expect(cancel).toHaveBeenCalled();
     expect(mockTranscribe).not.toHaveBeenCalled();
@@ -228,10 +277,10 @@ describe('Composer voice message', () => {
     writeVoicePrefs({ enabled: false, cleanup: false });
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: () => {} } });
     const q = within(container);
-    expect(q.queryByLabelText('record voice')).toBeNull();
+    expect(q.queryByLabelText('Record voice')).toBeNull();
     writeVoicePrefs({ enabled: true, cleanup: false });
     await tick();
-    expect(q.getByLabelText('record voice')).toBeTruthy();
+    expect(q.getByLabelText('Record voice')).toBeTruthy();
   });
 
   it('runs the cleanup pass when Settings turns it on', async () => {
@@ -261,20 +310,69 @@ describe('Composer stored image references', () => {
     expect(q.getByTestId('composer-tray')).toBeTruthy();
     await fireEvent.input(q.getByLabelText('message'), { target: { value: 'see this' } });
     await tick();
-    await fireEvent.click(q.getByText('Send'));
+    await fireEvent.click(q.getByRole('button', { name: /^Send/ }));
     await tick();
     expect(onSend).toHaveBeenCalledWith('see this', 'prompt', [], ['img1']);
   });
 });
+describe('Composer edit and resend', () => {
+  it('loads the original text and image references without sending, then submits a new prompt', async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { status: 'working', busy: false, sessionId: 's1', onSend } });
+    const q = within(container);
+    await tick();
+    window.dispatchEvent(new CustomEvent(COMPOSER_EDIT_EVENT, {
+      detail: { sessionId: 's1', text: 'Revised request', imageIds: ['img1', 'aud_2'] },
+    }));
+    await tick();
+
+    expect(q.getByLabelText('message').value).toBe('Revised request');
+    expect(q.getByTestId('edit-notice').textContent).toContain('history stays unchanged');
+    expect(q.getByTestId('composer-tray').textContent).toContain('Voice');
+    expect(q.getByTestId('composer-tray').querySelector('img').getAttribute('src')).toContain('/api/sessions/s1/images/img1');
+    expect(q.queryByTestId('mode-header').getAttribute('aria-hidden')).toBe('true');
+    expect(onSend).not.toHaveBeenCalled();
+
+    await fireEvent.click(q.getByRole('button', { name: 'Send as new prompt' }));
+    await tick();
+    expect(onSend).toHaveBeenCalledWith('Revised request', 'prompt', [], ['img1', 'aud_2']);
+    expect(q.queryByTestId('edit-notice')).toBeNull();
+  });
+
+  it('ignores an edit request for another Session and strips Markdown for plain-text copy', async () => {
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, sessionId: 's2', onSend: vi.fn() } });
+    const q = within(container);
+    await tick();
+    window.dispatchEvent(new CustomEvent(COMPOSER_EDIT_EVENT, {
+      detail: { sessionId: 's1', text: 'wrong Session', imageIds: [] },
+    }));
+    await tick();
+    expect(q.getByLabelText('message').value).toBe('');
+    expect(q.queryByTestId('edit-notice')).toBeNull();
+    expect(markdownToPlainText('# **Title**\n- `code`\n[docs](https://example.com)')).toBe('Title\ncode\ndocs');
+  });
+});
 
 describe('Composer remember button', () => {
+  it('is a toggle icon that reads pressed while the draft carries /remember', async () => {
+    const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend: vi.fn() } });
+    const q = within(container);
+    const btn = q.getByLabelText('Remember as rule');
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+    await fireEvent.click(btn);
+    await tick();
+    expect(btn.getAttribute('aria-pressed')).toBe('true');
+    await fireEvent.click(btn);
+    await tick();
+    expect(btn.getAttribute('aria-pressed')).toBe('false');
+  });
   it('sends the draft at once with the /remember prefix', async () => {
     const onSend = vi.fn();
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
     const q = within(container);
     await fireEvent.input(q.getByLabelText('message'), { target: { value: 'use tabs' } });
     await tick();
-    await fireEvent.click(q.getByLabelText('remember as rule'));
+    await fireEvent.click(q.getByLabelText('Remember as rule'));
     await tick();
     expect(onSend).toHaveBeenCalledWith('/remember use tabs', 'prompt', [], []);
   });
@@ -282,7 +380,7 @@ describe('Composer remember button', () => {
     const onSend = vi.fn();
     const { container } = render(Composer, { props: { status: 'idle', busy: false, onSend } });
     const q = within(container);
-    await fireEvent.click(q.getByLabelText('remember as rule'));
+    await fireEvent.click(q.getByLabelText('Remember as rule'));
     await tick();
     expect(onSend).not.toHaveBeenCalled();
     expect(q.getByLabelText('message').value).toBe('/remember ');
@@ -293,7 +391,7 @@ describe('Composer remember button', () => {
     const q = within(container);
     await fireEvent.input(q.getByLabelText('message'), { target: { value: '/remember use tabs' } });
     await tick();
-    await fireEvent.click(q.getByLabelText('remember as rule'));
+    await fireEvent.click(q.getByLabelText('Remember as rule'));
     await tick();
     expect(onSend).not.toHaveBeenCalled();
     expect(q.getByLabelText('message').value).toBe('use tabs');

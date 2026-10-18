@@ -2,7 +2,12 @@
      Notifications: both need a secure context (https or localhost). -->
 <script>
   import { onMount } from 'svelte';
+  import { Smartphone } from '@lucide/svelte';
   import Button from './ui/button.svelte';
+  import Panel from './ui/panel.svelte';
+  import ErrorState from './ui/error-state.svelte';
+  import Section from './ui/section.svelte';
+  import SettingRow from './ui/setting-row.svelte';
   import { isIOSDevice, isStandalone, installState } from './install.js';
 
   let deferred = $state(null);
@@ -52,26 +57,28 @@
   }
 </script>
 
-<section class="animate-rise flex flex-col gap-2">
-  <div class="px-1">
-    <h2 class="text-sm font-semibold">Install app</h2>
-    <p class="text-xs text-muted-foreground">Add Emberloop to the home screen for a full-screen standalone window. Needs https or localhost.</p>
-  </div>
-  <div class="overflow-hidden rounded-2xl border bg-card">
-    <div class="grid items-center gap-3 p-4 md:grid-cols-[1fr_auto]">
-      <div class="min-w-0">
-        <div class="text-sm font-medium">Emberloop on this device</div>
-        <div class="text-xs text-muted-foreground">
-          {#if state === 'installed'}Installed: running in the standalone window.
-          {:else if state === 'prompt'}Ready to install in this browser.
-          {:else if state === 'ios-hint'}On iPhone/iPad: Share, then Add to Home Screen.
-          {:else}Install is not offered by this browser yet. Open this page once in Chrome/Edge on Android or Safari, then look here again.{/if}
-        </div>
-        {#if error}<p role="alert" class="pt-1 text-xs text-destructive">{error}</p>{/if}
-      </div>
+<Section
+  title="Install app"
+  icon={Smartphone}
+  hint="Add Emberloop to the home screen for a full-screen standalone window. Needs https or localhost."
+  class="animate-rise"
+>
+  <Panel>
+    <SettingRow
+      label="Emberloop on this device"
+      note={state === 'installed'
+        ? 'Installed: running in the standalone window.'
+        : state === 'prompt'
+          ? 'Ready to install in this browser.'
+          : state === 'ios-hint'
+            ? 'On iPhone/iPad: Share, then Add to Home Screen.'
+            : 'Install is not offered by this browser yet. Open this page once in Chrome/Edge on Android or Safari, then look here again.'}
+      inline
+    >
       {#if state === 'prompt'}
         <Button onclick={install}>Install app</Button>
       {/if}
-    </div>
-  </div>
-</section>
+    </SettingRow>
+  </Panel>
+  {#if error}<ErrorState compact title={error} class="animate-rise" />{/if}
+</Section>

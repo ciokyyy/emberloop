@@ -6,11 +6,11 @@
 
 **Blocked by:** 01-design-foundation, 02-scroll-stability
 
-**Status:** open
+**Status:** done
 
-- [ ] No visible text button remains where an icon with tooltip carries the same meaning
-- [ ] Header fits one line at 360 px width
-- [ ] Composer modes distinguishable without reading; keyboard shortcuts unchanged
-- [ ] Long tool runs collapse to one summary line with expand
-- [ ] Console and a11y clean; screenshots at 390 and 1280 px in the review
-- [ ] `npm test`, `npm run build`, `.emberloop/check` pass
+- [x] No visible text button remains where an icon with tooltip carries the same meaning
+- [x] Header fits one line at 360 px width
+- [x] Composer modes distinguishable without reading; keyboard shortcuts unchanged
+- [x] Long tool runs collapse to one summary line with expand
+- [x] Console and a11y clean; screenshots at 390 and 1280 px in the review
+- [x] `npm test`, `npm run build`, `.emberloop/check` pass

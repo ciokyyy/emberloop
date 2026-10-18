@@ -5,6 +5,8 @@
   import { ChevronRight } from '@lucide/svelte';
   import Button from './ui/button.svelte';
   import Select from './ui/select.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import { icons } from './icons.js';
   import UserAvatar from './UserAvatar.svelte';
   import ProjectList from './ProjectList.svelte';
   import SessionList from './SessionList.svelte';
@@ -68,11 +70,11 @@
 
 <div class="flex min-h-0 flex-col gap-2">
   <div class="flex flex-wrap items-center gap-1.5 px-1" role="group" aria-label="Show sessions">
-    <Button variant={filter === 'mine' ? 'secondary' : 'outline'} size="sm" class="h-7 px-3 text-xs" aria-pressed={filter === 'mine'} onclick={() => setFilter('mine')}>Mine</Button>
-    <Button variant={filter === 'all' ? 'secondary' : 'outline'} size="sm" class="h-7 px-3 text-xs" aria-pressed={filter === 'all'} onclick={() => setFilter('all')}>Everyone</Button>
+    <Button variant={filter === 'mine' ? 'secondary' : 'outline'} size="sm" class="max-md:min-w-16" aria-pressed={filter === 'mine'} onclick={() => setFilter('mine')}>Mine</Button>
+    <Button variant={filter === 'all' ? 'secondary' : 'outline'} size="sm" class="max-md:min-w-16" aria-pressed={filter === 'all'} onclick={() => setFilter('all')}>Everyone</Button>
     {#if !scoped}
       <Select
-        class="h-7 w-auto min-w-0 rounded-full px-2.5 text-xs {filter === 'project' ? 'bg-accent' : ''}"
+        class="h-8 w-auto min-w-0 rounded-full px-2.5 text-caption max-md:h-11 max-md:text-body {filter === 'project' ? 'bg-surface-3' : ''}"
         items={projectItems}
         value={projectId}
         onValueChange={pickProject}
@@ -85,24 +87,24 @@
 
   <div class="flex min-h-0 flex-1 flex-col gap-1 overflow-auto">
     {#if scoped && !scopedSessions.length && !scopedRuns.length}
-      <p class="px-3 py-4 text-sm text-muted-foreground">No Sessions in this Project yet.</p>
+      <EmptyState icon={icons.session} title="No Sessions here yet" description="Start one with New chat." class="mx-1 px-4 py-6" />
     {:else}
       {#each view.groups as g (g.id)}
         {@const open = !!q || !isCollapsed(groupPrefs, g.id, !g.own)}
         <section aria-label={g.name} data-owner={g.id} class="animate-rise">
-          <Button
-            variant="ghost"
-            class="h-auto w-full justify-start rounded-xl px-2 py-1.5 text-left text-sm font-normal"
+          <button
+            type="button"
+            class="motion-standard flex min-h-10 w-full items-center gap-2 rounded-xl px-2 text-left text-body hover:bg-surface-3/50 focus-visible:ring-[3px] focus-visible:ring-ring/40 focus-visible:outline-none max-md:min-h-11"
             onclick={() => toggleGroup(g)}
             aria-expanded={open}
           >
-            <ChevronRight class="size-3.5 shrink-0 text-muted-foreground transition-transform duration-200 {open ? 'rotate-90' : ''}" />
+            <ChevronRight class="motion-standard size-4 shrink-0 text-fg-3 {open ? 'rotate-90' : ''}" aria-hidden="true" />
             <UserAvatar name={g.name} tone={g.tone} online={g.online} />
-            <span class="min-w-0 flex-1 truncate font-medium">
-              {g.name}{#if g.own}<span class="ml-1 text-xs font-normal text-muted-foreground">you</span>{/if}
+            <span class="min-w-0 flex-1 truncate font-medium text-fg-1">
+              {g.name}{#if g.own}<span class="ml-1 text-caption font-normal text-fg-3">you</span>{/if}
             </span>
-            <span class="text-xs tabular-nums text-muted-foreground" data-testid="owner-count">{g.count}</span>
-          </Button>
+            <span class="text-caption tabular-nums text-fg-3" data-testid="owner-count">{g.count}</span>
+          </button>
           {#if open}
             <div class="ml-3 border-l-2 pl-1" style="border-color: {g.tone}">
               {#if scoped}
@@ -125,9 +127,11 @@
           {/if}
         </section>
       {:else}
-        <p class="px-3 py-4 text-sm text-muted-foreground">
-          {q ? `No chats match “${q}”.` : 'No chats yet. Start one with New chat.'}
-        </p>
+        {#if q}
+          <EmptyState compact icon={icons.session} title={`No chats match “${q}”.`} class="mx-1" />
+        {:else}
+          <EmptyState compact icon={icons.session} title="No chats yet." description="Start one with New chat." class="mx-1" />
+        {/if}
       {/each}
     {/if}
   </div>

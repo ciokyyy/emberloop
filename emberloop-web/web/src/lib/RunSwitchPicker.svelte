@@ -66,11 +66,11 @@
   }
 </script>
 
-<div class="flex min-w-[18rem] flex-col gap-1.5" role="group" aria-label={`${label} Backend and model`} data-testid="run-switch-picker">
-  {#if description}<p class="text-xs text-muted-foreground">{description}</p>{/if}
-  <div class="flex flex-wrap items-center gap-1.5">
+<div class="flex min-w-[18rem] max-w-full flex-col gap-2" role="group" aria-label={`${label} Backend and model`} data-testid="run-switch-picker">
+  {#if description}<p class="text-caption text-fg-3">{description}</p>{/if}
+  <div class="flex flex-wrap items-center gap-2">
     <Combobox
-      class="h-9 min-w-28 flex-1"
+      class="h-9 min-w-28 flex-1 max-md:h-11"
       aria-label={`${label} Backend`}
       value={backend}
       items={backendItems}
@@ -78,7 +78,7 @@
       onValueChange={pickBackend}
     />
     <Combobox
-      class="h-9 min-w-36 flex-1"
+      class="h-9 min-w-36 flex-1 max-md:h-11"
       aria-label={`${label} model`}
       bind:value={model}
       items={modelOptions}

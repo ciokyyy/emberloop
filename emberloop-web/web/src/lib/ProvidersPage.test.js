@@ -285,7 +285,11 @@ describe('ProvidersPage', () => {
     ];
     for (const id of cloudProviderIDs) {
       const cloudRow = container.querySelector(`[data-provider="${id}"]`);
-      expect(within(cloudRow).getByTestId('provider-cli-guidance').textContent).toBe('configure via CLI');
+      const guidance = within(cloudRow).getByTestId('provider-cli-guidance');
+      expect(guidance.textContent).not.toContain('configure via CLI');
+      await fireEvent.click(within(guidance).getByRole('button', { name: /How to set up/ }));
+      expect(await screen.findByText('configure via CLI')).toBeTruthy();
+      await fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' });
       expect(within(cloudRow).queryByRole('button', { name: /copy/i })).toBeNull();
     }
     expect(within(oauthRow).getByText('pig login anthropic')).toBeTruthy();
@@ -534,5 +538,27 @@ describe('ProvidersPage', () => {
     const input = within(keyRow).getByLabelText('API key for OpenRouter');
     expect(input.className).toContain('text-base');
     expect(input.className).toContain('h-11');
+  });
+
+  it('leads each connected card with the usage percent, like the Quota card', async () => {
+    const quota = [
+      { key: 'openai-codex', label: 'ChatGPT Plus', state: 'ok', windows: [{ label: '5-hour', pct: 7 }, { label: 'weekly', pct: 91 }] },
+      { key: 'openrouter', label: 'OpenRouter', state: 'expired', windows: [{ label: 'Credits', pct: 40 }] },
+    ];
+    quotaStore.set(quota);
+    vi.stubGlobal('fetch', vi.fn(async (input) => {
+      const url = String(input);
+      if (url === '/api/providers') return { ok: true, json: async () => ({ providers: providerRows() }) };
+      if (url === '/api/quota') return { ok: true, json: async () => ({ providers: quota }) };
+      throw new Error(`unexpected request: ${url}`);
+    }));
+    const { container } = render(ProvidersPage, { props: { admin: true } });
+    await screen.findAllByTestId('provider-row');
+    const chatGPT = container.querySelector('[data-provider="openai-codex"]');
+    await waitFor(() => expect(within(chatGPT).getAllByTestId('quota-pct').map((node) => node.textContent)).toEqual(['7%', '91%']));
+    expect(within(chatGPT).getByRole('progressbar', { name: 'ChatGPT Plus Weekly' }).getAttribute('aria-valuenow')).toBe('91');
+    const openrouter = container.querySelector('[data-provider="openrouter"]');
+    expect(within(openrouter).getByText('login expired')).toBeTruthy();
+    expect(within(container.querySelector('[data-provider="anthropic"]')).queryByTestId('quota-windows')).toBeNull();
   });
 });

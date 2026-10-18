@@ -1,20 +1,59 @@
 <!-- Transcript card: one visual block per grouped Event run. -->
 <script>
+  import { onDestroy } from 'svelte';
+  import MessageActions from './MessageActions.svelte';
   import Markdown from './Markdown.svelte';
   import GroupCard from './GroupCard.svelte';
   import ToolStrip from './ToolStrip.svelte';
-  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Bot, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
+  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Shrink, ShieldAlert, Terminal, CreditCard, Clock } from '@lucide/svelte';
+  import { getCurrentUserId, decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import Button from './ui/button.svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import { icons } from './icons.js';
+  import ErrorState from './ui/error-state.svelte';
+  import { reportCountsText } from './subagents.js';
   import Input from './ui/input.svelte';
-  import { decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
   import Badge from './ui/badge.svelte';
+  import Chip from './ui/chip.svelte';
   import UserAvatar from './UserAvatar.svelte';
   import { people, personFor } from './people.svelte.js';
   import { ownerTone } from './owners.js';
   import { appendText } from './appendText.js';
-  let { block, sessionId = null, sessions = [], onOpenSession = () => {} } = $props();
+  let { block, sessionId = null, sessions = [], onOpenSession = () => {}, onDismissReport = () => {}, queuedItem = null, cancelled = false, onQueueChange = () => {} } = $props();
+  let actionsOpen = $state(false);
+  let longPressTimer = 0;
+  let longPressY = 0;
+  let longPressTriggered = false;
+  const ownUserMessage = $derived(!cancelled && !block.pending && block.card === 'user' && block.sender === 'user' && !!block.senderId && block.senderId === getCurrentUserId());
+  const messageText = $derived(String(queuedItem?.text ?? block.body ?? ''));
+  const messageImageIds = $derived(queuedItem?.imageIds ?? block.imageIds ?? []);
+  function clearActionLongPress() {
+    clearTimeout(longPressTimer);
+    longPressTimer = 0;
+  }
+  function startActionLongPress(event) {
+    if (!queuedItem && block.sender !== 'user' && !['assistant', 'report'].includes(block.card)) return;
+    if (event.pointerType !== 'touch' && event.pointerType !== 'pen') return;
+    if (event.target?.closest?.('[data-testid="message-actions"]')) return;
+    longPressY = event.clientY ?? 0;
+    longPressTriggered = false;
+    longPressTimer = setTimeout(() => {
+      actionsOpen = true;
+      longPressTriggered = true;
+    }, 500);
+  }
+  function moveActionLongPress(event) {
+    if (longPressTimer && Math.abs((event.clientY ?? longPressY) - longPressY) > 10) clearActionLongPress();
+  }
+  function stopActionLongPress() {
+    clearActionLongPress();
+  }
+  function suppressContextMenu(event) {
+    if (longPressTriggered) event.preventDefault();
+  }
+  onDestroy(clearActionLongPress);
   // A live thinking block grows per delta: its <pre> appends text only, and
   // the details height animation is off until it settles, so the mount-only
   // rise animation is never re-triggered by streaming.
@@ -79,14 +118,15 @@
   }
   // One-line hint of what the tool was asked: first line of the input.
   const firstReply = $derived(String(block.members?.[0]?.reply ?? block.body ?? '').replace(/\s+/g, ' ').slice(0, 110));
+  const reportCountLabel = $derived(reportCountsText(block.report ?? { members: block.members }));
   const preview = $derived(String(block.input ?? '').replace(/\s+/g, ' ').trim().slice(0, 120));
   const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n ?? 0));
   const compaction = $derived(block.compaction ?? {});
   const saved = $derived(compaction.tokensBefore > 0 && compaction.tokensAfter > 0 ? Math.max(0, Math.round((1 - compaction.tokensAfter / compaction.tokensBefore) * 100)) : null);
   // Voice recordings ride the image ids ("aud_" prefix): they show as a voice
   // bubble whose transcript is the message text; the rest stay pictures.
-  const voiceIds = $derived((block.imageIds ?? []).filter(isAudioId));
-  const pictureIds = $derived((block.imageIds ?? []).filter((i) => !isAudioId(i)));
+  const voiceIds = $derived(messageImageIds.filter(isAudioId));
+  const pictureIds = $derived(messageImageIds.filter((i) => !isAudioId(i)));
   let voiceMeta = $state({});
   $effect(() => {
     for (const vid of voiceIds) {
@@ -100,26 +140,40 @@
 </script>
 
 {#if block.card === 'user'}
-<div class="flex flex-col items-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-swap={block.noAnim ? 'true' : undefined}>
-  {#if block.sender === 'user' && block.senderId}
-    {@const who = personFor(block.senderId)}
-    <Badge variant="outline" class="mb-1 py-0 pr-2.5 pl-1" data-testid="sender-badge">
-      <UserAvatar name={who?.username ?? block.senderId} tone={ownerTone(people.list, block.senderId)} size="sm" />
-      <span class="max-w-40 truncate">{who?.username ?? block.senderId.slice(0, 8)}</span>
-    </Badge>
-  {/if}
-    <div class="max-w-[80%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground {block.pending === 'sending' ? 'opacity-60' : ''}">
-      {#if block.title && block.title !== 'You'}
-        <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide opacity-80">{block.title}</div>
+<div role="group" aria-label={queuedItem ? `Queued ${block.title}` : cancelled ? `Canceled ${block.title || 'User'} message` : `${block.title || 'User'} message`} class="group relative flex flex-col items-end" data-card="user" data-state={queuedItem ? 'queued' : cancelled ? 'canceled' : block.pending ? 'pending' : block.sender === 'user' ? 'delivered' : undefined} data-swap={block.noAnim ? 'true' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
+  <div class="flex w-full flex-col items-end {block.noAnim ? '' : 'animate-rise'}">
+    {#if block.sender === 'user' && block.senderId}
+      {@const who = personFor(block.senderId)}
+      <Badge variant="outline" class="mb-1 py-0 pr-2.5 pl-1" data-testid="sender-badge">
+        <UserAvatar name={who?.username ?? block.senderId} tone={ownerTone(people.list, block.senderId)} size="sm" />
+        <span class="max-w-40 truncate">{who?.username ?? block.senderId.slice(0, 8)}</span>
+      </Badge>
+    {/if}
+    {#if queuedItem}
+      <div class="mb-1 flex items-center gap-1.5 pr-1.5 text-caption font-medium text-status-working" data-testid="queued-message-marker">
+        <Clock class="size-3.5 shrink-0" aria-hidden="true" />
+        <span>Queued</span>
+        {#if block.title}<span class="text-fg-3">· {block.title}</span>{/if}
+      </div>
+    {:else if cancelled}
+      {@const CancelIcon = icons.cancel}
+      <div class="mb-1 flex items-center gap-1.5 pr-1.5 text-caption text-fg-3">
+        <CancelIcon class="size-3.5 shrink-0" aria-hidden="true" />
+        <span data-testid="canceled-message">Canceled</span>
+      </div>
+    {/if}
+    <div class="max-w-[85%] rounded-2xl rounded-br-md border px-3.5 py-2.5 text-body whitespace-pre-wrap [overflow-wrap:anywhere] sm:max-w-[75%] {queuedItem ? 'border-dashed border-status-working/40 bg-transparent text-fg-2' : cancelled ? 'border-dashed border-border bg-transparent text-fg-3' : 'border-border/60 bg-surface-2 text-fg-1 shadow-elev-1'} {block.pending === 'sending' ? 'opacity-60' : ''}">
+      {#if block.title && block.title !== 'You' && !queuedItem}
+        <div class="mb-1 text-caption font-medium tracking-wide text-fg-3 uppercase">{block.title}</div>
       {/if}
-      {#if !voiceIds.length}{block.body}{/if}
+      {#if !voiceIds.length}{messageText}{/if}
       {#each voiceIds as vid (vid)}
         <div class="w-64 max-w-full text-left" data-testid="voice-message">
           <VoiceBubble
             src={sessionId ? imageSrc(sessionId, vid) : ''}
             peaks={voiceMeta[vid]?.peaks ?? []}
             durationMs={voiceMeta[vid]?.durationMs ?? 0}
-            transcript={block.body}
+            transcript={messageText}
           />
         </div>
       {/each}
@@ -127,17 +181,21 @@
         <div class="mt-2 flex flex-wrap justify-end gap-1.5">
           {#each pictureIds as imgId (imgId)}
             {#if sessionId}
-              <img src={imageSrc(sessionId, imgId)} alt="Attached image" class="h-28 w-28 rounded-xl border object-cover" loading="lazy" />
+              <img src={imageSrc(sessionId, imgId)} alt="Attachment" class="h-28 w-28 rounded-xl border object-cover" loading="lazy" />
             {:else}
-              <span class="rounded-lg bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">image</span>
+              <span class="rounded-lg bg-background/60 px-2 py-1 font-mono text-caption text-fg-3">image</span>
             {/if}
           {/each}
         </div>
       {/if}
       {#if block.pending === 'sending'}
-        <div class="mt-0.5 text-[11px] text-muted-foreground">Sending…</div>
+        <div class="mt-1 text-caption text-fg-3">Sending…</div>
       {/if}
     </div>
+  </div>
+  {#if block.sender === 'user' || queuedItem}
+    <MessageActions block={block} {sessionId} canEdit={ownUserMessage} {queuedItem} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} {onQueueChange} />
+  {/if}
   </div>
 {:else if block.card === 'sudo'}
   <div class="animate-rise overflow-hidden rounded-2xl border border-amber-500/40 bg-card text-card-foreground" data-card="sudo" data-state={sudo.state}>
@@ -159,7 +217,7 @@
         </div>
         <p class="mt-1.5 text-xs text-muted-foreground">Without a password, sudo must already be passwordless. The password is used once and never stored.</p>
       {/if}
-      {#if sudoError}<p role="alert" class="mt-2 text-xs text-destructive">{sudoError}</p>{/if}
+      {#if sudoError}<ErrorState compact title={sudoError} class="mt-2" />{/if}
     </div>
   </div>
 {:else if block.card === 'profilePatch'}
@@ -170,7 +228,7 @@
     {#if !block.profilePatch?.state || block.profilePatch.state === 'pending'}
       <div class="mt-3 flex gap-2"><Button disabled={profileBusy} onclick={() => decideProfile('approved')}>Approve</Button><Button variant="outline" disabled={profileBusy} onclick={() => decideProfile('rejected')}>Reject</Button></div>
     {:else}<div class="mt-2 text-xs text-muted-foreground">{block.profilePatch.state}</div>{/if}
-    {#if profileError}<p role="alert" class="mt-2 text-xs text-destructive">{profileError}</p>{/if}
+    {#if profileError}<ErrorState compact title={profileError} class="mt-2" />{/if}
   </div>
 {:else if block.card === 'sudoresult'}
   <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="sudoresult" open>
@@ -179,7 +237,7 @@
       <span class="font-medium">Sudo {sudo.status}</span>
       {#if sudo.status !== 'denied'}<span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">exit {sudo.exit}</span>{/if}
       <span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{sudo.command}</span>
-      <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+      <ChevronRight class="size-4 shrink-0 text-muted-foreground motion-standard transition-transform group-open:rotate-90" />
     </summary>
     <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
       <pre class="max-h-40 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-sm whitespace-pre-wrap">{sudo.command}</pre>
@@ -192,9 +250,9 @@
       <CreditCard class="size-4 shrink-0 text-amber-400" />
       <span class="font-medium">{block.title}</span>
       <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={block.body}>{block.body}</span>
-      <Button size="sm" disabled={compressBusy} onclick={retryCompress}>Retry</Button>
+      <IconButton icon={icons.retry} label="Retry" disabled={compressBusy} onclick={retryCompress} />
     </div>
-    {#if compressError}<p role="alert" class="px-4 pb-2.5 text-xs text-destructive">{compressError}</p>{/if}
+    {#if compressError}<ErrorState compact title={compressError} class="mx-4 mb-2.5" />{/if}
   </div>
 {:else if block.card === 'compaction'}
   <details class="group animate-rise overflow-hidden rounded-2xl border bg-card/60 text-card-foreground" data-card="compaction" data-state={compaction.state}>
@@ -213,7 +271,7 @@
         <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           {fmtTokens(compaction.tokensBefore)} → {fmtTokens(compaction.tokensAfter)} tokens{#if saved !== null} · −{saved}%{/if}
         </span>
-        {#if block.body}<ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />{/if}
+        {#if block.body}<ChevronRight class="size-4 shrink-0 text-muted-foreground motion-standard transition-transform group-open:rotate-90" />{/if}
       {/if}
     </summary>
     {#if block.body && compaction.state === 'done'}
@@ -246,7 +304,7 @@
       {/each}
     </div>
     {#if promoteError}
-      <p role="alert" class="text-center text-xs text-destructive">{promoteError}</p>
+      <ErrorState compact title={promoteError} />
     {/if}
   {/if}
 {:else if block.card === 'status'}
@@ -276,7 +334,7 @@
       {:else}
         <span class="flex-1"></span>
       {/if}
-      <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+      <ChevronRight class="size-4 shrink-0 text-muted-foreground motion-standard transition-transform group-open:rotate-90" />
     </summary>
     <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
       {#if block.input}
@@ -297,29 +355,47 @@
     </div>
   </details>
 {:else if block.card === 'report'}
-  <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="report">
-    <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
-      <Bot class="size-4 shrink-0 text-muted-foreground" />
-      <span class="font-medium">{block.title}</span>
-      <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{firstReply}</span>
-      <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
-    </summary>
-    <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
-      {#each block.members?.length ? block.members : [{ id: '', kind: 'agent', reply: block.body }] as m}
-        <div>
-          <div class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-            {m.kind}{#if m.id}<span class="font-mono normal-case">{m.id}</span>{/if}
-          </div>
-          <div class="max-h-96 overflow-auto rounded-xl bg-muted/60 p-3"><Markdown text={m.reply} /></div>
+  {@const ReportIcon = icons.report}
+  <div role="group" aria-label="Subagent report" class="group relative w-full" data-card-wrapper="report" onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
+    <div class="flex animate-rise items-start gap-1 rounded-xl border border-border/60 bg-surface-1 p-1.5 text-card-foreground shadow-elev-1">
+      <details class="group/report min-w-0 flex-1 overflow-hidden rounded-lg" data-card="report" data-report-seq={block.report?.seq} open={!block.collapsed}>
+        <summary class="flex min-h-11 cursor-pointer list-none items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-3/60 [&::-webkit-details-marker]:hidden">
+          <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-fg-2" aria-hidden="true">
+            <ReportIcon class="size-4" />
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block min-w-0 truncate text-body font-medium">{block.report ? block.report.title : block.title}</span>
+            <span class="mt-0.5 flex min-w-0 flex-col text-caption text-fg-3 sm:flex-row sm:items-center sm:gap-1.5">
+              {#if block.report}<span class="min-w-0 truncate sm:shrink-0">Subagents {block.report.groupName} finished</span>{/if}
+              {#if firstReply}<span class="hidden shrink-0 text-fg-4 sm:inline" aria-hidden="true">·</span><span class="min-w-0 truncate">{firstReply}</span>{/if}
+              <span class="mt-0.5 shrink-0 text-fg-3 sm:hidden">{reportCountLabel}</span>
+            </span>
+          </span>
+          <Chip tone="outline" class="hidden shrink-0 sm:inline-flex">{reportCountLabel}</Chip>
+          <ChevronRight class="size-4 shrink-0 text-fg-3 motion-standard transition-transform group-open/report:rotate-90" aria-hidden="true" />
+        </summary>
+        <div class="flex flex-col gap-3 border-t border-border/60 p-3">
+          {#each block.members?.length ? block.members : [{ id: '', kind: 'agent', reply: block.body }] as m}
+            <div>
+              <div class="mb-1 flex items-center gap-2 text-caption font-medium tracking-wide text-fg-3 uppercase">
+                {m.kind}{#if m.id}<span class="font-mono normal-case">{m.id}</span>{/if}
+              </div>
+              <div class="max-h-96 overflow-auto rounded-lg bg-surface-0 p-3"><Markdown text={m.reply} /></div>
+            </div>
+          {/each}
         </div>
-      {/each}
+      </details>
+      {#if block.report}
+        <IconButton icon={icons.dismiss} label="Dismiss report" class="mt-1 shrink-0" onclick={() => onDismissReport(block.report.seq)} />
+      {/if}
     </div>
-  </details>
+    <MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} align="start" />
+  </div>
 {:else if block.card === 'thinking'}
   <details class="group animate-rise rounded-2xl border bg-card text-card-foreground {thinkingLive ? 'think-live' : ''}" data-card="thinking" data-live={thinkingLive ? 'true' : undefined} open={!block.collapsed}>
     <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
       <Brain class="size-4" /><span class="flex-1">{block.title}</span>
-      <ChevronRight class="size-4 transition-transform duration-200 group-open:rotate-90" />
+      <ChevronRight class="size-4 motion-standard transition-transform group-open:rotate-90" />
     </summary>
     <pre class="max-h-64 overflow-auto border-t bg-background/40 p-3.5 font-mono text-xs whitespace-pre-wrap" use:appendText={block.body}></pre>
   </details>
@@ -336,9 +412,7 @@
     <span class="mr-2 font-medium">✓ {block.title}</span><span class="text-muted-foreground">{block.body}</span>
   </div>
 {:else if block.card === 'error'}
-  <div class="animate-rise rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm" role="alert" data-card="error">
-    <span class="font-medium">Error: </span>{block.body}
-  </div>
+  <ErrorState compact title={block.body} class="animate-rise" data-card="error" />
 {:else if block.card === 'group'}
   <GroupCard block={block} {sessions} {onOpenSession} />
 {:else if block.card === 'subagent'}
@@ -352,9 +426,14 @@
     {/if}
   </div>
 {:else}
-  <div class="animate-rise px-1 py-1 text-[15px] leading-7" data-card={block.card}>
-    <div class="mb-1 text-xs font-medium text-muted-foreground">{block.title}</div>
-    <Markdown text={block.body} fade={block.card === 'assistant'} />
+  <div role="group" aria-label={block.title || 'Message'} class="group relative flex w-full flex-col items-start" data-card={block.card} data-state={block.card === 'assistant' ? 'delivered' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
+    <div class="flex w-full animate-rise flex-col items-start gap-1 py-1">
+      {#if block.title}<div class="text-caption font-medium text-fg-3">{block.title}</div>{/if}
+      <div class="w-full min-w-0 text-body text-fg-1">
+        <Markdown text={messageText} fade={block.card === 'assistant'} />
+      </div>
+    </div>
+    {#if block.card === 'assistant'}<MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} align="start" />{/if}
   </div>
 {/if}
 <style>
