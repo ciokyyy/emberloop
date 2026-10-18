@@ -162,6 +162,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   one lock (`specMergeLock`). Reviewer prompts carry the diff base
   (`diffBasePrompt`): the ticket's own diff, not stacked blocker commits. A
   tell that hits a resuming Worker retries next pass instead of failing the Run.
+  A Ticket pause/resume restarts a design Ticket's Worker on the `worker-design` Chain, position and prompt, never the `worker` Chain (`TestTicketResumeDesignWorkerUsesDesignChain`).
   Run prompt injection (`runs_inject.go`) trims optional skill sections and
   appends admin `run_skills` overrides to role defaults. Designers and design
   Reviewers receive the browser skill (snapshot-first, localhost-only, capped
