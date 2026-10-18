@@ -8,7 +8,9 @@
   import Chip from './ui/chip.svelte';
   import Combobox from './ui/combobox.svelte';
   import IconButton from './ui/icon-button.svelte';
+  import EmptyState from './ui/empty-state.svelte';
   import InfoHint from './ui/info-hint.svelte';
+  import { icons } from './icons.js';
 
   let {
     role,
@@ -110,7 +112,7 @@
   </div>
 
   {#if !entries.length}
-    <p class="text-caption text-fg-3">No entries configured.</p>
+    <EmptyState compact icon={icons.model} title="No entries configured" description="Add one to fill this role." />
   {/if}
 
   {#each entries as item, index (index)}

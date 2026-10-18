@@ -31,7 +31,7 @@
   <Select.Portal>
     <Select.Content
       sideOffset={6}
-      class="z-[60] max-h-72 w-(--bits-select-anchor-width) min-w-40 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
+      class="motion-standard z-[60] max-h-72 w-(--bits-select-anchor-width) min-w-40 overflow-hidden rounded-xl border bg-popover text-popover-foreground shadow-xl outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95"
     >
       <Select.Viewport class="p-1.5">
         {#each items as item (item.value)}

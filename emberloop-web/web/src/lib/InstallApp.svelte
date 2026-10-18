@@ -5,6 +5,7 @@
   import { Smartphone } from '@lucide/svelte';
   import Button from './ui/button.svelte';
   import Panel from './ui/panel.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import Section from './ui/section.svelte';
   import SettingRow from './ui/setting-row.svelte';
   import { isIOSDevice, isStandalone, installState } from './install.js';
@@ -79,5 +80,5 @@
       {/if}
     </SettingRow>
   </Panel>
-  {#if error}<p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>{/if}
+  {#if error}<ErrorState compact title={error} class="animate-rise" />{/if}
 </Section>

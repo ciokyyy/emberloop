@@ -9,6 +9,7 @@
   import Button from './ui/button.svelte';
   import Chip from './ui/chip.svelte';
   import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import Panel from './ui/panel.svelte';
   import Section from './ui/section.svelte';
   import Skeleton from './ui/skeleton.svelte';
@@ -72,8 +73,10 @@
   class="animate-rise"
   data-testid="promotion-queue"
 >
-  {#if error}
-    <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>
+  {#if error && !queue.length}
+    <ErrorState title="Could not load promotions" detail={error} onRetry={load} />
+  {:else if error}
+    <ErrorState compact title={error} onRetry={load} />
   {/if}
   {#if notice}
     <p role="status" class="rounded-xl bg-status-done/10 px-4 py-2 text-body text-status-done">{notice}</p>

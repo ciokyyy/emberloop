@@ -12,6 +12,7 @@
   import { CheckCheck, ChevronDown, Eye, ListChecks, ScrollText, Trash2 } from '@lucide/svelte';
   import Chip from './ui/chip.svelte';
   import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import Panel from './ui/panel.svelte';
   import Section from './ui/section.svelte';
   import Skeleton from './ui/skeleton.svelte';
@@ -300,7 +301,7 @@
               <Chip tone="failed" dot data-testid="memory-status">Unavailable</Chip>
             {/if}
           {:else if loading}
-            <Chip tone="paused" data-testid="memory-status">Loading…</Chip>
+            <span role="status" aria-label="Loading memory status" data-testid="memory-status"><Skeleton class="h-5 w-16 rounded-full" /></span>
           {:else}
             <Chip tone="failed" dot data-testid="memory-status">Unavailable</Chip>
           {/if}
@@ -311,10 +312,10 @@
       </PageHeader>
 
       {#if statusError}
-        <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{statusError}</p>
+        <ErrorState compact title={statusError} onRetry={load} class="animate-rise" />
       {/if}
       {#if error}
-        <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>
+        <ErrorState compact title={error} onRetry={load} class="animate-rise" />
       {/if}
       {#if notice}
         <p role="status" class="rounded-xl bg-status-done/10 px-4 py-2 text-body text-status-done">{notice}</p>

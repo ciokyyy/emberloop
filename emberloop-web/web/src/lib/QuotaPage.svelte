@@ -134,7 +134,7 @@
       </PageHeader>
 
       {#if error && providers.length}
-        <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>
+        <ErrorState compact title={error} onRetry={() => runRefresh('')} class="animate-rise" />
       {/if}
 
       {#if loading}
@@ -229,15 +229,15 @@
                 {/if}
 
                 {#if state === 'error' && (p.error || cardError[p.key])}
-                  <p role="alert" class="text-caption text-status-failed">{cardError[p.key] || p.error}</p>
+                  <ErrorState compact title={cardError[p.key] || p.error} onRetry={() => runRefresh(p.key)} />
                 {:else if cardError[p.key]}
-                  <p role="alert" class="text-caption text-status-failed">{cardError[p.key]}</p>
+                  <ErrorState compact title={cardError[p.key]} onRetry={() => runRefresh(p.key)} />
                 {/if}
 
                 {#if windows.length}
                   <QuotaWindows {windows} name={p.label} {now} dimmed={state === 'expired'} />
                 {:else if state === 'error' && !p.error && !cardError[p.key]}
-                  <p class="text-caption text-fg-3">{p.error || 'No quota data available.'}</p>
+                  <EmptyState compact icon={icons.quota} title="No quota data yet" />
                 {/if}
               {/if}
             </article>

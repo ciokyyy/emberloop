@@ -21,6 +21,8 @@
     Brain,
   } from '@lucide/svelte';
   import Markdown from './Markdown.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import Skeleton from './ui/skeleton.svelte';
   import {
     highlightCode,
     highlightJson,
@@ -139,7 +141,7 @@
     }
   });
   const wrapStyle = $derived(
-    `${reduced ? 'transition: none;' : 'transition: height .5s cubic-bezier(.22,1,.36,1);'}${stageH > 0 ? `height: ${stageH}px;` : ''}`,
+    `${reduced ? 'transition: none;' : 'transition: height var(--dur-emphasis) var(--ease-smooth);'}${stageH > 0 ? `height: ${stageH}px;` : ''}`,
   );
 
   // Streaming output stays pinned to the newest line.
@@ -176,10 +178,10 @@
     {#if run}
       {@const live = run.key === current?.key && !settled && !isDone(run.status)}
       {#if live}
-        <div class="ts-shimmer" data-testid="toolstrip-shimmer"></div>
+        <Skeleton data-testid="toolstrip-shimmer" class="mb-1 h-3 w-2/3" />
         <div class="ts-line mt-1 font-mono text-xs leading-5 text-muted-foreground">Writing tool call…</div>
       {:else}
-        <div class="ts-line font-mono text-xs leading-5 text-muted-foreground">No output.</div>
+        <EmptyState compact icon={Terminal} title="No output" class="border-0 px-0" />
       {/if}
     {/if}
   {:else if looksJson(full) && !run?.output}
@@ -331,7 +333,7 @@
             {/if}
           </div>
         {:else}
-          <div class="px-2.5 py-2 text-caption text-fg-3">No previous tools yet.</div>
+          <EmptyState compact icon={Terminal} title="No previous tools yet" class="border-0 px-0" />
         {/each}
       </div>
     </div>
@@ -350,10 +352,10 @@
     position: absolute;
     inset: 0 0 auto 0;
     pointer-events: none;
-    animation: ts-out 0.35s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: ts-out var(--dur-emphasis) var(--ease-smooth) both;
   }
   .ts-cur {
-    animation: ts-in 0.5s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: ts-in var(--dur-emphasis) var(--ease-smooth) both;
   }
   @keyframes ts-in {
     from {
@@ -379,7 +381,7 @@
     }
   }
   .ts-line {
-    animation: ts-line-in 0.25s cubic-bezier(0.22, 1, 0.36, 1) both;
+    animation: ts-line-in var(--dur-standard) var(--ease-smooth) both;
   }
   /* While live, per-line entrances would restart every delta and never
      complete: lines appear at once, and the tool-switch swap keeps the
@@ -396,21 +398,6 @@
     to {
       opacity: 1;
       transform: none;
-    }
-  }
-  .ts-shimmer {
-    height: 1rem;
-    border-radius: 0.5rem;
-    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.07), transparent);
-    background-size: 200% 100%;
-    animation: ts-shimmer 1.6s linear infinite;
-  }
-  @keyframes ts-shimmer {
-    from {
-      background-position: -200% 0;
-    }
-    to {
-      background-position: 200% 0;
     }
   }
   .ts-collapse,
@@ -434,8 +421,7 @@
   @media (prefers-reduced-motion: reduce) {
     .ts-prev,
     .ts-cur,
-    .ts-line,
-    .ts-shimmer {
+    .ts-line {
       animation: none;
     }
     .ts-stage,

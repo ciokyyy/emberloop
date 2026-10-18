@@ -14,6 +14,7 @@
   import Section from './ui/section.svelte';
   import SettingRow from './ui/setting-row.svelte';
   import Skeleton from './ui/skeleton.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import ChainEditor from './ChainEditor.svelte';
   import { icons } from './icons.js';
   import Notifications from './Notifications.svelte';
@@ -397,7 +398,7 @@
         {#if pageDescription}<p class="text-caption text-fg-3">{pageDescription}</p>{/if}
       </div>
       {#if DATA_SECTIONS.includes(section) && error}
-        <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>
+        <ErrorState compact title={error} onRetry={load} class="animate-rise" />
       {/if}
 
       {#if !admin && (section === 'memory' || section === 'access')}

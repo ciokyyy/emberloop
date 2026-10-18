@@ -159,7 +159,7 @@
               value={item.value}
               keywords={[item.label, item.value, item.detail ?? ''].filter(Boolean)}
               onSelect={() => onSelect(item.value)}
-              class="absolute top-0 left-0 flex w-full cursor-default items-center gap-2 rounded-lg pr-8 pl-3 outline-none select-none transition-colors duration-150 ease-[var(--ease-smooth)] data-[selected]:bg-accent"
+              class="absolute top-0 left-0 flex w-full cursor-default items-center gap-2 rounded-lg pr-8 pl-3 outline-none select-none motion-standard transition-colors data-[selected]:bg-accent"
               style="height: {rowHeight}px; transform: translateY({row.start}px);"
             >
               <span class="flex min-w-0 flex-1 flex-col justify-center leading-tight">

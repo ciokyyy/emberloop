@@ -3,6 +3,7 @@
   import { Check, Clock3, KeyRound, LockKeyhole, LogIn, Terminal, Trash2, X } from '@lucide/svelte';
   import IconButton from './ui/icon-button.svelte';
   import Section from './ui/section.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import Skeleton from './ui/skeleton.svelte';
   import StatCard from './ui/stat-card.svelte';
   import QuotaWindows from './QuotaWindows.svelte';
@@ -700,7 +701,7 @@
       {/if}
 
       {#if loadError}
-        <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{loadError}</p>
+        <ErrorState compact title={loadError} onRetry={load} class="animate-rise" />
       {/if}
 
       {#if loading}

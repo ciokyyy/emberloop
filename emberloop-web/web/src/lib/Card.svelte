@@ -228,7 +228,7 @@
       <span class="font-medium">Sudo {sudo.status}</span>
       {#if sudo.status !== 'denied'}<span class="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">exit {sudo.exit}</span>{/if}
       <span class="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">{sudo.command}</span>
-      <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+      <ChevronRight class="size-4 shrink-0 text-muted-foreground motion-standard transition-transform group-open:rotate-90" />
     </summary>
     <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
       <pre class="max-h-40 overflow-auto rounded-xl bg-muted/60 p-3 font-mono text-sm whitespace-pre-wrap">{sudo.command}</pre>
@@ -262,7 +262,7 @@
         <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">
           {fmtTokens(compaction.tokensBefore)} → {fmtTokens(compaction.tokensAfter)} tokens{#if saved !== null} · −{saved}%{/if}
         </span>
-        {#if block.body}<ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />{/if}
+        {#if block.body}<ChevronRight class="size-4 shrink-0 text-muted-foreground motion-standard transition-transform group-open:rotate-90" />{/if}
       {/if}
     </summary>
     {#if block.body && compaction.state === 'done'}
@@ -325,7 +325,7 @@
       {:else}
         <span class="flex-1"></span>
       {/if}
-      <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+      <ChevronRight class="size-4 shrink-0 text-muted-foreground motion-standard transition-transform group-open:rotate-90" />
     </summary>
     <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
       {#if block.input}
@@ -359,7 +359,7 @@
           <span class="font-medium">{block.title}</span>
         {/if}
         <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{firstReply}</span>
-        <ChevronRight class="size-4 shrink-0 text-muted-foreground transition-transform duration-200 group-open:rotate-90" />
+        <ChevronRight class="size-4 shrink-0 text-muted-foreground motion-standard transition-transform group-open:rotate-90" />
       </summary>
       <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
         {#each block.members?.length ? block.members : [{ id: '', kind: 'agent', reply: block.body }] as m}
@@ -383,7 +383,7 @@
   <details class="group animate-rise rounded-2xl border bg-card text-card-foreground {thinkingLive ? 'think-live' : ''}" data-card="thinking" data-live={thinkingLive ? 'true' : undefined} open={!block.collapsed}>
     <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 text-sm text-muted-foreground transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
       <Brain class="size-4" /><span class="flex-1">{block.title}</span>
-      <ChevronRight class="size-4 transition-transform duration-200 group-open:rotate-90" />
+      <ChevronRight class="size-4 motion-standard transition-transform group-open:rotate-90" />
     </summary>
     <pre class="max-h-64 overflow-auto border-t bg-background/40 p-3.5 font-mono text-xs whitespace-pre-wrap" use:appendText={block.body}></pre>
   </details>

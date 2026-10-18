@@ -233,6 +233,18 @@ describe('states', () => {
     await fireEvent.click(screen.getByRole('button', { name: /Try again/ }));
     expect(n).toBe(1);
   });
+  it('compact empty and error states are one row with the same meaning', async () => {
+    const empty = render(EmptyState, { props: { title: 'No output', compact: true } });
+    expect(empty.container.querySelector('[data-empty-state][data-compact]')).toBeTruthy();
+    expect(screen.getByText('No output')).toBeTruthy();
+    cleanup();
+    let n = 0;
+    render(ErrorState, { props: { title: 'Refresh failed', compact: true, onRetry: () => n++ } });
+    // The retry button's own slot whitespace is all that joins the message.
+    expect(screen.getByRole('alert').textContent.trim()).toBe('Refresh failed');
+    await fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(n).toBe(1);
+  });
   it('Skeleton is decorative and motion-safe', () => {
     const { container } = render(Skeleton);
     const el = container.firstElementChild;

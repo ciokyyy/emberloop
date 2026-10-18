@@ -6,6 +6,7 @@
   import Button from './ui/button.svelte';
   import IconButton from './ui/icon-button.svelte';
   import Tooltip from './ui/tooltip.svelte';
+  import EmptyState from './ui/empty-state.svelte';
   import { icons } from './icons.js';
 
   // onCompress is set for Sessions that can compress. busy disables it. compressNote, when set, disables it too and gives the reason.
@@ -44,7 +45,7 @@
 
 <Dialog.Root bind:open>
   <Dialog.Portal>
-    <Dialog.Overlay class="fixed inset-0 z-50 bg-black/50 backdrop-blur-sm data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 md:bg-transparent md:backdrop-blur-none" />
+    <Dialog.Overlay class="motion-emphasis fixed inset-0 z-50 bg-black/50 backdrop-blur-sm data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 md:bg-transparent md:backdrop-blur-none" />
     <Dialog.Content
       data-testid="context-sheet"
       class="motion-emphasis fixed z-50 flex flex-col gap-4 border bg-surface-2 p-4 text-fg-1 shadow-elev-3 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 max-md:inset-x-0 max-md:bottom-0 max-md:rounded-t-2xl max-md:pb-[max(1rem,env(safe-area-inset-bottom))] max-md:data-[state=closed]:slide-out-to-bottom max-md:data-[state=open]:slide-in-from-bottom md:right-6 md:top-16 md:w-80 md:rounded-2xl"
@@ -65,7 +66,7 @@
             <span class="text-numeric" data-testid="context-pct">{pct}%</span>
             <span class="truncate text-caption tabular-nums text-fg-3" data-testid="context-tokens">{fmt(usage.used)} of {fmt(usage.size)} tokens</span>
           {:else}
-            <span class="text-body text-fg-3">No usage yet</span>
+            <EmptyState compact icon={icons.quota} title="No usage yet" />
           {/if}
         </div>
       </div>

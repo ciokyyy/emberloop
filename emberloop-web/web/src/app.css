@@ -119,10 +119,11 @@
   font-variant-numeric: tabular-nums lining-nums;
 }
 
-/* Streamed text: each new run of characters fades in once. Spans carry a
-   negative delay equal to their age, so a re-render never restarts them. */
+/* Streamed text: each new run of characters fades in once, over the emphasis
+   duration. Spans carry a negative delay equal to their age, so a re-render
+   never restarts them. */
 .stream-in {
-  animation: stream-in 0.45s var(--ease-smooth) both;
+  animation: stream-in var(--dur-emphasis) var(--ease-smooth) both;
 }
 @keyframes stream-in {
   from {
@@ -262,16 +263,25 @@
   }
 }
 
-/* Duration utilities for the motion scale: motion-instant, motion-standard, motion-emphasis. */
+/* Duration utilities for the motion scale: motion-instant, motion-standard,
+   motion-emphasis. Each sets the transition and the entry/exit animation
+   duration (tw-animate-css reads --tw-duration) plus the one easing curve, so
+   no component picks its own number. */
 @utility motion-instant {
+  --tw-duration: var(--dur-instant);
+  --tw-ease: var(--ease-smooth);
   transition-duration: var(--dur-instant);
   transition-timing-function: var(--ease-smooth);
 }
 @utility motion-standard {
+  --tw-duration: var(--dur-standard);
+  --tw-ease: var(--ease-smooth);
   transition-duration: var(--dur-standard);
   transition-timing-function: var(--ease-smooth);
 }
 @utility motion-emphasis {
+  --tw-duration: var(--dur-emphasis);
+  --tw-ease: var(--ease-smooth);
   transition-duration: var(--dur-emphasis);
   transition-timing-function: var(--ease-smooth);
 }

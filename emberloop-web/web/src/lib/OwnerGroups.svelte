@@ -127,9 +127,11 @@
           {/if}
         </section>
       {:else}
-        <p class="px-3 py-4 text-caption text-fg-3">
-          {q ? `No chats match “${q}”.` : 'No chats yet. Start one with New chat.'}
-        </p>
+        {#if q}
+          <EmptyState compact icon={icons.session} title={`No chats match “${q}”.`} class="mx-1" />
+        {:else}
+          <EmptyState compact icon={icons.session} title="No chats yet." description="Start one with New chat." class="mx-1" />
+        {/if}
       {/each}
     {/if}
   </div>

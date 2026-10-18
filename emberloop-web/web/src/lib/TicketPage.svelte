@@ -9,6 +9,7 @@
   import Button from './ui/button.svelte';
   import Chip from './ui/chip.svelte';
   import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import IconButton from './ui/icon-button.svelte';
   import InfoHint from './ui/info-hint.svelte';
   import PageHeader from './ui/page-header.svelte';
@@ -472,7 +473,7 @@
   </div>
 
   {#if runError}
-    <p role="alert" class="flex items-start gap-2 rounded-xl border border-status-failed/30 bg-status-failed/10 px-4 py-3 text-body text-status-failed"><CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{runError}</p>
+    <ErrorState title="Could not load the Run" detail={runError} onRetry={loadRun} />
   {/if}
 
   {#if !run && !runError}
@@ -556,7 +557,7 @@
           {/if}
         </div>
         {#if actionError}
-          <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{actionError}</p>
+          <ErrorState compact title={actionError} />
         {/if}
       {/if}
     </section>
@@ -686,7 +687,7 @@
                     {/each}
                   </ul>
                 {:else if card.verdict === 'pass'}
-                  <div class="border-t bg-background/40 p-3 text-caption text-fg-3">No findings.</div>
+                  <EmptyState compact icon={icons.report} title="No findings" description="This review passed without notes." class="border-0" />
                 {/if}
               </div>
             {/each}
@@ -779,7 +780,7 @@
               {/each}
             </ul>
           {:else}
-            <p class="text-caption text-fg-3">No checkboxes on this ticket.</p>
+            <EmptyState compact icon={icons.ticket} title="No checkboxes on this ticket" class="border-0 px-0" />
           {/if}
         </div>
 
@@ -803,7 +804,7 @@
               {/each}
             </ul>
           {:else}
-            <p class="text-caption text-fg-3">No reviewers required.</p>
+            <EmptyState compact icon={icons.subagent} title="No reviewers required" class="border-0 px-0" />
           {/if}
         </div>
 
@@ -812,7 +813,7 @@
           {#if ticket.followups}
             <p class="whitespace-pre-wrap text-body [overflow-wrap:anywhere]">{ticket.followups}</p>
           {:else}
-            <p class="text-caption text-fg-3">None yet.</p>
+            <EmptyState compact icon={icons.subagent} title="No follow-ups yet" class="border-0 px-0" />
           {/if}
         </div>
       </aside>
@@ -825,7 +826,7 @@
 <!-- Read-only drawer for a reviewer or scout: transcript only, no composer. -->
 {#if drawer}
   <div class="fixed inset-0 z-50" data-testid="agent-drawer">
-    <button type="button" aria-label="Close transcript" class="absolute inset-0 animate-in fade-in-0 bg-black/40 backdrop-blur-sm" onclick={closeDrawer}></button>
+    <button type="button" aria-label="Close transcript" class="motion-emphasis absolute inset-0 animate-in fade-in-0 bg-black/40 backdrop-blur-sm" onclick={closeDrawer}></button>
     <div class="motion-emphasis absolute inset-y-0 right-0 flex w-full max-w-xl animate-in fade-in-0 slide-in-from-right-4 flex-col border-l bg-sidebar pb-[env(safe-area-inset-bottom)] pt-[env(safe-area-inset-top)] shadow-elev-3">
       <div class="flex items-center gap-2 border-b p-3">
         <span class="size-2 shrink-0 rounded-full" style="background: {harnessStyle(drawer.harness ?? '').accent}"></span>
@@ -835,7 +836,7 @@
       </div>
       <p class="border-b px-4 py-2 text-caption text-status-needs-you">Read-only transcript. Reviewers cannot be steered.</p>
       {#if dError}
-        <p role="alert" class="m-3 rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{dError}</p>
+        <ErrorState compact title={dError} class="m-3" />
       {/if}
       <div class="flex min-h-0 flex-1 flex-col">
         <Transcript

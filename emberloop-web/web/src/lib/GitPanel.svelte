@@ -7,6 +7,7 @@
   import IconButton from './ui/icon-button.svelte';
   import Chip from './ui/chip.svelte';
   import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import Skeleton from './ui/skeleton.svelte';
   import { icons } from './icons.js';
   import { getGitDiff } from './api.js';
@@ -15,6 +16,7 @@
 
   let picked = $state(null);
   let diff = $state('');
+  let diffError = $state('');
   let loading = $state(false);
 
   const LETTER = { M: 'text-status-needs-you', A: 'text-status-done', D: 'text-status-failed', R: 'text-status-working', '?': 'text-fg-3', U: 'text-status-failed' };
@@ -27,11 +29,13 @@
   async function pick(f) {
     picked = f;
     loading = true;
+    diffError = '';
     try {
       const staged = f.work === ' ' && f.index !== ' ' && f.index !== '?';
       diff = (await getGitDiff(projectId, f.path, staged)).diff || '(no textual changes)';
     } catch {
-      diff = 'Could not load the diff.';
+      diff = '';
+      diffError = 'Could not load the diff.';
     } finally {
       loading = false;
     }
@@ -41,13 +45,14 @@
     projectId;
     picked = null;
     diff = '';
+    diffError = '';
   });
 
   const lineClass = (l) =>
     l.startsWith('+') && !l.startsWith('+++') ? 'bg-status-done/10 text-status-done' : l.startsWith('-') && !l.startsWith('---') ? 'bg-status-failed/10 text-status-failed' : l.startsWith('@@') ? 'text-status-working' : 'text-fg-3';
 </script>
 
-<aside aria-label="Git" class="animate-in fade-in-0 slide-in-from-right-4 flex h-full w-96 shrink-0 flex-col gap-3 overflow-hidden rounded-2xl border bg-card p-4 text-body shadow-elev-2 duration-300 max-lg:fixed max-lg:inset-x-2 max-lg:bottom-2 max-lg:top-14 max-lg:z-40 max-lg:h-auto max-lg:w-auto max-lg:shadow-elev-3 max-md:inset-x-0 max-md:bottom-0 max-md:top-0 max-md:z-50 max-md:rounded-none max-md:border-0 max-md:pb-[max(1rem,env(safe-area-inset-bottom))] max-md:pt-[max(1rem,env(safe-area-inset-top))]">
+<aside aria-label="Git" class="animate-in fade-in-0 slide-in-from-right-4 flex h-full w-96 shrink-0 flex-col gap-3 overflow-hidden rounded-2xl border bg-card p-4 text-body shadow-elev-2 motion-emphasis max-lg:fixed max-lg:inset-x-2 max-lg:bottom-2 max-lg:top-14 max-lg:z-40 max-lg:h-auto max-lg:w-auto max-lg:shadow-elev-3 max-md:inset-x-0 max-md:bottom-0 max-md:top-0 max-md:z-50 max-md:rounded-none max-md:border-0 max-md:pb-[max(1rem,env(safe-area-inset-bottom))] max-md:pt-[max(1rem,env(safe-area-inset-top))]">
   <div class="flex min-h-11 shrink-0 items-center gap-2">
     <icons.git class="size-4 shrink-0 text-fg-3" aria-hidden="true" />
     <h2 class="min-w-0 flex-1 truncate text-title text-fg-1">{git?.isRepo ? git.branch : 'Git'}</h2>
@@ -74,7 +79,7 @@
       <div class="flex min-h-0 flex-col {picked ? 'max-lg:hidden lg:max-h-[30%]' : 'lg:max-h-[55%]'} max-lg:flex-1">
         <h3 class="mb-1 shrink-0 text-caption font-medium text-fg-3">Changes <span class="tabular-nums">({git.files.length})</span></h3>
         {#if git.files.length === 0}
-          <p class="py-2 text-body text-fg-3">Working tree clean.</p>
+          <EmptyState compact icon={icons.git} title="Working tree clean" description="No changed files in this Project." />
         {:else}
           <ul class="flex min-h-0 flex-col gap-0.5 overflow-auto overscroll-contain">
             {#each git.files as f (f.path)}
@@ -108,6 +113,8 @@
           <div class="min-h-0 flex-1 overflow-auto overscroll-contain p-2 font-mono text-caption leading-snug" tabindex="0" role="region" aria-label={`Diff of ${picked.path}`}>
             {#if loading}
               <div role="status" aria-label="Loading diff" class="flex flex-col gap-1.5"><Skeleton class="h-3" /><Skeleton class="h-3 w-3/4" /><Skeleton class="h-3 w-1/2" /></div>
+            {:else if diffError}
+              <ErrorState compact title={diffError} onRetry={() => pick(picked)} />
             {:else}
               {#each diff.split('\n') as l}<div class="whitespace-pre-wrap break-all px-1 {lineClass(l)}">{l || ' '}</div>{/each}
             {/if}

@@ -5,6 +5,7 @@
   import { getProfile, putProfile, getProfileVersions, restoreProfile, getProfileQueue, decideProfileQueue } from './api.js';
   import Button from './ui/button.svelte';
   import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import FloatingInput from './ui/floating-input.svelte';
   import IconButton from './ui/icon-button.svelte';
   import Panel from './ui/panel.svelte';
@@ -131,7 +132,7 @@
 {#snippet body()}
 <div class="animate-rise flex flex-col gap-6" data-testid="profile-settings">
   {#if error}
-    <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>
+    <ErrorState compact title={error} onRetry={load} class="animate-rise" />
   {/if}
   {#if notice}
     <p role="status" class="rounded-xl bg-status-done/10 px-4 py-2 text-body text-status-done">{notice}</p>
@@ -191,7 +192,7 @@
 
     <Section title={`Proposals waiting (${queue.filter((q) => q.status === 'pending').length})`} headingLevel={level} data-testid="profile-queue">
       {#if queue.length === 0}
-        <p class="rounded-2xl border border-dashed px-4 py-6 text-center text-caption text-fg-3">No proposals. Agent patches appear here after an explicit request.</p>
+        <EmptyState icon={icons.edit} title="No proposals" description="Agent patches appear here after an explicit request." class="py-6" />
       {:else}
         <Panel tag="ul">
           {#each queue as item (item.id)}
@@ -212,7 +213,7 @@
 
     <Section title={`Versions (${versions.length})`} headingLevel={level} data-testid="profile-versions">
       {#if versions.length === 0}
-        <p class="rounded-2xl border border-dashed px-4 py-6 text-center text-caption text-fg-3">Every approval writes a version.</p>
+        <EmptyState icon={icons.edit} title="No versions yet" description="Every approval writes a version." class="py-6" />
       {:else}
         <Panel tag="ul">
           {#each versions as v (v.version)}

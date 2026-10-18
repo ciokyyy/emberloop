@@ -67,7 +67,7 @@ Unchanged: `rounded-lg` (controls, tiles), `rounded-xl` (callouts, popovers), `r
 
 ### Motion
 
-One easing, `--ease-smooth`; three durations. Utilities `motion-instant`, `motion-standard` and `motion-emphasis` set duration and easing together; `animate-rise` (emphasis) is the mount entrance.
+One easing, `--ease-smooth`; three durations. Utilities `motion-instant`, `motion-standard` and `motion-emphasis` set duration, easing and the `--tw-duration`/`--tw-ease` pair that `animate-in`/`animate-out` read, so transitions and enter/exit animations share one scale. `animate-rise` (emphasis) is the mount entrance. No component carries its own `duration-*`, `ease-*` or hand-written milliseconds.
 
 | Token | Value | Use |
 | --- | --- | --- |
@@ -75,7 +75,7 @@ One easing, `--ease-smooth`; three durations. Utilities `motion-instant`, `motio
 | `--dur-standard` | 180 ms | Hover, colour, disclosure chevrons |
 | `--dur-emphasis` | 320 ms | Entrances, bar growth, details height |
 
-Reduced motion (`prefers-reduced-motion: reduce`): transitions and one-shot animations end at once and smooth scroll is off. Only spinners and `data-motion="essential"` elements keep moving, slowly. No decorative loops other than the Working indicator; Skeleton pulses with `motion-safe:` only. Streamed text keeps its own `stream-in` fade.
+Reduced motion (`prefers-reduced-motion: reduce`): transitions and one-shot animations end at once and smooth scroll is off. Only spinners and `data-motion="essential"` elements keep moving, slowly. No decorative loops other than the Working indicator; Skeleton pulses with `motion-safe:` only. Streamed text keeps its own `stream-in` fade at the emphasis duration (`streamFade.js` `FADE_MS`, which must match the token).
 
 ### Merging classes
 
@@ -123,8 +123,8 @@ All in `src/lib/ui/`, built on `button`, `popover` and bits-ui, using only the t
 | `Chip` | `chip.svelte` | `tone` (`neutral`, `outline`, or a status), `dot`, `icon`. One short word; truncates, never wraps. |
 | `IconButton` | `icon-button.svelte` | `icon`, `label` (required: accessible name and tooltip), `variant`, `size`, `spin`. 44 px under md. |
 | `Tooltip` | `tooltip.svelte` | `text`, `side`, `trigger` snippet. Used by `IconButton`; never the only name. |
-| `EmptyState` | `empty-state.svelte` | `icon`, `title` (one line), `description`, `action` snippet. |
-| `ErrorState` | `error-state.svelte` | `title`, `detail`, `onRetry`, `busy`. `role="alert"`, one Retry action. |
+| `EmptyState` | `empty-state.svelte` | `icon`, `title` (one line), `description`, `action` snippet, `compact`. Compact renders the same pattern as one row for a small region inside a page. |
+| `ErrorState` | `error-state.svelte` | `title`, `detail`, `onRetry`, `busy`, `compact`. `role="alert"`, one Retry action; compact is the one-row form beside content that is still on screen. |
 | `Skeleton` | `skeleton.svelte` | Decorative block (`aria-hidden`); wrap a group in `role="status"` with an `aria-label`. Loading is skeleton, not text. |
 | `InfoHint` | `info-hint.svelte` | `label` (accessible name), children. Tap-to-reveal popover for help text. |
 | `Panel` | `panel.svelte` | The grouped card: `rounded-2xl border bg-card shadow-elev-1`. `divided` (hairlines between children, default), `padded` (free content with `p-4 gap-3`), `tag` (`div` or `ul`). Settings, Memory lists and Profile put their rows in one Panel. |
@@ -148,6 +148,10 @@ At most one paragraph of help text is visible by default on any page. The rest s
 
 Every design change specifies both layouts and says what phone omits. Phone (`<md`): single column, bottom-anchored primary action, sheets for secondary panels, 44 px touch targets (`max-md:` sizes), safe-area insets (`env(safe-area-inset-*)`), no hover-only controls. Desktop: persistent navigation, side panels, hover affordances with keyboard equivalents. Grids that sit beside the rail and second sidebar switch columns on the content column's width (container queries, `@container` + `@2xl:grid-cols-2`), not the viewport (`md:`), so 768 to 990 px viewports stay single column. Verify at 390 px and 1280 px (and about 800 px for pages with the sidebar): no horizontal scroll, every control reachable by keyboard with a visible focus ring.
 
+### State rule
+
+Three patterns cover every screen, and no page renders a bare sentence for one of them. Loading is `Skeleton` inside `role="status"` with an `aria-label`; text like `Loading…` never stands in for content. Emptiness is `EmptyState` and failure is `ErrorState`, each with an icon, one line and one action. A state that fills the page (nothing loaded yet) is the full pattern; a state beside content that is still on screen (a failed refresh, a small region inside a card, a form's own error) is the `compact` row. Inline field validation attached to one control stays a one-line `role="alert"` beside that control.
+
 ## Shell
 
 Rail (desktop) and drawer tabs (phone) carry a needs-you dot on an area that needs the User. The Project switcher is a compact popover with search. Rail and drawer rows use `Row`; Rename and Remove Project actions show on hover or focus on desktop and live in Project settings on phone. Tooltips open on keyboard focus, not on programmatic or pointer focus (`ignoreNonKeyboardFocus`). The Dashboard leads with two `StatCard`s (Needs you, Running), then Needs you rows, Running rows and Project rows.
@@ -167,6 +171,10 @@ The Chain editor (`ChainEditor`) shows one role as a heading, an add `IconButton
 Memory opens on three `StatCard`s (Pending, New, Rules) and the proposals that wait for approval; everything else (Memories with legacy observations and Episodes, Rules, Observations, Promotions, Profile, Status, Ledger, Purge) is a collapsed `Section`. Profile and Promotions take `embedded` to nest inside Memory as one collapsed `Section` each. Proposal evidence sits behind a native `details`.
 
 Providers use the Quota card: same article, icon tile, `text-title` name and `QuotaWindows` (big percent, bar, reset countdown), so both pages read the same. A Provider card adds a `Chip` for Connected or Not connected, its connect actions and its login panels; the percent comes from the shared `quotaStore`, so the card shows usage with no extra request per card. Connect flows keep their behaviour; only the markup is new.
+
+## Auth and first run
+
+The Root gate never paints a blank page: while it probes the session it shows `Skeleton` rows under `role="status"`, and when the Daemon does not answer it shows an `ErrorState` with the `Try again` action. The sign-in screen is one centred column of `max-w-sm`: a 56 px brand tile, the `text-headline` question (sign in, create an account, create the admin account on an empty Daemon), one caption line, then the form. Under md the form is bare and full width with the page safe area; from md it sits in a bordered card (`rounded-2xl border bg-card p-6 shadow-elev-1`). The submit button is the only primary action and carries the busy spinner; the mode switch is a ghost button under the form and only appears when signup is open. A failed attempt is the `compact` `ErrorState` in the form, and the password rules stay in the one caption line.
 
 ## Checklist for a new page
 

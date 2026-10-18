@@ -8,6 +8,8 @@
   import PageHeader from './lib/ui/page-header.svelte';
   import IconButton from './lib/ui/icon-button.svelte';
   import Skeleton from './lib/ui/skeleton.svelte';
+  import EmptyState from './lib/ui/empty-state.svelte';
+  import ErrorState from './lib/ui/error-state.svelte';
   import { SHELL_KEY } from './lib/shell.js';
   import { icons } from './lib/icons.js';
   import { dotState } from './lib/owners.js';
@@ -1229,17 +1231,17 @@
     <DiskBanner status={disk} />
 
     {#if loadError}
-      <p role="alert" class="mx-3 rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive sm:mx-4">{loadError}</p>
+      <ErrorState compact title={loadError} class="mx-3 animate-rise sm:mx-4" />
     {/if}
 
     <div class="flex min-h-0 flex-1">
       <div class="relative flex min-w-0 flex-1 flex-col">
         {#if sessionMissing}
-          <div class="mx-auto flex w-full max-w-3xl flex-col items-center gap-3 px-4 py-24 text-center" data-testid="session-missing">
-            <p class="text-lg font-semibold tracking-tight">Session not found</p>
-            <p class="text-sm text-muted-foreground">It was deleted or the link is wrong. Pick another chat.</p>
-            <Button variant="secondary" onclick={() => navigate('/')}>Back to chats</Button>
-          </div>
+          <EmptyState icon={icons.session} title="Session not found" description="It was deleted or the link is wrong. Pick another chat." class="mx-auto w-full max-w-3xl py-16" data-testid="session-missing">
+            {#snippet action()}
+              <Button variant="secondary" onclick={() => navigate('/')}>Back to chats</Button>
+            {/snippet}
+          </EmptyState>
         {:else}
         {#if currentId && !resumable}
           <p data-testid="read-only" class="mx-4 rounded-xl bg-amber-500/10 px-4 py-2 text-sm text-amber-300">

@@ -8,6 +8,7 @@
   import FloatingInput from './ui/floating-input.svelte';
   import Section from './ui/section.svelte';
   import Row from './ui/row.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import EmptyState from './ui/empty-state.svelte';
   import Skeleton from './ui/skeleton.svelte';
   import { icons } from './icons.js';
@@ -125,7 +126,7 @@
       </form>
     {/if}
     {#if discovery.error}
-      <p role="alert" class="rounded-xl bg-status-failed/10 px-3 py-2 text-caption text-status-failed">{discovery.error}</p>
+      <ErrorState compact title={discovery.error} onRetry={() => loadDiscovery()} />
     {/if}
     {#if discovery.message}
       <p class="rounded-xl border px-3 py-2 text-caption text-fg-3">{discovery.message}</p>

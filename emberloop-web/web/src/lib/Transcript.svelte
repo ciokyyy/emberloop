@@ -7,7 +7,10 @@
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import Button from './ui/button.svelte';
   import ReportsTray from './ReportsTray.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import Skeleton from './ui/skeleton.svelte';
   import Card from './Card.svelte';
+  import { icons } from './icons.js';
   import { isNearBottom, applyAnchor, blockIndexForSeq } from './transcript.js';
   import { getQueue } from './api.js';
 
@@ -474,14 +477,14 @@
   <div bind:this={contentEl} data-testid="transcript-content" class="mx-auto flex w-full max-w-3xl flex-col gap-4">
     {#if hasMore}
       <div bind:this={sentinel} class="flex justify-center py-1" data-testid="load-earlier">
-        <Button variant="ghost" size="sm" disabled={loadingEarlier} onclick={loadEarlier}>
-          {#if loadingEarlier}
-            <span class="size-3.5 animate-spin rounded-full border-2 border-muted-foreground/40 border-t-foreground" aria-hidden="true"></span>
-            Loading earlier…
-          {:else}
-            Load earlier
-          {/if}
-        </Button>
+        {#if loadingEarlier}
+          <div role="status" aria-label="Loading earlier messages" class="flex w-full flex-col gap-2 py-2">
+            <Skeleton class="h-3 w-2/3" />
+            <Skeleton class="h-3 w-1/2" />
+          </div>
+        {:else}
+          <Button variant="ghost" size="sm" onclick={loadEarlier}>Load earlier</Button>
+        {/if}
       </div>
     {/if}
     {#if useVirtual}
@@ -511,7 +514,7 @@
           <Card block={b} sessionId={sessionId} {sessions} {onOpenSession} {onDismissReport} queuedItem={queueView.byKey.get(b.key) ?? null} cancelled={canceledBlockKeys.includes(b.key)} onQueueChange={queueChanged} />
         </div>
       {:else}
-        <p class="py-24 text-center text-2xl font-semibold tracking-tight text-muted-foreground">{emptyHint}</p>
+        {#if emptyHint}<EmptyState icon={icons.session} title={emptyHint} class="my-10" />{/if}
       {/each}
     {/if}
     {#each queueView.extra as item (item.id)}

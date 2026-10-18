@@ -3,6 +3,7 @@
   import PageHeader from './ui/page-header.svelte';
   import Skeleton from './ui/skeleton.svelte';
   import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import { icons } from './icons.js';
   import Button from './ui/button.svelte';
   import Input from './ui/input.svelte';
@@ -100,7 +101,7 @@
       <p class="-mt-4 break-all text-caption text-fg-3">{project.path}</p>
 
       {#if error}
-        <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{error}</p>
+        <ErrorState compact title={error} class="animate-rise" />
       {/if}
 
       <section class="flex flex-col gap-3 rounded-2xl border bg-card p-4" aria-labelledby="project-name-heading">

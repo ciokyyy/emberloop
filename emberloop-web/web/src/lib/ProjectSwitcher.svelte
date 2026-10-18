@@ -5,8 +5,9 @@
   import { Command } from 'bits-ui';
   import { Check, ChevronsUpDown, Search } from '@lucide/svelte';
   import Popover from './ui/popover.svelte';
-  import { buildPath } from './router.js';
+  import EmptyState from './ui/empty-state.svelte';
   import { icons } from './icons.js';
+  import { buildPath } from './router.js';
 
   let { projects = [], selectedId = null, onNavigate = () => {} } = $props();
 
@@ -53,7 +54,7 @@
         />
       </div>
       <Command.List class="max-h-64 overflow-y-auto p-1.5">
-        <Command.Empty class="px-3 py-6 text-center text-caption text-fg-3">No projects match.</Command.Empty>
+        <Command.Empty class="p-1.5"><EmptyState compact icon={icons.project} title="No projects match" /></Command.Empty>
         {#each items as item (item.value)}
           <Command.Item
             value={item.value}

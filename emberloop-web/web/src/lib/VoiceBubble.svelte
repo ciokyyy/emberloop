@@ -70,7 +70,7 @@
     >
       {#each bars as h, i (i)}
         <span
-          class="w-[3px] shrink-0 rounded-full transition-colors duration-150 {i / bars.length < frac ? 'bg-primary' : 'bg-foreground/25'}"
+          class="w-[3px] shrink-0 rounded-full transition-colors motion-standard {i / bars.length < frac ? 'bg-primary' : 'bg-foreground/25'}"
           style="height: {Math.max(8, Math.min(100, h))}%"
         ></span>
       {/each}

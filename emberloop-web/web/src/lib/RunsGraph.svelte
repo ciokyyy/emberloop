@@ -9,6 +9,8 @@
   import Panzoom from '@panzoom/panzoom/dist/panzoom.es.js';
   import { ZoomIn, ZoomOut, Maximize } from '@lucide/svelte';
   import IconButton from './ui/icon-button.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import { icons } from './icons.js';
   import { layoutRunGraph, edgePath, countByStatus } from './runsGraph.js';
 
   let { tickets = [], selectedId = '', onSelect = null, fullscreen = false } = $props();
@@ -170,7 +172,9 @@
   aria-label="Run dependency graph. Arrow keys pan, plus and minus zoom, zero resets."
 >
   {#if !graph.nodes.length}
-    <p class="absolute inset-0 grid place-items-center text-body text-fg-3">No tickets yet — start a Run.</p>
+    <div class="absolute inset-0 grid place-items-center p-4">
+      <EmptyState icon={icons.ticket} title="No tickets yet" description="Start a Run to lay out its Tickets." />
+    </div>
   {:else}
     <div
       bind:this={canvas}

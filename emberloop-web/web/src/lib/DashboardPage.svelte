@@ -121,7 +121,7 @@
     {#if error && loaded && !activeGroups.length}
       <ErrorState title="Could not load the Dashboard" detail={error} onRetry={refresh} />
     {:else if error}
-      <p role="alert" class="rounded-xl bg-status-failed/10 px-4 py-2 text-body text-status-failed">{error}</p>
+      <ErrorState compact title={error} onRetry={refresh} class="animate-rise" />
     {/if}
     {#if !loaded}
       <div role="status" aria-label="Loading Dashboard" class="flex flex-col gap-6">

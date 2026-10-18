@@ -5,6 +5,7 @@
   import WorkingIndicator from './WorkingIndicator.svelte';
   import { COMPOSER_EDIT_EVENT, availableModes, resolveComposerMode } from './composer.js';
   import IconButton from './ui/icon-button.svelte';
+  import EmptyState from './ui/empty-state.svelte';
   import { icons } from './icons.js';
   import { ArrowUp, BookmarkPlus, Mic, Square, Loader, Paperclip, X, Images } from '@lucide/svelte';
   import { sttSupport, startRecording, transcribe, STT_MAX_BYTES } from './stt.js';
@@ -324,7 +325,7 @@
        shut when idle. It always lists the working modes, so the buttons do
        not change mid fade-out. -->
   <div
-    class="grid transition-[grid-template-rows,opacity] duration-300 ease-[cubic-bezier(.22,1,.36,1)] motion-reduce:transition-none {headerOpen
+    class="grid transition-[grid-template-rows,opacity] motion-emphasis motion-reduce:transition-none {headerOpen
       ? 'grid-rows-[1fr] opacity-100'
       : 'grid-rows-[0fr] opacity-0'}"
     aria-hidden={!headerOpen}
@@ -400,7 +401,7 @@
           {/each}
         </div>
       {:else}
-        <p class="text-xs text-muted-foreground">No images attached in this Session yet.</p>
+        <EmptyState compact icon={Images} title="No images in this Session yet" />
       {/if}
     </div>
   {/if}

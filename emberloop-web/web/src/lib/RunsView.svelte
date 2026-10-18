@@ -16,6 +16,7 @@
   import Row from './ui/row.svelte';
   import EmptyState from './ui/empty-state.svelte';
   import Skeleton from './ui/skeleton.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import PageHeader from './ui/page-header.svelte';
   import { icons } from './icons.js';
   import { createPhone } from './phone.svelte.js';
@@ -590,7 +591,11 @@
     </EmptyState>
   {/if}
   {#if runError}
-    <p role="alert" class="flex items-start gap-2 rounded-xl border border-status-failed/30 bg-status-failed/10 px-4 py-3 text-body text-status-failed"><CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{runError}</p>
+    {#if run?.tickets}
+      <ErrorState compact title={runError} />
+    {:else}
+      <ErrorState title="Could not load the Run" detail={runError} onRetry={() => openRun(run?.id)} />
+    {/if}
   {/if}
   {#if runLoading && run?.id && !run.tickets}
     <div role="status" aria-label="Loading Run details" class="flex flex-col gap-3" data-testid="run-loading">
