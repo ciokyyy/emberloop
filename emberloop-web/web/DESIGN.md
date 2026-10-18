@@ -67,7 +67,7 @@ Unchanged: `rounded-lg` (controls, tiles), `rounded-xl` (callouts, popovers), `r
 
 ### Motion
 
-One easing, `--ease-smooth`; three durations. Utilities `motion-instant`, `motion-standard` and `motion-emphasis` set duration, easing and the `--tw-duration`/`--tw-ease` pair that `animate-in`/`animate-out` read, so transitions and enter/exit animations share one scale. `animate-rise` (emphasis) is the mount entrance. No component carries its own `duration-*`, `ease-*` or hand-written milliseconds.
+One easing, `--ease-smooth`; three durations. Utilities `motion-instant`, `motion-standard` and `motion-emphasis` set duration, easing and the `--tw-duration`/`--tw-ease` pair that `animate-in`/`animate-out` read, so transitions and enter/exit animations share one scale. Every unqualified `transition-*` utility (hover, focus, colour) defaults to `--dur-standard` and `--ease-smooth` through `--default-transition-duration`/`--default-transition-timing-function` in `app.css`; only the two other steps need a `motion-*` class. `animate-rise` (emphasis) is the mount entrance. No component carries its own `duration-*`, `ease-*` or hand-written milliseconds.
 
 | Token | Value | Use |
 | --- | --- | --- |

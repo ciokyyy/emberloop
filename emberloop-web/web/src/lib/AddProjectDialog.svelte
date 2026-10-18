@@ -2,6 +2,7 @@
 <script>
   import Button from './ui/button.svelte';
   import Dialog from './ui/dialog.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import FloatingInput from './ui/floating-input.svelte';
 
   let { open = false, busy = false, error = '', onClose = () => {}, onAdd = () => {} } = $props();
@@ -27,7 +28,7 @@
     <FloatingInput id="project-path" label="Folder" bind:value={path} placeholder="~/Projects/my-app" inputClass="font-mono" autofocus />
     <FloatingInput id="project-name" label="Name (optional)" bind:value={name} placeholder="folder name" />
     {#if error}
-      <p role="alert" class="text-sm text-destructive">{error}</p>
+      <ErrorState compact title={error} />
     {/if}
     <div class="mt-1 flex justify-end gap-2">
       <Button type="button" variant="ghost" onclick={onClose}>Cancel</Button>

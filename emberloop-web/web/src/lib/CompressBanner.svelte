@@ -4,6 +4,7 @@
   import { CircleAlert } from '@lucide/svelte';
   import IconButton from './ui/icon-button.svelte';
   import InfoHint from './ui/info-hint.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import { icons } from './icons.js';
   import { compressSession, dismissCompress } from './api.js';
   let { sessionId, onChangeModel = () => {}, onDismissed = () => {} } = $props();
@@ -38,5 +39,5 @@
     <IconButton icon={icons.model} label="Change compress model" onclick={() => onChangeModel()} />
     <IconButton icon={icons.dismiss} label="Dismiss" disabled={busy} onclick={dismiss} />
   </div>
-  {#if error}<p role="alert" class="pb-1 text-caption text-status-failed">{error}</p>{/if}
+  {#if error}<ErrorState compact title={error} class="mx-1 mb-1" />{/if}
 </div>

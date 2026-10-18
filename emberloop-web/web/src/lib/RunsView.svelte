@@ -506,7 +506,7 @@
       </section>
     {/if}
     {#if run.error}
-      <p role="alert" class="flex items-start gap-2 rounded-xl border border-status-failed/30 bg-status-failed/10 px-4 py-3 text-body text-status-failed"><CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{run.error}</p>
+      <ErrorState compact title={run.error} onRetry={() => openRun(run.id)} class="animate-rise" />
     {/if}
     {#if run.status === 'needs-you' && run.finalMergeFiles?.length}
       <p role="alert" class="flex items-start gap-2 rounded-xl border border-status-needs-you/30 bg-status-needs-you/10 px-4 py-3 text-body text-status-needs-you" data-testid="run-final-merge-files">
@@ -574,7 +574,7 @@
                 {/if}
               </div>
               {#if t.error}
-                <p role="alert" class="rounded-xl bg-status-failed/10 px-3 py-2 text-caption text-status-failed">{t.error}</p>
+                <ErrorState compact title={t.error} />
               {/if}
             </li>
           {/each}

@@ -6,6 +6,7 @@
   import { COMPOSER_EDIT_EVENT, availableModes, resolveComposerMode } from './composer.js';
   import IconButton from './ui/icon-button.svelte';
   import EmptyState from './ui/empty-state.svelte';
+  import ErrorState from './ui/error-state.svelte';
   import { icons } from './icons.js';
   import { ArrowUp, BookmarkPlus, Mic, Square, Loader, Paperclip, X, Images } from '@lucide/svelte';
   import { sttSupport, startRecording, transcribe, STT_MAX_BYTES } from './stt.js';
@@ -488,10 +489,10 @@
   </div>
   {#if editNotice}<p data-testid="edit-notice" class="truncate px-3 pb-1 text-xs text-muted-foreground">{editNotice}</p>{/if}
   {#if sendError}
-    <p role="alert" class="px-3 pb-1 text-xs text-destructive">{sendError}</p>
+    <ErrorState compact title={sendError} class="mx-3 mb-1" />
   {/if}
   {#if imageNote}
-    <p data-testid="image-note" class="px-3 pb-1 text-xs text-destructive">{imageNote}</p>
+    <ErrorState compact title={imageNote} class="mx-3 mb-1" data-testid="image-note" />
   {/if}
   {#if voiceNote || (voicePrefs.enabled && !support.ok)}
     <p data-testid="voice-note" class="px-3 pb-1 text-xs text-muted-foreground">{voiceNote || support.reason}</p>

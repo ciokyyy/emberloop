@@ -1295,10 +1295,15 @@
             {/if}
             {#if !sessionMissing}
             {#if failedDraftPrompt?.sessionId === currentId}
-              <div role="alert" data-testid="failed-draft-prompt" class="animate-rise flex flex-wrap items-center gap-2 rounded-2xl border bg-card p-3 text-sm">
-                <span class="min-w-0 flex-1">The first prompt was not sent.</span>
-                <Button variant="outline" disabled={sending} onclick={retryFailedDraftPrompt}>Retry first prompt</Button>
-              </div>
+              <ErrorState
+                compact
+                title="The first prompt was not sent."
+                retryLabel="Retry first prompt"
+                onRetry={retryFailedDraftPrompt}
+                busy={sending}
+                class="animate-rise"
+                data-testid="failed-draft-prompt"
+              />
             {/if}
             {#if drafting}
               <DraftBar bind:harness={draftHarness} bind:model={draftModel} bind:effort={draftEffort} />

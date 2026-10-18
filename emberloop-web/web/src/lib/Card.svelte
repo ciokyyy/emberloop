@@ -10,6 +10,7 @@
   import Button from './ui/button.svelte';
   import IconButton from './ui/icon-button.svelte';
   import { icons } from './icons.js';
+  import ErrorState from './ui/error-state.svelte';
   import Input from './ui/input.svelte';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
@@ -173,7 +174,7 @@
         <div class="mt-2 flex flex-wrap justify-end gap-1.5">
           {#each pictureIds as imgId (imgId)}
             {#if sessionId}
-              <img src={imageSrc(sessionId, imgId)} alt="Attached image" class="h-28 w-28 rounded-xl border object-cover" loading="lazy" />
+              <img src={imageSrc(sessionId, imgId)} alt="Attachment" class="h-28 w-28 rounded-xl border object-cover" loading="lazy" />
             {:else}
               <span class="rounded-lg bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">image</span>
             {/if}
@@ -208,7 +209,7 @@
         </div>
         <p class="mt-1.5 text-xs text-muted-foreground">Without a password, sudo must already be passwordless. The password is used once and never stored.</p>
       {/if}
-      {#if sudoError}<p role="alert" class="mt-2 text-xs text-destructive">{sudoError}</p>{/if}
+      {#if sudoError}<ErrorState compact title={sudoError} class="mt-2" />{/if}
     </div>
   </div>
 {:else if block.card === 'profilePatch'}
@@ -219,7 +220,7 @@
     {#if !block.profilePatch?.state || block.profilePatch.state === 'pending'}
       <div class="mt-3 flex gap-2"><Button disabled={profileBusy} onclick={() => decideProfile('approved')}>Approve</Button><Button variant="outline" disabled={profileBusy} onclick={() => decideProfile('rejected')}>Reject</Button></div>
     {:else}<div class="mt-2 text-xs text-muted-foreground">{block.profilePatch.state}</div>{/if}
-    {#if profileError}<p role="alert" class="mt-2 text-xs text-destructive">{profileError}</p>{/if}
+    {#if profileError}<ErrorState compact title={profileError} class="mt-2" />{/if}
   </div>
 {:else if block.card === 'sudoresult'}
   <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="sudoresult" open>
@@ -243,7 +244,7 @@
       <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground" title={block.body}>{block.body}</span>
       <IconButton icon={icons.retry} label="Retry" disabled={compressBusy} onclick={retryCompress} />
     </div>
-    {#if compressError}<p role="alert" class="px-4 pb-2.5 text-xs text-destructive">{compressError}</p>{/if}
+    {#if compressError}<ErrorState compact title={compressError} class="mx-4 mb-2.5" />{/if}
   </div>
 {:else if block.card === 'compaction'}
   <details class="group animate-rise overflow-hidden rounded-2xl border bg-card/60 text-card-foreground" data-card="compaction" data-state={compaction.state}>
@@ -295,7 +296,7 @@
       {/each}
     </div>
     {#if promoteError}
-      <p role="alert" class="text-center text-xs text-destructive">{promoteError}</p>
+      <ErrorState compact title={promoteError} />
     {/if}
   {/if}
 {:else if block.card === 'status'}

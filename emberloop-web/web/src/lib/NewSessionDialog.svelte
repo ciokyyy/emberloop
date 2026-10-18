@@ -6,6 +6,7 @@
   import Dialog from './ui/dialog.svelte';
   import Combobox from './ui/combobox.svelte';
   import Input from './ui/input.svelte';
+  import ErrorState from './ui/error-state.svelte';
 
   let { open = false, busy = false, error = '', onClose = () => {}, onCreate = () => {} } = $props();
   let harness = $state(HARNESSES[0].id);
@@ -65,7 +66,7 @@
       <Input id="workdir" aria-label="working directory" bind:value={workDir} placeholder={DEFAULT_WORK_DIR} class="font-mono" />
     </div>
     {#if error}
-      <p role="alert" class="text-sm text-destructive">{error}</p>
+      <ErrorState compact title={error} />
     {/if}
     <div class="mt-1 flex justify-end gap-2">
       <Button type="button" variant="ghost" onclick={onClose}>Cancel</Button>

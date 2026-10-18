@@ -13,7 +13,6 @@ import Row from './row.svelte';
 import BottomSheet from './bottom-sheet.svelte';
 import Section from './section.svelte';
 import SettingRow from './setting-row.svelte';
-import BottomSheet from './bottom-sheet.svelte';
 import Skeleton from './skeleton.svelte';
 import StatCard from './stat-card.svelte';
 import Segmented from './segmented.svelte';
@@ -331,14 +330,5 @@ describe('Panel and SettingRow', () => {
     stacked.unmount();
     const inline = render(SettingRow, { props: { label: 'B', inline: true, children: text('x') } });
     expect(inline.container.querySelector('[data-setting-row]').className).not.toContain('flex-col');
-  });
-});
-
-describe('BottomSheet', () => {
-  it('opens as a named dialog with a Close action', async () => {
-    render(BottomSheet, { props: { open: true, title: 'Worker · Primary', children: text('fields') } });
-    expect(await screen.findByRole('dialog', { name: 'Worker · Primary' })).toBeTruthy();
-    expect(screen.getByText('fields')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
   });
 });

@@ -129,7 +129,7 @@
       <ErrorState compact title={discovery.error} onRetry={() => loadDiscovery()} />
     {/if}
     {#if discovery.message}
-      <p class="rounded-xl border px-3 py-2 text-caption text-fg-3">{discovery.message}</p>
+      <EmptyState compact icon={icons.ticket} title={discovery.message} />
     {/if}
     {#if discovery.specs.length}
       <ul class="flex min-h-0 flex-col gap-0.5">

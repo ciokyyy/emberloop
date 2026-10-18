@@ -221,6 +221,11 @@
 @theme inline {
   --ease-smooth: cubic-bezier(0.22, 1, 0.36, 1);
   --animate-rise: rise var(--dur-emphasis) var(--ease-smooth) both;
+  /* Every transition-* utility (hover, focus, disclosure) takes the standard
+     duration and the one curve, so only motion-instant and motion-emphasis
+     choose a different step. */
+  --default-transition-duration: var(--dur-standard);
+  --default-transition-timing-function: var(--ease-smooth);
   @keyframes rise {
     from {
       opacity: 0;

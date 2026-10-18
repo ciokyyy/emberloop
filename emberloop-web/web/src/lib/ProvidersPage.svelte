@@ -585,8 +585,8 @@
           {/if}
         </div>
         <pre class="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-muted p-3 font-mono text-caption" data-testid="claude-login-output">{cleanClaudeOutput(claudeLogin.output) || 'Waiting for Claude Code…'}</pre>
-        {#if claudeLogin.error}<p role="alert" class="text-caption text-status-failed">{claudeLogin.error}</p>{/if}
-        {#if loginError}<p role="alert" class="text-caption text-status-failed">{loginError}</p>{/if}
+        {#if claudeLogin.error}<ErrorState compact title={claudeLogin.error} />{/if}
+        {#if loginError}<ErrorState compact title={loginError} />{/if}
         {#if claudeLogin.state === 'running'}
           <form class="grid gap-3" data-testid="claude-login-form" onsubmit={submitClaudeLoginCode}>
             <Input
@@ -628,7 +628,7 @@
         {:else if chatGPTLogin.status === 'canceled'}
           <p class="text-body text-fg-2" role="status">ChatGPT login canceled.</p>
         {:else}
-          <p class="text-body text-status-failed" role="alert">{chatGPTLogin.error || 'ChatGPT login failed. Try again.'}</p>
+          <ErrorState compact title={chatGPTLogin.error || 'ChatGPT login failed. Try again.'} onRetry={startChatGPTLogin} />
         {/if}
       </div>
     {/if}
@@ -645,7 +645,7 @@
           bind:value={keyDrafts[provider.id]}
         />
         <p class="text-caption text-fg-3">Saved to pig <code class="font-mono">auth.json</code> on the host. Only the set status is returned; the key is never shown again.</p>
-        {#if rowErrors[provider.id]}<p role="alert" class="text-caption text-status-failed">{rowErrors[provider.id]}</p>{/if}
+        {#if rowErrors[provider.id]}<ErrorState compact title={rowErrors[provider.id]} />{/if}
         <div class="flex flex-wrap gap-2 max-md:[&>*]:flex-1">
           <Button type="submit" disabled={busy[provider.id]} aria-busy={Boolean(busy[provider.id])}><KeyRound />Save key</Button>
           <Button variant="ghost" onclick={() => cancelEdit(provider)} disabled={busy[provider.id]}><X />Cancel</Button>
@@ -670,8 +670,8 @@
             bind:value={antigravityCallback}
           />
         {/if}
-        {#if antigravityLogin.error}<p role="alert" class="text-caption text-status-failed">{antigravityLogin.error}</p>{/if}
-        {#if rowErrors[provider.id]}<p role="alert" class="text-caption text-status-failed">{rowErrors[provider.id]}</p>{/if}
+        {#if antigravityLogin.error}<ErrorState compact title={antigravityLogin.error} />{/if}
+        {#if rowErrors[provider.id]}<ErrorState compact title={rowErrors[provider.id]} />{/if}
         <div class="flex flex-wrap gap-2 max-md:[&>*]:flex-1">
           {#if antigravityLogin.prompt && !['complete', 'error', 'cancelled'].includes(antigravityLogin.state)}
             <Button type="submit" disabled={antigravityBusy || !antigravityCallback.trim()} aria-busy={antigravityBusy}>{antigravityLogin.url ? 'Submit callback' : 'Continue'}</Button>
@@ -680,7 +680,7 @@
         </div>
       </form>
     {:else if rowErrors[provider.id]}
-      <p role="alert" class="text-caption text-status-failed">{rowErrors[provider.id]}</p>
+      <ErrorState compact title={rowErrors[provider.id]} />
     {/if}
   </article>
 {/snippet}

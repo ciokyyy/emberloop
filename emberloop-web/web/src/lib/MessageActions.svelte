@@ -2,6 +2,7 @@
   import Button from './ui/button.svelte';
   import { copyText, dispatchComposerEdit, markdownToPlainText, shareMessage } from './composer.js';
   import { editQueueItem, removeQueueItem } from './api.js';
+  import ErrorState from './ui/error-state.svelte';
 
   let {
     block,
@@ -165,6 +166,6 @@
       </div>
     </form>
   {/if}
-  {#if error}<p role="alert" class="mt-1 text-right text-xs text-destructive">{error}</p>{/if}
+  {#if error}<ErrorState compact title={error} class="mt-1" />{/if}
   {#if notice}<p role="status" class="mt-1 text-right text-xs text-muted-foreground">{notice}</p>{/if}
 </div>
