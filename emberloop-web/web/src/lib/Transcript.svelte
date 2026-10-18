@@ -7,6 +7,7 @@
   import { createVirtualizer } from '@tanstack/svelte-virtual';
   import Button from './ui/button.svelte';
   import ReportsTray from './ReportsTray.svelte';
+  import Card from './Card.svelte';
   import { isNearBottom, applyAnchor, blockIndexForSeq } from './transcript.js';
   import { getQueue } from './api.js';
 
