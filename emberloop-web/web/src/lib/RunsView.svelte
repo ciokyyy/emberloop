@@ -5,14 +5,25 @@
      `runsDiscovery` store, so a sidebar pick repaints this area. -->
 <script>
   import { onMount, onDestroy } from 'svelte';
+  import { Dialog } from 'bits-ui';
+  import { CircleAlert, List, ListChecks, SlidersHorizontal, Workflow } from '@lucide/svelte';
   import Button from './ui/button.svelte';
-  import Badge from './ui/badge.svelte';
+  import Chip from './ui/chip.svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import InfoHint from './ui/info-hint.svelte';
+  import Segmented from './ui/segmented.svelte';
+  import BottomSheet from './ui/bottom-sheet.svelte';
+  import Row from './ui/row.svelte';
+  import EmptyState from './ui/empty-state.svelte';
+  import Skeleton from './ui/skeleton.svelte';
   import PageHeader from './ui/page-header.svelte';
   import { icons } from './icons.js';
+  import { createPhone } from './phone.svelte.js';
+  import { people, personFor } from './people.svelte.js';
+  import { ticketTypeOf, blockersLabel } from './ticketPage.js';
   import RunsGraph from './RunsGraph.svelte';
   import { startRun, getRun, openRunStream, pauseRun, resumeRun, pauseTicket as pauseRunTicket, resumeTicket as resumeRunTicket, switchRun as switchRunBackend, switchTicket as switchTicketBackend, rebaseRun, abandonRun, setRunTicketType } from './api.js';
   import RunSwitchPicker from './RunSwitchPicker.svelte';
-  import TicketPage from './TicketPage.svelte';
   import { soundPlayer, runTransitions, seedRun } from './sound.js';
   import {
     discovery,
@@ -49,15 +60,9 @@
   }
 
   const merged = $derived((run?.tickets ?? []).filter((t) => t.state === 'merged').length);
- 	const runBadge = (status) => {
- 		if (status === 'done') return 'success';
- 		if (status === 'failed') return 'destructive';
- 		if (status === 'paused' || status === 'needs-you') return 'warning';
- 		if (status === 'abandoned') return 'outline';
- 		return 'secondary';
- 	};
-  const stateBadge = (state) =>
-    state === 'merged' ? 'success' : state === 'needs-you' ? 'warning' : state === 'discarded' || state === 'parked' ? 'outline' : state === 'queued' ? 'outline' : 'secondary';
+  // Chip tones: a Run or Ticket status maps onto the five status tokens.
+  const runTone = (status) => (status === 'done' ? 'done' : status === 'failed' ? 'failed' : status === 'paused' ? 'paused' : status === 'needs-you' ? 'needs-you' : status === 'running' ? 'working' : 'neutral');
+  const stateTone = (state) => (state === 'merged' ? 'done' : state === 'needs-you' ? 'needs-you' : state === 'paused' ? 'paused' : ['running', 'in-review', 'merging'].includes(state) ? 'working' : 'neutral');
   const reviewerLabel = (type) => (type === 'reviewer-spec' ? 'spec' : type === 'reviewer-standards' ? 'standards' : String(type));
   const chainRoles = [
     { role: 'worker', label: 'Worker' },
@@ -95,10 +100,22 @@
   let starting = $state(false);
   let acting = $state(false);
   let confirmAbandon = $state(false);
-  // List/Graph toggle for the live tickets; the graph is the default view.
-  // Phones open the ticket table: a wide dependency graph cannot fit there
-  // and its pan surface traps page scroll. The Graph toggle stays one tap away.
-  let graphView = $state(typeof window !== 'undefined' && window.matchMedia?.('(max-width: 767px)')?.matches ? 'list' : 'graph');
+  // Tickets layout: the dependency graph is the desktop default. Phones list
+  // the Tickets and open the graph full screen on request: the wide canvas
+  // never sits inside the scrolling page.
+  const phone = createPhone();
+  let graphView = $state('graph');
+  let graphFull = $state(false);
+  let sheetTicketId = $state('');
+  let sheetOpen = $state(false);
+  // The owner shows only on a multi-User host.
+  const ownerName = $derived(people.list.length > 1 ? (personFor(run?.owner)?.username ?? '') : '');
+  const view = $derived(phone.value ? 'list' : graphView);
+  const sheetTicket = $derived((run?.tickets ?? []).find((t) => t.id === sheetTicketId) ?? null);
+  function pickView(next) {
+    if (phone.value && next === 'graph') graphFull = true;
+    else graphView = next;
+  }
   // Tickets waving the needs-you banner: the driver marks them after the
   // same refusal three times, ten idle minutes or three stall nudges.
   const needsYouTickets = $derived((run?.tickets ?? []).filter((t) => t.state !== 'discarded' && t.state !== 'parked' && t.state !== 'merged' && (t.state === 'needs-you' || t.needsYou)));
@@ -371,11 +388,49 @@
   });
   </script>
 
+
   {#snippet verdict(v)}
     {#if v}
-      <Badge variant={v.verdict === 'pass' ? 'success' : 'warning'}>{v.verdict}{v.fresh ? '' : ' · stale'}</Badge>
+      <Chip tone={v.verdict === 'pass' ? 'done' : 'needs-you'}>{v.verdict}{v.fresh ? '' : ' · stale'}</Chip>
     {:else}
-      <span class="text-muted-foreground">—</span>
+      <span class="text-fg-3">—</span>
+    {/if}
+  {/snippet}
+
+  <!-- Ticket type: a flip button until the Worker starts, a read-only chip after. -->
+  {#snippet typeControl(t)}
+    {@const type = ticketTypeOf(t)}
+    {#if !t.workerSession}
+      <Button size="sm" variant={type === 'design' ? 'secondary' : 'outline'} disabled={acting} title="Flip Ticket type before the Worker starts" onclick={(event) => { event.stopPropagation(); changeTicketType(t, type === 'design' ? 'code' : 'design'); }}>{type}</Button>
+    {:else}
+      <Chip tone={type === 'design' ? 'neutral' : 'outline'} title="Ticket type is read-only after the Worker starts">{type}</Chip>
+    {/if}
+    {#if t.typeOverride}
+      <span class="flex items-center gap-1 text-caption text-fg-3">
+        <span>overridden</span>
+        {#if !t.workerSession}
+          <Button size="sm" variant="ghost" class="px-2 text-caption" disabled={acting} title="Clear override and use the Ticket file type" onclick={(event) => { event.stopPropagation(); changeTicketType(t, ''); }}>Clear</Button>
+        {/if}
+      </span>
+    {/if}
+  {/snippet}
+
+  <!-- Per-Ticket Run controls: Pause, or Resume with the Backend switch. -->
+  {#snippet ticketControls(t)}
+    {#if t.state === 'paused' && run.status === 'running'}
+      <Button size="sm" variant="outline" class="w-fit" disabled={acting} onclick={(event) => { event.stopPropagation(); resumeTicketItem(t); }}>Resume {t.title || 'Ticket'}</Button>
+    {:else if run.status === 'running' && !ticketFinished(t) && t.state !== 'paused'}
+      <Button size="sm" variant="outline" class="w-fit" disabled={acting} onclick={(event) => { event.stopPropagation(); pauseTicketItem(t); }}>Pause {t.title || 'Ticket'}</Button>
+    {/if}
+    {#if t.state === 'paused' && !['done', 'failed', 'abandoned'].includes(run.status)}
+      <RunSwitchPicker
+        label={t.title || `Ticket ${t.id}`}
+        description="Applies to this Ticket's Worker and both Reviewer Chains."
+        initialBackend={t.chain?.worker?.backend ?? run.harness}
+        initialModel={t.chain?.worker?.model ?? run.model}
+        onSwitch={(selection) => switchTicketItem(t, selection)}
+        disabled={acting}
+      />
     {/if}
   {/snippet}
 
@@ -385,152 +440,181 @@
   {/key}
   {:else}
   <div class="min-h-0 flex-1 overflow-auto">
-  <div class="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-6 sm:px-6">
+  <div class="mx-auto flex w-full max-w-[1600px] flex-col gap-4 px-4 py-6 md:px-6 {discovery.selected && !run?.tickets ? 'max-md:pb-28' : ''}">
   <PageHeader title="Runs" icon={icons.run} scope={scopeLabel} scopeIcon={icons.project} class="animate-rise" />
 
   {#if run?.id && run.tickets}
-    <div class="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="run-header">
-      <h3 class="text-sm font-semibold tracking-tight">{run.title || discovery.previewTitle || run.spec}</h3>
-      <Badge variant={runBadge(run.status)}>{run.status ?? ''}</Badge>
-      <span class="text-xs text-muted-foreground">
-        {merged}/{run.tickets.length} merged · {run.harness} · {String(run.model ?? '').split('/').pop()}{run.effort ? ` · ${run.effort}` : ''}
-      </span>
-      {#if run.specBranch}
-        <span class="text-xs text-muted-foreground" data-testid="run-spec-branch">
-          <span class="font-mono">{run.specBranch}</span> ·
-          {#if run.status === 'abandoned'}
-            abandoned
-          {:else if Number.isInteger(run.specBehind)}
-            {run.specBehind} {run.specBehind === 1 ? 'commit' : 'commits'} behind master
-          {:else}
-            distance unavailable from master
+    <section class="animate-rise flex flex-col gap-4 rounded-2xl border bg-card p-4 shadow-elev-1" data-testid="run-header">
+      <div class="flex items-start justify-between gap-4">
+        <div class="flex min-w-0 flex-col gap-1.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <Chip tone={runTone(run.status)} dot>{run.status ?? ''}</Chip>
+            {#if ownerName}<Chip tone="outline" icon={icons.session} title="Run owner">{ownerName}</Chip>{/if}
+          </div>
+          <h2 class="min-w-0 truncate text-title text-fg-1">{run.title || discovery.previewTitle || run.spec}</h2>
+          <p class="truncate text-caption text-fg-3">{run.harness} · {String(run.model ?? '').split('/').pop()}{run.effort ? ` · ${run.effort}` : ''}</p>
+          {#if run.specBranch}
+            <span class="flex min-w-0 items-center gap-1.5 text-caption text-fg-3" data-testid="run-spec-branch">
+              <icons.git class="size-3.5 shrink-0" aria-hidden="true" /><span class="truncate font-mono">{run.specBranch}</span> ·
+              {#if run.status === 'abandoned'}
+                abandoned
+              {:else if Number.isInteger(run.specBehind)}
+                {run.specBehind} {run.specBehind === 1 ? 'commit' : 'commits'} behind master
+              {:else}
+                distance unavailable from master
+              {/if}
+            </span>
           {/if}
-        </span>
+        </div>
+        <div class="shrink-0 text-right" aria-label={`${merged} of ${run.tickets.length} Tickets merged`}>
+          <div class="tabular-nums"><span class="text-numeric text-fg-1">{merged}</span><span class="text-title text-fg-3">/{run.tickets.length}</span></div>
+          <div class="text-caption text-fg-3" aria-hidden="true">merged</div>
+        </div>
+      </div>
+      {#if run.tickets.length}
+        <div class="h-1.5 overflow-hidden rounded-full bg-muted" role="progressbar" aria-label="Tickets merged" aria-valuemin="0" aria-valuemax={run.tickets.length} aria-valuenow={merged}>
+          <div class="motion-emphasis h-full rounded-full bg-status-done" style="width: {(merged / run.tickets.length) * 100}%"></div>
+        </div>
       {/if}
-      <div class="ml-auto flex flex-wrap items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2" data-testid="run-actions">
+        {#if run.status === 'paused' || run.status === 'failed' || run.status === 'needs-you'}
+          <Button disabled={acting} onclick={resume}>Resume</Button>
+        {:else if run.status === 'running'}
+          <Button variant="outline" disabled={acting} onclick={pause}>Pause</Button>
+        {/if}
         {#if run.status === 'done' || run.status === 'failed' || run.status === 'abandoned'}
-          <Button size="sm" variant="outline" disabled={starting || !discovery.selected || (scopedProject && !workDir)} onclick={start}>Restart Run</Button>
+          <Button variant="outline" disabled={starting || !discovery.selected || (scopedProject && !workDir)} onclick={start}>Restart Run</Button>
         {/if}
         {#if run.specBranch && (run.status !== 'abandoned' || run.error?.startsWith('abandon cleanup incomplete'))}
           {#if run.status !== 'abandoned'}
-            <Button size="sm" variant="outline" disabled={acting} onclick={rebase}>Rebase</Button>
+            <Button variant="outline" disabled={acting} onclick={rebase}>Rebase</Button>
           {/if}
           {#if confirmAbandon}
-            <Button size="sm" variant="destructive" disabled={acting} onclick={abandon}>Confirm abandon</Button>
-            <Button size="sm" variant="ghost" disabled={acting} onclick={() => (confirmAbandon = false)}>Cancel</Button>
+            <Button variant="destructive" disabled={acting} onclick={abandon}>Confirm abandon</Button>
+            <Button variant="ghost" disabled={acting} onclick={() => (confirmAbandon = false)}>Cancel</Button>
           {:else}
-            <Button size="sm" variant="ghost" disabled={acting} onclick={() => (confirmAbandon = true)}>Abandon spec</Button>
+            <Button variant="ghost" disabled={acting} onclick={() => (confirmAbandon = true)}>Abandon spec</Button>
           {/if}
         {/if}
       </div>
-    </div>
+    </section>
     {#if run.status === 'paused'}
-      <section class="animate-rise flex flex-col gap-2 rounded-2xl border bg-card p-3" data-testid="run-switch-controls">
-        <div>
-          <h4 class="text-sm font-medium">Switch paused Run</h4>
-          <p class="text-xs text-muted-foreground">Choose a Backend and model for every unmerged Ticket, then resume when ready.</p>
-        </div>
+      <section class="animate-rise flex flex-col gap-3 rounded-2xl border bg-card p-4 shadow-elev-1" data-testid="run-switch-controls">
+        <h3 class="text-title text-fg-1">Switch paused Run</h3>
         <RunSwitchPicker label="Run" description="Applies to every unmerged Ticket's Worker and both Reviewer Chains." initialBackend={run.harness} initialModel={run.model} onSwitch={switchRunSelection} disabled={acting} />
       </section>
     {/if}
     {#if run.error}
-      <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{run.error}</p>
+      <p role="alert" class="flex items-start gap-2 rounded-xl border border-status-failed/30 bg-status-failed/10 px-4 py-3 text-body text-status-failed"><CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{run.error}</p>
     {/if}
     {#if run.status === 'needs-you' && run.finalMergeFiles?.length}
-      <p role="alert" class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2 text-sm text-amber-200" data-testid="run-final-merge-files">
-        Final merge needs attention in: {run.finalMergeFiles.join(', ')}
+      <p role="alert" class="flex items-start gap-2 rounded-xl border border-status-needs-you/30 bg-status-needs-you/10 px-4 py-3 text-body text-status-needs-you" data-testid="run-final-merge-files">
+        <CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />Final merge needs attention in: {run.finalMergeFiles.join(', ')}
       </p>
     {/if}
     {#each (run.tickets ?? []).filter((ticket) => ticket.warnings?.length) as ticket (ticket.id)}
-      <section class="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm text-amber-800 dark:text-amber-200" data-testid={`ticket-chain-warnings-${ticket.id}`}>
-        <strong>{ticket.title || `Ticket ${ticket.num}`} — advisory Chain warning</strong>
-        <ul class="mt-1 list-inside list-disc">{#each ticket.warnings as warning}<li>{warning}</li>{/each}</ul>
-      </section>
+      <div class="flex items-center gap-2 rounded-xl border border-status-needs-you/30 bg-status-needs-you/10 py-1 pl-3 pr-1 text-caption" data-testid={`ticket-chain-warnings-${ticket.id}`}>
+        <CircleAlert class="size-4 shrink-0 text-status-needs-you" aria-hidden="true" />
+        <span class="min-w-0 flex-1 truncate text-fg-1">{ticket.title || `Ticket ${ticket.num}`}</span>
+        <Chip tone="needs-you">Chain warning</Chip>
+        <InfoHint label={`Chain warning for ${ticket.title || `Ticket ${ticket.num}`}`}>
+          <ul class="flex list-inside list-disc flex-col gap-1">{#each ticket.warnings as warning}<li>{warning}</li>{/each}</ul>
+        </InfoHint>
+      </div>
     {/each}
   {:else if discovery.selected}
-    <div class="flex items-center gap-2">
-      <h3 class="text-sm font-semibold tracking-tight">{discovery.previewTitle || discovery.selected}</h3>
-      <Button size="sm" class="ml-auto" disabled={starting || !discovery.tickets.length || (scopedProject && !workDir)} onclick={start}>
-        {starting ? 'Starting…' : 'Start Run'}
-      </Button>
-    </div>
-    {#if discovery.tickets.length}
-      <div class="overflow-x-auto rounded-2xl border px-3" data-testid="preview-wrap">
-      <table class="w-full min-w-[30rem] text-left text-sm" data-testid="preview-table">
-        <thead>
-          <tr class="text-muted-foreground">
-            <th class="py-1 pr-2 font-medium">No.</th>
-            <th class="py-1 pr-2 font-medium">ID</th>
-            <th class="py-1 pr-2 font-medium">Title</th>
-            <th class="py-1 pr-2 font-medium">Blocked by</th>
-            <th class="py-1 pr-2 font-medium">Type</th>
-            <th class="py-1 font-medium">Boxes</th>
-          </tr>
-        </thead>
-        <tbody>
-          {#each discovery.tickets as t (t.id)}
-            <tr class="border-t">
-              <td class="py-1 pr-2">{t.num}</td>
-              <td class="py-1 pr-2">{t.id}</td>
-              <td class="py-1 pr-2">{t.title}</td>
-              <td class="py-1 pr-2">{(t.blockers ?? []).join(', ') || '—'}</td>
-              <td class="py-1 pr-2">
-                <Button size="sm" variant={previewType(t) === 'design' ? 'secondary' : 'outline'} disabled={starting} title="Flip Ticket type before starting the Run" onclick={() => flipPreviewType(t)}>{previewType(t)}</Button>
-                {#if previewTypeOverrides[t.id]}
-                  <div class="flex items-center gap-1 text-xs text-muted-foreground">
-                    <span>overridden</span>
-                    <Button size="sm" variant="link" class="h-auto min-h-0 p-0 text-xs" disabled={starting} title="Clear override and use the Ticket file type" onclick={() => clearPreviewType(t)}>Clear</Button>
-                  </div>
-                {/if}
-              </td>
-              <td class="py-1">{`${t.done ?? 0}/${t.total ?? 0}`}</td>
-            </tr>
-            {#if previewType(t) === 'design' && discovery.designWarnings.workerFallback}
-              <tr><td colspan="6" class="pb-2"><p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200" data-testid={`design-worker-fallback-${t.id}`}>No designer model set; using the worker model.</p></td></tr>
-            {/if}
-            {#if previewType(t) === 'design' && discovery.designWarnings.reviewerFallback}
-              <tr><td colspan="6" class="pb-2"><p class="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200" data-testid={`design-reviewer-fallback-${t.id}`}>No design reviewer model set; using the standards reviewer model.</p></td></tr>
-            {/if}
-            {#if t.error}
-              <tr>
-                <td colspan="5" class="pb-2">
-                  <p role="alert" class="rounded-xl bg-destructive/10 px-3 py-1 text-sm text-destructive">{t.error}</p>
-                </td>
-              </tr>
-            {/if}
-          {/each}
-        </tbody>
-      </table>
+    <section class="flex flex-col gap-4" data-testid="preview">
+      <div class="flex flex-wrap items-center gap-x-3 gap-y-2" data-testid="preview-head">
+        <div class="flex min-w-0 flex-1 flex-col">
+          <h2 class="truncate text-title text-fg-1">{discovery.previewTitle || discovery.selected}</h2>
+          {#if discovery.tickets.length}
+            <p class="text-caption tabular-nums text-fg-3">{discovery.tickets.length} {discovery.tickets.length === 1 ? 'ticket' : 'tickets'} · {discovery.tickets.filter((t) => previewType(t) === 'design').length} design</p>
+          {/if}
+        </div>
+        <!-- Phone: the primary action pins to the bottom edge above the safe area. -->
+        <div class="max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-30 max-md:border-t max-md:bg-background/95 max-md:px-4 max-md:pt-3 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-md:backdrop-blur" data-testid="start-bar">
+          <Button class="max-md:w-full" disabled={starting || !discovery.tickets.length || (scopedProject && !workDir)} onclick={start}>
+            {starting ? 'Starting…' : 'Start Run'}
+          </Button>
+        </div>
       </div>
-    {/if}
+      {#if discovery.tickets.length}
+        <ul class="flex flex-col rounded-2xl border bg-card shadow-elev-1" data-testid="preview-table">
+          {#each discovery.tickets as t (t.id)}
+            {@const ptype = previewType(t)}
+            <li class="flex flex-col gap-1.5 border-t px-3 py-2.5 first:border-t-0" data-testid={`preview-row-${t.id}`}>
+              <div class="flex min-w-0 items-center gap-2">
+                <span class="w-6 shrink-0 text-caption tabular-nums text-fg-3">{t.num}</span>
+                <span class="min-w-0 flex-1 truncate text-body text-fg-1" title={t.id}>{t.title}</span>
+                <Button size="sm" variant={ptype === 'design' ? 'secondary' : 'outline'} disabled={starting} title="Flip Ticket type before starting the Run" onclick={() => flipPreviewType(t)}>{ptype}</Button>
+              </div>
+              <div class="flex flex-wrap items-center gap-1.5 pl-8">
+                {#if t.blockers?.length}<Chip tone="outline" title={`Blocked by ${t.blockers.join(', ')}`}>{blockersLabel(t.blockers)}</Chip>{/if}
+                <Chip tone="outline" icon={ListChecks} title="Acceptance boxes ticked">{t.done ?? 0}/{t.total ?? 0}</Chip>
+                {#if previewTypeOverrides[t.id]}
+                  <span class="flex items-center gap-1 text-caption text-fg-3">
+                    <span>overridden</span>
+                    <Button size="sm" variant="ghost" class="px-2 text-caption" disabled={starting} title="Clear override and use the Ticket file type" onclick={() => clearPreviewType(t)}>Clear</Button>
+                  </span>
+                {/if}
+                {#if ptype === 'design' && discovery.designWarnings.workerFallback}
+                  <Chip tone="needs-you" icon={CircleAlert} data-testid={`design-worker-fallback-${t.id}`}>Worker fallback</Chip>
+                {/if}
+                {#if ptype === 'design' && discovery.designWarnings.reviewerFallback}
+                  <Chip tone="needs-you" icon={CircleAlert} data-testid={`design-reviewer-fallback-${t.id}`}>Reviewer fallback</Chip>
+                {/if}
+                {#if ptype === 'design' && (discovery.designWarnings.workerFallback || discovery.designWarnings.reviewerFallback)}
+                  <InfoHint label="About design fallback models">
+                    <ul class="flex flex-col gap-1">
+                      {#if discovery.designWarnings.workerFallback}<li>No designer model set; using the worker model.</li>{/if}
+                      {#if discovery.designWarnings.reviewerFallback}<li>No design reviewer model set; using the standards reviewer model.</li>{/if}
+                    </ul>
+                  </InfoHint>
+                {/if}
+              </div>
+              {#if t.error}
+                <p role="alert" class="rounded-xl bg-status-failed/10 px-3 py-2 text-caption text-status-failed">{t.error}</p>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+      {/if}
+    </section>
   {:else}
-    <p class="rounded-xl border px-4 py-2 text-sm text-muted-foreground">Pick a spec from the sidebar to preview its tickets.</p>
-    {#if onOpenMenu}
-      <button type="button" class="mt-3 min-h-11 rounded-full bg-secondary px-4 py-2 text-sm md:hidden" onclick={onOpenMenu}>Browse specs</button>
-    {/if}
+    <EmptyState icon={icons.run} title="Pick a spec from the sidebar" description="Its tickets preview here.">
+      {#snippet action()}
+        {#if onOpenMenu}
+          <Button variant="secondary" class="md:hidden" onclick={onOpenMenu}>Browse specs</Button>
+        {/if}
+      {/snippet}
+    </EmptyState>
   {/if}
   {#if runError}
-    <p role="alert" class="rounded-xl bg-destructive/10 px-4 py-2 text-sm text-destructive">{runError}</p>
+    <p role="alert" class="flex items-start gap-2 rounded-xl border border-status-failed/30 bg-status-failed/10 px-4 py-3 text-body text-status-failed"><CircleAlert class="mt-0.5 size-4 shrink-0" aria-hidden="true" />{runError}</p>
   {/if}
   {#if runLoading && run?.id && !run.tickets}
-    <p role="status" class="rounded-xl border px-4 py-2 text-sm text-muted-foreground" data-testid="run-loading">Loading Run details…</p>
+    <div role="status" aria-label="Loading Run details" class="flex flex-col gap-3" data-testid="run-loading">
+      <Skeleton class="h-28 rounded-2xl" />
+      <Skeleton class="h-14 rounded-2xl" />
+      <Skeleton class="h-14 rounded-2xl" />
+    </div>
   {/if}
   {#if run?.tickets}
       {#if runStreamDown}
-        <p role="status" class="flex items-center gap-2 rounded-xl border px-4 py-2 text-sm text-muted-foreground" data-testid="run-reconnecting">
-          <span class="size-1.5 animate-pulse rounded-full bg-amber-400"></span>Reconnecting to live updates…
+        <p role="status" class="flex items-center gap-2 text-caption text-fg-3" data-testid="run-reconnecting">
+          <span class="size-1.5 rounded-full bg-status-needs-you motion-safe:animate-pulse"></span>Reconnecting to live updates…
         </p>
       {/if}
 
       {#if needsYouTickets.length}
-        <div class="animate-rise flex flex-col gap-1 rounded-2xl border border-amber-500/30 bg-amber-500/10 p-2" data-testid="run-needs-you">
-          <span class="px-2 pt-0.5 text-[11px] font-medium uppercase tracking-wide text-amber-300">
-            Needs you ({needsYouTickets.length})
+        <div class="animate-rise flex flex-col gap-0.5 rounded-2xl border border-status-needs-you/30 bg-status-needs-you/10 p-2" data-testid="run-needs-you">
+          <span class="flex items-center gap-1.5 px-2 pt-1 text-caption font-medium text-status-needs-you">
+            <CircleAlert class="size-3.5" aria-hidden="true" />Needs you ({needsYouTickets.length})
           </span>
           {#each needsYouTickets as t (t.id)}
             <button
               type="button"
-              class="truncate rounded-lg px-2 py-1 text-left text-sm transition-colors hover:bg-amber-500/15"
+              class="motion-standard min-h-9 truncate rounded-lg px-2 py-1 text-left text-body text-fg-1 outline-none hover:bg-status-needs-you/15 focus-visible:ring-[3px] focus-visible:ring-ring/40 max-md:min-h-11"
               onclick={() => run?.id && onNavigate?.(runPath(run.id, t.id))}
             >{t.num ? `#${t.num} ` : ''}{t.title || t.id}{t.needsYou ? ` — ${t.needsYou}` : ''}</button>
           {/each}
@@ -538,27 +622,40 @@
       {/if}
 
       <div class="flex items-center gap-2">
-        <h4 class="text-sm font-semibold tracking-tight">Live Tickets</h4>
-        {#if !run.title && !run.tickets}<Badge>{run.status ?? ''}</Badge>{/if}
-        <div class="ml-auto flex items-center gap-2">
-          <div class="flex rounded-full bg-muted p-0.5 text-xs" role="group" aria-label="Tickets layout">
-            <Button size="sm" variant={graphView === 'graph' ? 'secondary' : 'ghost'} class="rounded-full" aria-pressed={graphView === 'graph'} onclick={() => (graphView = 'graph')}>Graph</Button>
-            <Button size="sm" variant={graphView === 'list' ? 'secondary' : 'ghost'} class="rounded-full" aria-pressed={graphView === 'list'} onclick={() => (graphView = 'list')}>List</Button>
-          </div>
-          {#if run.status === 'paused' || run.status === 'failed' || run.status === 'needs-you'}
-            <Button size="sm" variant="outline" disabled={acting} onclick={resume}>Resume</Button>
-          {:else if run.status === 'running'}
-            <Button size="sm" variant="outline" disabled={acting} onclick={pause}>Pause</Button>
-          {/if}
-        </div>
+        <h2 class="text-title text-fg-1">Tickets</h2>
+        <span class="text-caption tabular-nums text-fg-3">{run.tickets.length}</span>
+        <Segmented class="ml-auto w-44" label="Tickets layout" value={view} onchange={pickView} items={[{ value: 'graph', label: 'Graph', icon: Workflow }, { value: 'list', label: 'List', icon: List }]} />
       </div>
-      {#if graphView === 'graph'}
+      {#if view === 'graph'}
         <RunsGraph tickets={run.tickets ?? []} selectedId={ticketId} onSelect={(t) => run?.id && onNavigate?.(runPath(run.id, t.id))} />
+      {:else if run.tickets?.length && phone.value}
+        <ul class="flex flex-col gap-2" data-testid="live-tickets-cards">
+          {#each run.tickets as t (t.id)}
+            {@const tone = stateTone(t.state)}
+            {@const worker = t.chain?.worker}
+            <li class="flex items-center gap-1 rounded-2xl border bg-card pr-1 shadow-elev-1">
+              <Row
+                class="min-w-0 flex-1"
+                title={`${t.num ? `#${t.num} ` : ''}${t.title}`}
+                status={tone === 'neutral' ? 'idle' : tone}
+                attention={t.state === 'needs-you' || Boolean(t.needsYou)}
+                meta={[t.state, boxCount(t) === '—' ? '' : boxCount(t), worker ? `${worker.backend}/${worker.model}` : ''].filter(Boolean).join(' · ')}
+                onclick={() => run?.id && onNavigate?.(runPath(run.id, t.id))}
+              >
+                {#snippet badges()}
+                  {#if ticketTypeOf(t) === 'design'}<Chip tone="outline">design</Chip>{/if}
+                  {#if t.warnings?.length}<CircleAlert class="size-4 shrink-0 text-status-needs-you" role="img" aria-label="Chain warning" />{/if}
+                {/snippet}
+              </Row>
+              <IconButton icon={SlidersHorizontal} label={`Details for ${t.title}`} onclick={() => { sheetTicketId = t.id; sheetOpen = true; }} />
+            </li>
+          {/each}
+        </ul>
       {:else if run.tickets?.length}
-        <div class="overflow-x-auto rounded-2xl border" data-testid="live-tickets-wrap">
-        <table class="w-full min-w-[1120px] text-left text-sm" data-testid="live-tickets">
+        <div class="overflow-x-auto rounded-2xl border bg-card shadow-elev-1" data-testid="live-tickets-wrap">
+        <table class="w-full min-w-[1120px] text-left text-body" data-testid="live-tickets">
           <thead>
-            <tr class="border-b bg-sidebar/60 text-xs text-muted-foreground">
+            <tr class="border-b bg-sidebar/60 text-caption text-fg-3">
               <th class="px-3 py-2 font-medium">Ticket</th>
               <th class="px-3 py-2 font-medium">State</th>
               <th class="px-3 py-2 font-medium">Agents</th>
@@ -575,7 +672,7 @@
           <tbody>
             {#each run.tickets as t (t.id)}
               <tr
-                class="cursor-pointer border-t transition-colors hover:bg-accent/60 {ticketId && t.id === ticketId ? 'bg-accent' : ''}"
+                class="motion-standard cursor-pointer border-t hover:bg-surface-3/60 {ticketId && t.id === ticketId ? 'bg-surface-3' : ''}"
                 data-current={ticketId && t.id === ticketId ? '' : undefined}
                 onclick={(event) => {
                   if (event.target?.closest?.('button,[role="combobox"]')) return;
@@ -584,75 +681,47 @@
               >
                 <td class="min-w-[14rem] max-w-[22rem] px-3 py-2 [overflow-wrap:anywhere]">
                   <div class="flex min-w-0 items-baseline gap-2">
-                    <span class="shrink-0 tabular-nums text-muted-foreground">#{t.num}</span>
+                    <span class="shrink-0 tabular-nums text-fg-3">#{t.num}</span>
                     {#if onNavigate && run?.id}
-                      <Button variant="link" size="sm" class="h-auto min-w-0 shrink justify-start whitespace-normal p-0 text-left font-medium max-md:min-h-11 max-md:py-2" onclick={(e) => { e.stopPropagation(); onNavigate(runPath(run.id, t.id)); }}>{t.title}</Button>
+                      <Button variant="link" size="sm" class="h-auto min-w-0 shrink justify-start whitespace-normal p-0 text-left text-body font-medium" onclick={(e) => { e.stopPropagation(); onNavigate(runPath(run.id, t.id)); }}>{t.title}</Button>
                     {:else}
                       <span class="font-medium">{t.title}</span>
                     {/if}
                   </div>
-                  <div class="truncate pl-6 text-xs text-muted-foreground" title={t.id}>{t.id}</div>
+                  <div class="truncate pl-6 text-caption text-fg-3" title={t.id}>{t.id}</div>
                 </td>
-                <td class="px-3 py-2"><Badge variant={stateBadge(t.state)}>{t.state}</Badge></td>
+                <td class="px-3 py-2"><Chip tone={stateTone(t.state)} dot>{t.state}</Chip></td>
                 <td class="px-3 py-2">
                   <div class="flex flex-wrap gap-1">
                     {#if t.workerSession}
-                      <button type="button" class="rounded-full border px-2 py-0.5 text-xs transition-colors hover:bg-accent" title="Open the worker Session" onclick={(e) => { e.stopPropagation(); onOpenSession?.(t.workerSession); }}>worker</button>
+                      <button type="button" class="motion-standard rounded-full border px-2.5 py-0.5 text-caption text-fg-2 outline-none hover:bg-surface-3 focus-visible:ring-[3px] focus-visible:ring-ring/40" title="Open the worker Session" onclick={(e) => { e.stopPropagation(); onOpenSession?.(t.workerSession); }}>worker</button>
                     {/if}
                     {#each Object.entries(t.reviewerSessions ?? {}) as [type, sid] (sid)}
-                      <button type="button" class="rounded-full border px-2 py-0.5 text-xs transition-colors hover:bg-accent" title="Open the {reviewerLabel(type)} reviewer Session" onclick={(e) => { e.stopPropagation(); onOpenSession?.(sid); }}>{reviewerLabel(type)}</button>
+                      <button type="button" class="motion-standard rounded-full border px-2.5 py-0.5 text-caption text-fg-2 outline-none hover:bg-surface-3 focus-visible:ring-[3px] focus-visible:ring-ring/40" title="Open the {reviewerLabel(type)} reviewer Session" onclick={(e) => { e.stopPropagation(); onOpenSession?.(sid); }}>{reviewerLabel(type)}</button>
                     {/each}
-                    {#if !t.workerSession}<span class="text-muted-foreground">—</span>{/if}
+                    {#if !t.workerSession}<span class="text-fg-3">—</span>{/if}
                   </div>
                 </td>
                 <td class="px-3 py-2" data-testid={`ticket-chain-${t.id}`}>
-                  <div class="flex min-w-52 flex-col gap-0.5 text-xs">
+                  <div class="flex min-w-52 flex-col gap-0.5 text-caption">
                     {#each activeChainEntries(t) as entry (entry.role)}
                       <span title={`${entry.label}: ${entry.backend}/${entry.model}`}>
                         {entry.label} {entry.position}/{entry.total} · {entry.backend}/{entry.model}
                       </span>
                     {/each}
-                    {#if !activeChainEntries(t).length}<span class="text-muted-foreground">—</span>{/if}
+                    {#if !activeChainEntries(t).length}<span class="text-fg-3">—</span>{/if}
                   </div>
                 </td>
                 <td class="px-3 py-2">{@render verdict(t.verdicts?.['reviewer-spec'])}</td>
                 <td class="px-3 py-2">{@render verdict(t.verdicts?.['reviewer-standards'])}</td>
                 <td class="px-3 py-2">
-                  {#if !t.workerSession}
-                    <Button size="sm" variant={(t.effectiveType || t.type || 'code') === 'design' ? 'secondary' : 'outline'} disabled={acting} title="Flip Ticket type before the Worker starts" onclick={(event) => { event.stopPropagation(); changeTicketType(t, (t.effectiveType || t.type || 'code') === 'design' ? 'code' : 'design'); }}>{t.effectiveType || t.type || 'code'}</Button>
-                  {:else}
-                    <Badge variant={(t.effectiveType || t.type || 'code') === 'design' ? 'secondary' : 'outline'} title="Ticket type is read-only after the Worker starts">{t.effectiveType || t.type || 'code'}</Badge>
-                  {/if}
-                  {#if t.typeOverride}
-                    <div class="mt-1 flex items-center gap-1 text-xs text-muted-foreground">
-                      <span>overridden</span>
-                      {#if !t.workerSession}
-                        <Button size="sm" variant="link" class="h-auto min-h-0 p-0 text-xs" disabled={acting} title="Clear override and use the Ticket file type" onclick={(event) => { event.stopPropagation(); changeTicketType(t, ''); }}>Clear</Button>
-                      {/if}
-                    </div>
-                  {/if}
+                  <div class="flex flex-col items-start gap-1">{@render typeControl(t)}</div>
                 </td>
                 <td class="px-3 py-2 tabular-nums">{boxCount(t)}</td>
-                <td class="px-3 py-2 font-mono text-xs text-muted-foreground">{t.tip ? t.tip.slice(0, 8) : '—'}</td>
-                <td class="max-w-[16rem] truncate px-3 py-2 text-xs text-muted-foreground" title={t.lastRefusal || t.needsYou || ''}>{t.lastRefusal || t.needsYou || '—'}</td>
+                <td class="px-3 py-2 font-mono text-caption text-fg-3">{t.tip ? t.tip.slice(0, 8) : '—'}</td>
+                <td class="max-w-[16rem] truncate px-3 py-2 text-caption text-fg-3" title={t.lastRefusal || t.needsYou || ''}>{t.lastRefusal || t.needsYou || '—'}</td>
                 <td class="px-3 py-2" data-testid={`ticket-actions-${t.id}`}>
-                  <div class="flex min-w-[18rem] flex-col gap-2">
-                    {#if t.state === 'paused' && run.status === 'running'}
-                      <Button size="sm" variant="outline" class="w-fit" disabled={acting} onclick={(event) => { event.stopPropagation(); resumeTicketItem(t); }}>Resume {t.title || 'Ticket'}</Button>
-                    {:else if run.status === 'running' && !ticketFinished(t) && t.state !== 'paused'}
-                      <Button size="sm" variant="outline" class="w-fit" disabled={acting} onclick={(event) => { event.stopPropagation(); pauseTicketItem(t); }}>Pause {t.title || 'Ticket'}</Button>
-                    {/if}
-                    {#if t.state === 'paused' && !['done', 'failed', 'abandoned'].includes(run.status)}
-                      <RunSwitchPicker
-                        label={t.title || `Ticket ${t.id}`}
-                        description="Applies to this Ticket's Worker and both Reviewer Chains."
-                        initialBackend={t.chain?.worker?.backend ?? run.harness}
-                        initialModel={t.chain?.worker?.model ?? run.model}
-                        onSwitch={(selection) => switchTicketItem(t, selection)}
-                        disabled={acting}
-                      />
-                    {/if}
-                  </div>
+                  <div class="flex min-w-[18rem] flex-col gap-2">{@render ticketControls(t)}</div>
                 </td>
               </tr>
             {/each}
@@ -663,4 +732,63 @@
     {/if}
   </div>
   </div>
+
+  <!-- Phone: one Ticket's Chain, verdicts and controls in a bottom sheet. -->
+  <BottomSheet bind:open={sheetOpen} title={sheetTicket ? `${sheetTicket.num ? `#${sheetTicket.num} ` : ''}${sheetTicket.title}` : 'Ticket'}>
+    {#if sheetTicket && run}
+      {@const t = sheetTicket}
+      <div class="flex flex-wrap items-center gap-2" data-testid="ticket-sheet">
+        <Chip tone={stateTone(t.state)} dot>{t.state}</Chip>
+        {@render typeControl(t)}
+        <Chip tone="outline" icon={ListChecks} title="Acceptance boxes ticked">{boxCount(t)}</Chip>
+      </div>
+      <dl class="grid grid-cols-[auto_1fr] items-center gap-x-4 gap-y-2 text-body">
+        <dt class="text-caption text-fg-3">Chain</dt>
+        <dd class="flex flex-col gap-0.5 text-caption">
+          {#each activeChainEntries(t) as entry (entry.role)}<span>{entry.label} {entry.position}/{entry.total} · {entry.backend}/{entry.model}</span>{/each}
+          {#if !activeChainEntries(t).length}<span class="text-fg-3">—</span>{/if}
+        </dd>
+        <dt class="text-caption text-fg-3">Spec review</dt>
+        <dd>{@render verdict(t.verdicts?.['reviewer-spec'])}</dd>
+        <dt class="text-caption text-fg-3">Standards</dt>
+        <dd>{@render verdict(t.verdicts?.['reviewer-standards'])}</dd>
+        <dt class="text-caption text-fg-3">Tip</dt>
+        <dd class="font-mono text-caption text-fg-2">{t.tip ? t.tip.slice(0, 8) : '—'}</dd>
+        {#if t.lastRefusal || t.needsYou}
+          <dt class="text-caption text-fg-3">Refusal</dt>
+          <dd class="text-caption text-fg-2">{t.lastRefusal || t.needsYou}</dd>
+        {/if}
+      </dl>
+      {#if t.workerSession || Object.keys(t.reviewerSessions ?? {}).length}
+        <div class="flex flex-wrap gap-2">
+          {#if t.workerSession}<Button size="sm" variant="outline" onclick={() => onOpenSession?.(t.workerSession)}>Worker</Button>{/if}
+          {#each Object.entries(t.reviewerSessions ?? {}) as [type, sid] (sid)}
+            <Button size="sm" variant="outline" onclick={() => onOpenSession?.(sid)}>{reviewerLabel(type)}</Button>
+          {/each}
+        </div>
+      {/if}
+      <div class="flex flex-col gap-2">{@render ticketControls(t)}</div>
+      <Button variant="secondary" onclick={() => { sheetOpen = false; run?.id && onNavigate?.(runPath(run.id, t.id)); }}>Open Ticket</Button>
+    {/if}
+  </BottomSheet>
+
+  <!-- Phone: the graph opens full screen on request and owns every gesture there. -->
+  <Dialog.Root bind:open={graphFull}>
+    <Dialog.Portal>
+      <Dialog.Content class="fixed inset-0 z-50 flex flex-col bg-background pt-[env(safe-area-inset-top)] outline-none" data-testid="graph-fullscreen">
+        <div class="flex min-h-14 shrink-0 items-center gap-2 px-4">
+          <Dialog.Title class="min-w-0 flex-1 truncate text-title text-fg-1">Dependency graph</Dialog.Title>
+          <Dialog.Close>
+            {#snippet child({ props })}
+              <IconButton {...props} icon={icons.dismiss} label="Close graph" class="-mr-2" />
+            {/snippet}
+          </Dialog.Close>
+        </div>
+        <Dialog.Description class="sr-only">Drag to pan, pinch or use the buttons to zoom.</Dialog.Description>
+        {#if run?.tickets}
+          <RunsGraph fullscreen tickets={run.tickets} selectedId={ticketId} onSelect={(t) => { graphFull = false; run?.id && onNavigate?.(runPath(run.id, t.id)); }} />
+        {/if}
+      </Dialog.Content>
+    </Dialog.Portal>
+  </Dialog.Root>
   {/if}

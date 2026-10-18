@@ -41,7 +41,9 @@ describe('RunsView preview and live run', () => {
     stubRuns(async () => ({ ok: true, json: async () => ({ runs: [] }) }));
     const { container } = render(RunsView, { props: { workDir: '/repo' } });
     expect(await within(container).findByText('First')).toBeTruthy();
-    expect(within(container).getAllByText('01-first').length).toBe(2);
+    // Blockers read as chips ("after 01"), never as sentences.
+    expect(within(container).getByText('after 01')).toBeTruthy();
+    expect(within(container).queryByTestId('preview-row-01-first')).toBeTruthy();
     expect(within(container).getByText('1/2')).toBeTruthy();
     expect(within(container).getAllByText('code').length).toBe(2);
   });
@@ -165,7 +167,7 @@ describe('RunsView preview and live run', () => {
     await fireEvent.click(within(container).getByRole('button', { name: 'List' }));
     const table = await within(container).findByTestId('live-tickets');
     expect(within(table).getByText('queued')).toBeTruthy();
-    expect(within(table).getAllByText('code').some((node) => /read-only after the Worker starts/i.test(node.getAttribute('title') || ''))).toBe(true);
+    expect(within(table).getAllByText('code').some((node) => /read-only after the Worker starts/i.test(node.closest('[title]')?.getAttribute('title') || ''))).toBe(true);
     await fireEvent.click(within(table).getByRole('button', { name: 'worker' }));
     expect(onOpenSession).toHaveBeenCalledWith('sess-abcdef123456');
   });

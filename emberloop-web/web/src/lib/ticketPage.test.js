@@ -16,6 +16,10 @@ import {
   dropPendingEcho,
   ticketFinished,
   runFinished,
+  nextStep,
+  blockersOpen,
+  ticketTypeOf,
+  blockersLabel,
 } from './ticketPage.js';
 
 const round1 = {
@@ -213,5 +217,43 @@ describe('finished helpers', () => {
     expect(runFinished({ status: 'needs-you' })).toBe(false);
     expect(runFinished({ status: 'abandoned' })).toBe(true);
     expect(runFinished({ status: 'paused' })).toBe(false);
+  });
+});
+
+describe('nextStep', () => {
+  const run = (tickets, status = 'running') => ({ status, tickets });
+  it('leads with the state word and one next action', () => {
+    expect(nextStep({ state: 'merged' }, run([]))).toMatchObject({ tone: 'done', label: 'Merged', action: 'none' });
+    expect(nextStep({ state: 'parked' }, run([]))).toMatchObject({ tone: 'paused', action: 'unpark' });
+    expect(nextStep({ state: 'running' }, run([]))).toMatchObject({ tone: 'working', label: 'Running', action: 'steer' });
+    expect(nextStep({ state: 'in-review', rounds: [{ n: 1 }] }, run([]))).toMatchObject({ tone: 'working', label: 'In review · round 1' });
+    expect(nextStep(null, run([]))).toBeNull();
+  });
+  it('shows the needs-you reason and raises steer', () => {
+    const step = nextStep({ state: 'needs-you', needsYou: 'same refusal 3 times' }, run([]));
+    expect(step).toMatchObject({ tone: 'needs-you', label: 'Needs you', next: 'same refusal 3 times', action: 'steer' });
+  });
+  it('reads a paused or failed Run before the Ticket state', () => {
+    expect(nextStep({ state: 'running' }, run([], 'paused'))).toMatchObject({ tone: 'paused', label: 'Paused' });
+    expect(nextStep({ state: 'running' }, run([], 'failed'))).toMatchObject({ tone: 'failed' });
+  });
+  it('counts open blockers on a queued Ticket', () => {
+    const tickets = [{ id: '01-a', num: 1, state: 'running' }, { id: '02-b', num: 2, state: 'merged' }];
+    const queued = { id: '03-c', state: 'queued', blockers: ['01-a', '2'] };
+    expect(blockersOpen(queued, run(tickets))).toEqual(['01-a']);
+    expect(nextStep(queued, run(tickets)).next).toBe('Waiting on 1 blocker.');
+    expect(nextStep({ ...queued, blockers: [] }, run(tickets)).next).toBe('Starts next.');
+  });
+  it('resolves the Ticket type from an override first', () => {
+    expect(ticketTypeOf({ effectiveType: 'design', type: 'code' })).toBe('design');
+    expect(ticketTypeOf({ type: 'design' })).toBe('design');
+    expect(ticketTypeOf({})).toBe('code');
+  });
+});
+
+describe('blockersLabel', () => {
+  it('reads blockers as leading numbers', () => {
+    expect(blockersLabel(['01-first', '03-third'])).toBe('after 01, 03');
+    expect(blockersLabel(['custom'])).toBe('after custom');
   });
 });

@@ -226,3 +226,64 @@ export function sinceLabel(iso, now = Date.now()) {
   if (h < 48) return `${h}h`;
   return `${Math.floor(h / 24)}d`;
 }
+
+// ticketTypeOf is the type a Ticket runs as: an override wins over the file.
+export function ticketTypeOf(ticket) {
+  return ticket?.effectiveType || ticket?.type || 'code';
+}
+
+// blockersOpen lists the blockers of a Ticket that have not merged yet. A
+// blocker names a Ticket by id or number; unknown refs count as open.
+export function blockersOpen(ticket, run) {
+  const all = run?.tickets ?? [];
+  return (ticket?.blockers ?? []).filter((ref) => {
+    const hit = all.find((t) => t.id === ref || String(t.num) === String(ref));
+    return !hit || hit.state !== 'merged';
+  });
+}
+
+// nextStep says what the Ticket is doing and what the User does next, in one
+// short line: the lead of the Ticket page. `tone` is a Chip tone, `action` is
+// the one control the page can raise for it (steer, unpark, or none).
+export function nextStep(ticket, run) {
+  if (!ticket) return null;
+  const state = ticket.state ?? 'queued';
+  const runStatus = run?.status ?? '';
+  if (state === 'merged') return { tone: 'done', label: 'Merged', next: 'Nothing to do.', action: 'none' };
+  if (state === 'discarded') return { tone: 'neutral', label: 'Discarded', next: 'Nothing to do.', action: 'none' };
+  if (state === 'parked') return { tone: 'paused', label: 'Parked', next: 'Unpark to continue.', action: 'unpark' };
+  if (state === 'needs-you' || ticket.needsYou) {
+    return { tone: 'needs-you', label: 'Needs you', next: ticket.needsYou || 'Steer the worker or retry.', action: 'steer' };
+  }
+  if (state === 'paused' || runStatus === 'paused') {
+    return { tone: 'paused', label: 'Paused', next: 'Resume the Run to continue.', action: 'none' };
+  }
+  if (runStatus === 'failed' || runStatus === 'abandoned') {
+    return { tone: 'failed', label: runStatus === 'failed' ? 'Run failed' : 'Run abandoned', next: 'Open the Run to resume.', action: 'none' };
+  }
+  if (state === 'queued') {
+    const open = blockersOpen(ticket, run);
+    return {
+      tone: 'neutral',
+      label: 'Queued',
+      next: open.length ? `Waiting on ${open.length} ${open.length === 1 ? 'blocker' : 'blockers'}.` : 'Starts next.',
+      action: 'none',
+    };
+  }
+  if (state === 'in-review') {
+    const n = roundNumber(ticket);
+    return { tone: 'working', label: n > 0 ? `In review · round ${n}` : 'In review', next: 'Waiting on reviewers.', action: 'none' };
+  }
+  if (state === 'merging') return { tone: 'working', label: 'Merging', next: 'Merging into the branch.', action: 'none' };
+  return { tone: 'working', label: 'Running', next: 'Worker is working. Steer if it drifts.', action: 'steer' };
+}
+
+// shortRef shortens a blocker ref to its leading Ticket number ("01"), as the
+// graph cards do; blockersLabel joins them into the "after 01, 02" chip text.
+export function shortRef(ref) {
+  return /^(\d+)[-_:\s]/.exec(String(ref))?.[1] ?? String(ref);
+}
+
+export function blockersLabel(blockers) {
+  return `after ${(blockers ?? []).map(shortRef).join(', ')}`;
+}
