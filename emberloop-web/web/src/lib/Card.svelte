@@ -5,7 +5,7 @@
   import Markdown from './Markdown.svelte';
   import GroupCard from './GroupCard.svelte';
   import ToolStrip from './ToolStrip.svelte';
-  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Shrink, ShieldAlert, Terminal, CreditCard } from '@lucide/svelte';
+  import { Ban, CheckCircle2, XCircle, Loader, ChevronRight, Brain, Shrink, ShieldAlert, Terminal, CreditCard, Clock } from '@lucide/svelte';
   import { getCurrentUserId, decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import Button from './ui/button.svelte';
   import IconButton from './ui/icon-button.svelte';
@@ -15,6 +15,7 @@
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
   import Badge from './ui/badge.svelte';
+  import Chip from './ui/chip.svelte';
   import UserAvatar from './UserAvatar.svelte';
   import { people, personFor } from './people.svelte.js';
   import { ownerTone } from './owners.js';
@@ -144,20 +145,30 @@
 </script>
 
 {#if block.card === 'user'}
-<div role="group" aria-label={queuedItem ? `Queued ${block.title}` : cancelled ? `Canceled ${block.title || 'User'} message` : `${block.title || 'User'} message`} class="group flex flex-col items-end {block.noAnim ? '' : 'animate-rise'}" data-card="user" data-state={queuedItem ? 'queued' : cancelled ? 'canceled' : block.pending ? 'pending' : block.sender === 'user' ? 'delivered' : undefined} data-swap={block.noAnim ? 'true' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
-  {#if block.sender === 'user' && block.senderId}
-    {@const who = personFor(block.senderId)}
-    <Badge variant="outline" class="mb-1 py-0 pr-2.5 pl-1" data-testid="sender-badge">
-      <UserAvatar name={who?.username ?? block.senderId} tone={ownerTone(people.list, block.senderId)} size="sm" />
-      <span class="max-w-40 truncate">{who?.username ?? block.senderId.slice(0, 8)}</span>
-    </Badge>
-  {/if}
-    <div class="max-w-[80%] rounded-3xl bg-muted px-4 py-2.5 text-[15px] leading-relaxed whitespace-pre-wrap [overflow-wrap:anywhere] text-foreground {block.pending === 'sending' ? 'opacity-60' : ''}">
-      {#if block.title && block.title !== 'You'}
-        <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide opacity-80">{block.title}</div>
-      {/if}
-      {#if cancelled}
-        <div class="mb-0.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground" data-testid="canceled-message">Canceled</div>
+<div role="group" aria-label={queuedItem ? `Queued ${block.title}` : cancelled ? `Canceled ${block.title || 'User'} message` : `${block.title || 'User'} message`} class="group relative flex flex-col items-end" data-card="user" data-state={queuedItem ? 'queued' : cancelled ? 'canceled' : block.pending ? 'pending' : block.sender === 'user' ? 'delivered' : undefined} data-swap={block.noAnim ? 'true' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
+  <div class="flex w-full flex-col items-end {block.noAnim ? '' : 'animate-rise'}">
+    {#if block.sender === 'user' && block.senderId}
+      {@const who = personFor(block.senderId)}
+      <Badge variant="outline" class="mb-1 py-0 pr-2.5 pl-1" data-testid="sender-badge">
+        <UserAvatar name={who?.username ?? block.senderId} tone={ownerTone(people.list, block.senderId)} size="sm" />
+        <span class="max-w-40 truncate">{who?.username ?? block.senderId.slice(0, 8)}</span>
+      </Badge>
+    {/if}
+    {#if queuedItem}
+      <div class="mb-1 flex items-center gap-1.5 pr-1.5 text-caption font-medium text-status-working" data-testid="queued-message-marker">
+        <Clock class="size-3.5 shrink-0" aria-hidden="true" />
+        <span>Queued</span>
+        {#if block.title}<span class="text-fg-3">· {block.title}</span>{/if}
+      </div>
+    {:else if cancelled}
+      <div class="mb-1 flex items-center gap-1.5 pr-1.5 text-caption text-fg-3">
+        <Ban class="size-3.5 shrink-0" aria-hidden="true" />
+        <span data-testid="canceled-message">Canceled</span>
+      </div>
+    {/if}
+    <div class="max-w-[85%] rounded-2xl rounded-br-md border px-3.5 py-2.5 text-body whitespace-pre-wrap [overflow-wrap:anywhere] sm:max-w-[75%] {queuedItem ? 'border-dashed border-status-working/40 bg-transparent text-fg-2' : cancelled ? 'border-dashed border-border bg-transparent text-fg-3' : 'border-border/60 bg-surface-2 text-fg-1 shadow-elev-1'} {block.pending === 'sending' ? 'opacity-60' : ''}">
+      {#if block.title && block.title !== 'You' && !queuedItem}
+        <div class="mb-1 text-caption font-medium tracking-wide text-fg-3 uppercase">{block.title}</div>
       {/if}
       {#if !voiceIds.length}{messageText}{/if}
       {#each voiceIds as vid (vid)}
@@ -176,18 +187,19 @@
             {#if sessionId}
               <img src={imageSrc(sessionId, imgId)} alt="Attachment" class="h-28 w-28 rounded-xl border object-cover" loading="lazy" />
             {:else}
-              <span class="rounded-lg bg-background/60 px-2 py-1 font-mono text-[11px] text-muted-foreground">image</span>
+              <span class="rounded-lg bg-background/60 px-2 py-1 font-mono text-caption text-fg-3">image</span>
             {/if}
           {/each}
         </div>
       {/if}
       {#if block.pending === 'sending'}
-        <div class="mt-0.5 text-[11px] text-muted-foreground">Sending…</div>
+        <div class="mt-1 text-caption text-fg-3">Sending…</div>
       {/if}
     </div>
-    {#if block.sender === 'user' || queuedItem}
-      <MessageActions block={block} {sessionId} canEdit={ownUserMessage} {queuedItem} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} {onQueueChange} />
-    {/if}
+  </div>
+  {#if block.sender === 'user' || queuedItem}
+    <MessageActions block={block} {sessionId} canEdit={ownUserMessage} {queuedItem} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} {onQueueChange} />
+  {/if}
   </div>
 {:else if block.card === 'sudo'}
   <div class="animate-rise overflow-hidden rounded-2xl border border-amber-500/40 bg-card text-card-foreground" data-card="sudo" data-state={sudo.state}>
@@ -348,37 +360,39 @@
   </details>
 {:else if block.card === 'report'}
   {@const ReportIcon = icons.report}
-  {@const DismissIcon = icons.dismiss}
-  <div role="group" aria-label="Subagent report" class="group relative" data-card-wrapper="report" onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
-    <details class="group animate-rise overflow-hidden rounded-2xl border border-dashed bg-card text-card-foreground" data-card="report" data-report-seq={block.report?.seq} open={!block.collapsed}>
-      <summary class="flex cursor-pointer list-none items-center gap-2.5 px-3.5 py-2.5 pr-24 text-sm transition-colors hover:bg-muted/50 [&::-webkit-details-marker]:hidden">
-        <ReportIcon class="size-4 shrink-0 text-muted-foreground" />
-        {#if block.report}
-          <span class="shrink-0 font-medium">Subagents {block.report.groupName} finished</span>
-          <span class="shrink-0 text-caption text-fg-3">{reportCountLabel}</span>
-        {:else}
-          <span class="font-medium">{block.title}</span>
-        {/if}
-        <span class="min-w-0 flex-1 truncate text-xs text-muted-foreground">{firstReply}</span>
-        <ChevronRight class="size-4 shrink-0 text-muted-foreground motion-standard transition-transform group-open:rotate-90" />
-      </summary>
-      <div class="flex flex-col gap-3 border-t bg-background/40 p-3.5">
-        {#each block.members?.length ? block.members : [{ id: '', kind: 'agent', reply: block.body }] as m}
-          <div>
-            <div class="mb-1 flex items-center gap-2 text-[11px] font-medium tracking-wide text-muted-foreground uppercase">
-              {m.kind}{#if m.id}<span class="font-mono normal-case">{m.id}</span>{/if}
+  <div role="group" aria-label="Subagent report" class="group relative w-full" data-card-wrapper="report" onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
+    <div class="flex animate-rise items-start gap-1 rounded-xl border border-border/60 bg-surface-1 p-1.5 text-card-foreground shadow-elev-1">
+      <details class="group/report min-w-0 flex-1 overflow-hidden rounded-lg" data-card="report" data-report-seq={block.report?.seq} open={!block.collapsed}>
+        <summary class="flex min-h-11 cursor-pointer list-none items-center gap-2.5 rounded-lg px-2 py-1.5 text-left transition-colors hover:bg-surface-3/60 [&::-webkit-details-marker]:hidden">
+          <span class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted text-fg-2" aria-hidden="true">
+            <ReportIcon class="size-4" />
+          </span>
+          <span class="min-w-0 flex-1">
+            <span class="block min-w-0 truncate text-body font-medium">{block.report ? block.report.title : block.title}</span>
+            <span class="mt-0.5 flex min-w-0 flex-col text-caption text-fg-3 sm:flex-row sm:items-center sm:gap-1.5">
+              {#if block.report}<span class="min-w-0 truncate sm:shrink-0">Subagents {block.report.groupName} finished</span>{/if}
+              {#if firstReply}<span class="hidden shrink-0 text-fg-4 sm:inline" aria-hidden="true">·</span><span class="min-w-0 truncate">{firstReply}</span>{/if}
+            </span>
+          </span>
+          <Chip tone="outline" class="hidden shrink-0 sm:inline-flex">{reportCountLabel}</Chip>
+          <ChevronRight class="size-4 shrink-0 text-fg-3 motion-standard transition-transform group-open/report:rotate-90" aria-hidden="true" />
+        </summary>
+        <div class="flex flex-col gap-3 border-t border-border/60 p-3">
+          {#each block.members?.length ? block.members : [{ id: '', kind: 'agent', reply: block.body }] as m}
+            <div>
+              <div class="mb-1 flex items-center gap-2 text-caption font-medium tracking-wide text-fg-3 uppercase">
+                {m.kind}{#if m.id}<span class="font-mono normal-case">{m.id}</span>{/if}
+              </div>
+              <div class="max-h-96 overflow-auto rounded-lg bg-surface-0 p-3"><Markdown text={m.reply} /></div>
             </div>
-            <div class="max-h-96 overflow-auto rounded-xl bg-muted/60 p-3"><Markdown text={m.reply} /></div>
-          </div>
-        {/each}
-      </div>
-    </details>
-    <MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} />
-    {#if block.report}
-      <Button variant="ghost" size="sm" class="absolute top-1.5 right-2 z-10 h-8 px-2" aria-label="Dismiss report" onclick={() => onDismissReport(block.report.seq)}>
-        <DismissIcon class="size-3.5" /> Dismiss
-      </Button>
-    {/if}
+          {/each}
+        </div>
+      </details>
+      {#if block.report}
+        <IconButton icon={icons.dismiss} label="Dismiss report" class="mt-1 shrink-0" onclick={() => onDismissReport(block.report.seq)} />
+      {/if}
+    </div>
+    <MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} align="start" />
   </div>
 {:else if block.card === 'thinking'}
   <details class="group animate-rise rounded-2xl border bg-card text-card-foreground {thinkingLive ? 'think-live' : ''}" data-card="thinking" data-live={thinkingLive ? 'true' : undefined} open={!block.collapsed}>
@@ -415,10 +429,14 @@
     {/if}
   </div>
 {:else}
-  <div role="group" aria-label={block.title || 'Message'} class="group relative animate-rise px-1 py-1 text-[15px] leading-7" data-card={block.card} data-state={block.card === 'assistant' ? 'delivered' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
-    <div class="mb-1 text-xs font-medium text-muted-foreground">{block.title}</div>
-    <Markdown text={messageText} fade={block.card === 'assistant'} />
-    {#if block.card === 'assistant'}<MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} />{/if}
+  <div role="group" aria-label={block.title || 'Message'} class="group relative flex w-full flex-col items-start" data-card={block.card} data-state={block.card === 'assistant' ? 'delivered' : undefined} onpointerdown={startActionLongPress} onpointermove={moveActionLongPress} onpointerup={stopActionLongPress} onpointercancel={stopActionLongPress} onpointerleave={stopActionLongPress} oncontextmenu={suppressContextMenu}>
+    <div class="flex w-full animate-rise flex-col items-start gap-1 py-1">
+      {#if block.title}<div class="text-caption font-medium text-fg-3">{block.title}</div>{/if}
+      <div class="w-full min-w-0 text-body text-fg-1">
+        <Markdown text={messageText} fade={block.card === 'assistant'} />
+      </div>
+    </div>
+    {#if block.card === 'assistant'}<MessageActions {block} {sessionId} open={actionsOpen} onOpenChange={(value) => (actionsOpen = value)} align="start" />{/if}
   </div>
 {/if}
 <style>

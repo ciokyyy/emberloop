@@ -162,6 +162,17 @@ The chat header is `PageHeader size="compact"`: title, one `ChatStatus` glyph (r
 
 The composer is icon controls only. While working, the mode switch is two icon toggles (Steer `icons.steer`, Follow-up `icons.followUp`; the active one is filled) and the send button wears the active mode's glyph (arrow for a plain prompt), so the mode reads without words; Enter sends. Remember is a toggle (`aria-pressed` while the draft carries `/remember`). The Working indicator is the spinner plus the running tool trimmed to 14 characters. The Compress banner is one line with Retry, Change compress model and Dismiss as `IconButton`s. The tool strip is collapsed to one summary line (status, one icon per tool kind, current tool or `N tools · Xs`, timer, chevron); the line toggles the stage and history, and a failed strip starts open.
 
+## Transcript
+
+One record, three shapes: the User speaks in a bubble on the right, the agent answers as plain full-width text on the left, and notices and tool cards span the width. Nothing else wears a bubble, so a report can never read as something the User said.
+
+- **User message.** `bg-surface-2`, `rounded-2xl rounded-br-md`, at most `max-w-[85%]` (`sm:max-w-[75%]`), `text-body`. A non-plain mode shows its caption (Steer, Follow-up) in `text-fg-3`; the sender badge appears only on a real User prompt.
+- **Queued.** Dashed `border-status-working/40`, transparent fill, `text-fg-2`, with a `Clock` glyph and `Queued · <mode>` above the bubble. **Canceled** is dashed `border-border`, dimmed, with a `Ban` glyph and the word Canceled. Delivered, queued and canceled read apart by shape and word, not colour alone.
+- **Assistant message.** Full width, no bubble, `text-body`; the `MessageActions` trigger is an `IconButton` (Ellipsis) named `Message actions for <message>`: hidden until the card is hovered or focused on desktop, always visible on phone.
+- **Action surfaces.** Desktop: an anchored icon toolbar (Copy text, Copy Markdown, Share, Edit and resend / Edit, Cancel) with tooltips. Phone: the same group as a bottom sheet with a title row, a Close `IconButton`, a dimmed scrim and 44 px icon-over-label tiles. The card keeps its entrance animation on an inner wrapper so the fixed sheet is placed against the viewport, not a transformed row.
+- **Report notice.** A full-width `surface-1` notice: icon tile, the report title (`Subagent report` / `N subagent reports`), the group line `Subagents <group> finished` with a one-line summary, counts as a `Chip` above `sm`, a chevron for the member detail and a Dismiss `IconButton`. The parsed report rides the transcript block (`report`), so dismissal hides the notice and the App filter can restore it from the tray.
+- **Reports tray.** Sticky above the transcript: one panel with a count `Chip` and `N in transcript`, then rows (group name, counts · summary, Dismissed `Chip`) that open to the body and a Restore button. The list caps at `max-h-[min(60dvh,24rem)]` and scrolls inside, so 1 and 10 reports never grow the page. A Session row keeps `Row`'s unread dot until the Session is opened.
+
 ## Settings, Memory, Providers
 
 Settings pages are `PageHeader`, one visible description line, then `Section`s of a `Panel` of `SettingRow`s. Every row's help sits behind its `InfoHint`; a `note` is only for state that must stay visible (environment lock, missing model, privacy line). The save bar is a floating pill above the safe area. The hub (`SettingsHub`) is a `Panel` of `Row`s per group, with an Admin chip on admin-only pages.

@@ -419,7 +419,7 @@ export function groupTranscript(events, sessionsById = {}, opts = {}) {
       continue;
     }
     if (c.card === 'tool' && last?.card === 'tool') last.open = false;
-    blocks.push({ key: e.seq, card: c.card, title: c.title, body: c.body, collapsed: c.collapsed, server: c.server, members: c.members, toolId: c.toolId, status: c.status, input: c.input, output: c.output, compaction: c.compaction, sudo: c.sudo, profilePatch: c.profilePatch, imageIds: c.imageIds, rules: c.rules, open: e.kind === 'tool_call_started', events: [e] });
+    blocks.push({ key: e.seq, card: c.card, title: c.title, body: c.body, collapsed: c.collapsed, server: c.server, members: c.members, report: c.report, sender: c.sender, senderId: c.senderId, toolId: c.toolId, status: c.status, input: c.input, output: c.output, compaction: c.compaction, sudo: c.sudo, profilePatch: c.profilePatch, imageIds: c.imageIds, rules: c.rules, open: e.kind === 'tool_call_started', events: [e] });
   }
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];

@@ -147,7 +147,7 @@
           <span class="hidden min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground sm:block">{k.tool}</span>
         {/if}
         <span class="shrink-0 text-xs {STATE_TEXT[k.state] ?? STATE_TEXT.idle}">{STATE_LABEL[k.state] ?? k.state}</span>
-        <span class="shrink-0 font-mono text-[10px] text-muted-foreground/60">{short(k.id)}</span>
+        <span class="shrink-0 font-mono text-caption text-fg-3">{short(k.id)}</span>
       </button>
     {/each}
   </div>

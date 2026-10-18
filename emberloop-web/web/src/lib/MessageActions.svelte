@@ -1,5 +1,13 @@
+<!-- Per-message actions. Desktop: the trigger sits in the hover toolbar and
+     opens an anchored icon toolbar with tooltips. Phone: the trigger stays
+     visible and the same group opens as a bottom sheet with 44 px targets. -->
 <script>
+  import { Ellipsis } from '@lucide/svelte';
   import Button from './ui/button.svelte';
+  import IconButton from './ui/icon-button.svelte';
+  import Tooltip from './ui/tooltip.svelte';
+  import { icons } from './icons.js';
+  import { cn } from './ui/cn.js';
   import { copyText, dispatchComposerEdit, markdownToPlainText, shareMessage } from './composer.js';
   import { editQueueItem, removeQueueItem } from './api.js';
   import ErrorState from './ui/error-state.svelte';
@@ -12,10 +20,11 @@
     open = false,
     onOpenChange = () => {},
     onQueueChange = () => {},
+    align = 'end',
   } = $props();
 
   let busy = $state(false);
-  let rootEl = null;
+  let rootEl = $state(null);
   let editing = $state(false);
   let queueDraft = $state('');
   let error = $state('');
@@ -124,41 +133,76 @@
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
-
 </script>
 
-<div bind:this={rootEl} class="mt-1 flex flex-col items-end" data-testid="message-actions">
-  <Button
-    variant="ghost"
-    size="sm"
-    aria-label={`Message actions for ${messageLabel}`}
+{#snippet action(icon, label, run, destructive = false, disabled = false)}
+  {@const Icon = icon}
+  <Tooltip text={label}>
+    {#snippet trigger(props)}
+      <Button
+        {...props}
+        variant="ghost"
+        size="icon-sm"
+        aria-label={label}
+        disabled={disabled}
+        onclick={run}
+        class={cn(
+          'max-md:h-auto max-md:w-full max-md:min-h-11 max-md:flex-col max-md:gap-1 max-md:rounded-lg max-md:px-2 max-md:py-2 md:size-9',
+          destructive && 'text-destructive hover:bg-destructive/10 hover:text-destructive',
+        )}
+      >
+        <Icon aria-hidden="true" />
+        <span class="hidden text-caption max-md:block">{label}</span>
+      </Button>
+    {/snippet}
+  </Tooltip>
+{/snippet}
+
+<div bind:this={rootEl} class={cn('relative flex flex-col', align === 'start' ? 'items-start' : 'items-end')} data-testid="message-actions">
+  <IconButton
+    icon={Ellipsis}
+    label={`Message actions for ${messageLabel}`}
     aria-haspopup="true"
     aria-expanded={open}
-    title="Message actions"
     onclick={() => changeOpen(!open)}
-    class="md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100"
-  >
-    Actions
-  </Button>
+    class="md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+  />
   {#if open}
-    <div class="flex flex-wrap justify-end gap-1 rounded-xl border bg-popover p-2 shadow-elev-2" role="group" aria-label={`Actions for ${messageLabel}`} data-testid="message-action-menu">
-      <Button variant="ghost" size="sm" onclick={() => copy('text')}>Copy text</Button>
-      <Button variant="ghost" size="sm" onclick={() => copy('markdown')}>Copy Markdown</Button>
-      <Button variant="ghost" size="sm" onclick={share}>Share</Button>
-      {#if canEdit && !queuedItem}
-        <Button variant="ghost" size="sm" onclick={editAndResend}>Edit and resend</Button>
-      {/if}
-      {#if queuedItem}
-        <Button variant="ghost" size="sm" onclick={beginQueueEdit}>Edit</Button>
-        <Button size="sm" variant="destructive" disabled={busy} onclick={cancelQueued}>Cancel</Button>
-      {/if}
+    <div class="pointer-events-none fixed inset-0 z-40 bg-black/40 md:hidden" aria-hidden="true"></div>
+    <div
+      role="group"
+      aria-label={`Actions for ${messageLabel}`}
+      data-testid="message-action-menu"
+      class={cn(
+        'z-50 rounded-xl border bg-surface-2 p-1.5 text-fg-1 shadow-elev-2',
+        'max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[60] max-md:rounded-b-none max-md:rounded-t-2xl max-md:p-3 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-md:shadow-elev-3',
+        'md:absolute md:top-full md:mt-1.5 md:w-max',
+        align === 'start' ? 'md:left-0' : 'md:right-0',
+      )}
+    >
+      <div class="mb-2 flex items-center gap-2 border-b pb-2 md:hidden">
+        <span class="min-w-0 flex-1 truncate text-title">{messageLabel}</span>
+        <IconButton icon={icons.dismiss} label="Close actions" onclick={() => changeOpen(false)} />
+      </div>
+      <div class="flex flex-wrap items-center gap-1 max-md:grid max-md:grid-cols-2 max-md:gap-2">
+        {@render action(icons.copy, 'Copy text', () => copy('text'))}
+        {@render action(icons.copy, 'Copy Markdown', () => copy('markdown'))}
+        {@render action(icons.share, 'Share', share)}
+        {#if canEdit && !queuedItem}
+          {@render action(icons.edit, 'Edit and resend', editAndResend)}
+        {/if}
+        {#if queuedItem}
+          {@render action(icons.edit, 'Edit', beginQueueEdit)}
+          {@render action(icons.dismiss, 'Cancel', cancelQueued, true, busy)}
+        {/if}
+      </div>
     </div>
   {/if}
   {#if editing}
-    <form class="mt-1 flex w-full max-w-xl flex-col gap-2 rounded-xl border bg-card p-2" onsubmit={saveQueueEdit} data-testid="queued-message-edit">
-      <label class="flex flex-col gap-1 text-xs text-muted-foreground">
+    <form class="mt-1 flex w-full max-w-xl flex-col gap-2 rounded-xl border bg-surface-2 p-2 shadow-elev-2" onsubmit={saveQueueEdit} data-testid="queued-message-edit">
+      <label class="flex flex-col gap-1 text-caption text-fg-2">
         Edit queued message
-        <textarea bind:value={queueDraft} rows="3" class="min-h-20 w-full resize-y rounded-lg border bg-background px-3 py-2 text-sm text-foreground outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"></textarea>
+        <textarea bind:value={queueDraft} rows="3" class="min-h-20 w-full resize-y rounded-lg border bg-surface-0 px-3 py-2 text-body text-fg-1 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40"></textarea>
       </label>
       <div class="flex justify-end gap-2">
         <Button type="button" variant="ghost" size="sm" disabled={busy} onclick={() => (editing = false)}>Keep queued</Button>
@@ -167,5 +211,5 @@
     </form>
   {/if}
   {#if error}<ErrorState compact title={error} class="mt-1" />{/if}
-  {#if notice}<p role="status" class="mt-1 text-right text-xs text-muted-foreground">{notice}</p>{/if}
+  {#if notice}<p role="status" class="mt-1 text-right text-caption text-fg-3">{notice}</p>{/if}
 </div>

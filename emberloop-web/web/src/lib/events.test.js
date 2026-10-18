@@ -114,6 +114,19 @@ describe('groupTranscript', () => {
     expect(blocks[0].card).toBe('assistant');
     expect(blocks[0].body).toBe('hello');
   });
+  it('keeps the parsed report on the transcript block so the notice can dismiss', () => {
+    const blocks = groupTranscript([ev(1, 'prompt', 'Subagents group-7 finished:\n- abc (worker): fixed the bug', '', 'steer')]);
+    expect(blocks[0].card).toBe('report');
+    expect(blocks[0].report.groupId).toBe('group-7');
+    expect(blocks[0].report.seq).toBe(1);
+    expect(blocks[0].report.counts).toMatchObject({ total: 1, workers: 1 });
+  });
+  it('keeps the prompt sender on the block so User messages offer their actions', () => {
+    const blocks = groupTranscript([{ ...ev(1, 'prompt', 'mine', '', ''), sender: 'user', user: 'u1' }]);
+    expect(blocks[0].card).toBe('user');
+    expect(blocks[0].sender).toBe('user');
+    expect(blocks[0].senderId).toBe('u1');
+  });
   it('keeps user messages as separate blocks', () => {
     const blocks = groupTranscript([ev(1, 'prompt', 'a'), ev(2, 'prompt', 'b')]);
     expect(blocks).toHaveLength(2);
