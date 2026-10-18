@@ -436,4 +436,35 @@ describe('TicketPage', () => {
     await tick();
     expect(within(page).queryByTestId('ticket-actions')).toBeNull();
   });
+
+  // Phone: the status lead and its one next action come first, and the
+  // transcript and facts wait behind tabs so nothing pushes the lead down.
+  it('leads with the next action and tabs the rest on a phone', async () => {
+    vi.stubGlobal('matchMedia', vi.fn((q) => ({ matches: q === '(max-width: 767px)', media: q, addEventListener() {}, removeEventListener() {} })));
+    let current = runWith(ticket());
+    stubApi(() => current);
+    const { container } = renderTicket();
+    const page = await within(container).findByTestId('ticket-page');
+    await within(page).findByTestId('ticket-status');
+
+    // Status + next step + the one action, all inside the lead section.
+    const lead = within(page).getByTestId('ticket-status');
+    expect(within(lead).getByTestId('next-step').textContent).toBe('Waiting on reviewers.');
+    expect(within(lead).getByRole('button', { name: /^steer$/i })).toBeTruthy();
+
+    // The tabs follow the lead; the transcript and facts start hidden.
+    const tabs = within(page).getByRole('tablist', { name: 'Ticket sections' });
+    expect(lead.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(page).queryByTestId('worker-transcript')).toBeNull();
+    expect(within(page).queryByTestId('ticket-panel')).toBeNull();
+    expect(within(page).getByTestId('state-track')).toBeTruthy();
+
+    await fireEvent.click(within(tabs).getByRole('tab', { name: 'Facts' }));
+    await within(page).findByTestId('ticket-panel');
+    expect(within(page).queryByTestId('state-track')).toBeNull();
+
+    await fireEvent.click(within(tabs).getByRole('tab', { name: 'Transcript' }));
+    await within(page).findByTestId('worker-transcript');
+    expect(within(page).queryByTestId('ticket-panel')).toBeNull();
+  });
 });

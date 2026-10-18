@@ -10,11 +10,13 @@ import InfoHint from './info-hint.svelte';
 import PageHeader from './page-header.svelte';
 import Panel from './panel.svelte';
 import Row from './row.svelte';
+import BottomSheet from './bottom-sheet.svelte';
 import Section from './section.svelte';
 import SettingRow from './setting-row.svelte';
 import BottomSheet from './bottom-sheet.svelte';
 import Skeleton from './skeleton.svelte';
 import StatCard from './stat-card.svelte';
+import Segmented from './segmented.svelte';
 import { cn } from './cn.js';
 import { SHELL_KEY } from '../shell.js';
 import { icons, statusIcons, statusLabels, providerGlyph } from '../icons.js';
@@ -236,6 +238,59 @@ describe('states', () => {
     const el = container.firstElementChild;
     expect(el.getAttribute('aria-hidden')).toBe('true');
     expect(el.className).toContain('motion-safe:animate-pulse');
+  });
+
+});
+
+describe('Segmented', () => {
+  const items = [
+    { value: 'graph', label: 'Graph' },
+    { value: 'list', label: 'List' },
+  ];
+  it('is a pressed-button group for a view switch', async () => {
+    let picked = '';
+    render(Segmented, { props: { label: 'Layout', value: 'graph', items, onchange: (v) => (picked = v) } });
+    expect(screen.getByRole('group', { name: 'Layout' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Graph' }).getAttribute('aria-pressed')).toBe('true');
+    await fireEvent.click(screen.getByRole('button', { name: 'List' }));
+    expect(picked).toBe('list');
+  });
+  it('is a tablist whose arrow keys move the selection', async () => {
+    let picked = '';
+    const tabItems = [
+      { value: 'status', label: 'Status' },
+      { value: 'transcript', label: 'Transcript' },
+      { value: 'facts', label: 'Facts' },
+    ];
+    render(Segmented, { props: { mode: 'tabs', label: 'Sections', value: 'status', items: tabItems, onchange: (v) => (picked = v) } });
+    expect(screen.getByRole('tablist', { name: 'Sections' })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: 'Status' }).getAttribute('aria-selected')).toBe('true');
+    await fireEvent.keyDown(screen.getByRole('tab', { name: 'Status' }), { key: 'End' });
+    expect(picked).toBe('facts');
+  });
+});
+
+describe('BottomSheet', () => {
+  it('opens from the bottom edge with a titled dialog and a close action', async () => {
+    let open = true;
+    const props = {
+      get open() {
+        return open;
+      },
+      set open(value) {
+        open = value;
+      },
+      title: 'Ticket #3',
+      children: text('Sheet body'),
+    };
+    render(BottomSheet, { props });
+    // No description given: the sheet still has a name and a valid
+    // description reference (an sr-only copy), so the dialog reads cleanly.
+    const dialog = await screen.findByRole('dialog', { name: 'Ticket #3' });
+    expect(dialog.textContent).toContain('Sheet body');
+    // The close control is a named icon button; bits-ui owns Escape and the
+    // backdrop, and RunsView covers the bind:open round trip.
+    expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
   });
 });
 

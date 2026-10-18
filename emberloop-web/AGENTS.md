@@ -208,6 +208,19 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   returning to a Project scope refreshes before selecting its last/newest
   Session. `router.test.js` and `App.test.js` cover URL round trips, scope,
   global routes, Dashboard and drawer navigation.
+- Browser Runs and Ticket pages lead with state and the next action. Run detail
+  shows the status chip, merged count and actions, then needs-you Tickets, then
+  the Tickets; the picked-spec preview is one line per Ticket plus rows of
+  chips, never prose. A phone lists the Tickets and opens one Ticket's Chain
+  and verdicts in `ui/bottom-sheet.svelte`; the graph is an opt-in full-screen
+  dialog that owns every gesture, and inline it sets `touch-action: pan-y`,
+  leaves a plain wheel to the page and zooms only on ctrl/cmd+wheel. The Ticket
+  page opens with status, the one next step (`nextStep` in `ticketPage.js`) and
+  its one control, plus type, blocker, warning and owner chips; on a phone
+  Status, Transcript and Facts are tabs. `GitPanel` is a side panel on desktop
+  and a two-step full-screen overlay (file list, then the read-only diff) under
+  `lg`. `phone.svelte.js` `createPhone()` is the one phone breakpoint flag;
+  `ui/segmented.svelte` is the shared view switch and tablist.
 
 ## Adapter retry
 

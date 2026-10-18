@@ -129,7 +129,8 @@ All in `src/lib/ui/`, built on `button`, `popover` and bits-ui, using only the t
 | `InfoHint` | `info-hint.svelte` | `label` (accessible name), children. Tap-to-reveal popover for help text. |
 | `Panel` | `panel.svelte` | The grouped card: `rounded-2xl border bg-card shadow-elev-1`. `divided` (hairlines between children, default), `padded` (free content with `p-4 gap-3`), `tag` (`div` or `ul`). Settings, Memory lists and Profile put their rows in one Panel. |
 | `SettingRow` | `setting-row.svelte` | One setting: `label`, `hint` (text or snippet, opens in an `InfoHint` named `About <label>`), `note` (a visible state line such as an environment lock or a warning; `noteTone` `default`, `warn` or `error`), `inline` (control stays beside the label on phone: switches, small buttons), `stack` (control under the label on desktop too: textareas), `width` (`narrow`, `field`, `wide`, `full` on desktop). Controls fill the row on phone. |
-| `BottomSheet` | `bottom-sheet.svelte` | A secondary editor: bottom sheet under md, centred dialog above. `open`, `title`, `description` (sr-only), `children`, `footer` snippet. The Chain editor opens one per entry on phone. |
+| `Segmented` | `segmented.svelte` | `items` (`{ value, label, icon?, count? }`), `value`, `label`, `mode`: `toggle` is a pressed-button group (`role="group"`, `aria-pressed`) for a view switch, `tabs` is a `tablist` (arrow, Home and End keys) that names its `panel` id with `aria-controls`. Segments are 44 px under md. |
+| `BottomSheet` | `bottom-sheet.svelte` | A secondary editor or detail: bottom sheet under md, centred dialog above. `open`, `title`, `description` (sr-only, defaults to the title), `children`, `footer` snippet. The Runs and Ticket chain sheets, the Chain editor and the context meter open one on phone. |
 
 Existing shadcn primitives (`Button`, `Badge`, `Dialog`, `Sheet`, `Select`, `Combobox`, ...) stay; `Chip` is for status and facts, `Badge` for legacy uses.
 
