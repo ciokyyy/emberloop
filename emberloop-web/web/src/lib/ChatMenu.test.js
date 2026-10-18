@@ -1,12 +1,18 @@
 import { cleanup, fireEvent, render, screen, within } from '@testing-library/svelte';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ChatMenu from './ChatMenu.svelte';
 import { resetBackStack } from './overlayBack.js';
 
 afterEach(() => {
   cleanup();
   resetBackStack();
+  vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+// The sheet takes the back entry only on the phone layout.
+beforeEach(() => {
+  vi.stubGlobal('matchMedia', vi.fn((query) => ({ matches: query === '(max-width: 767px)', media: query, addEventListener() {}, removeEventListener() {} })));
 });
 
 const git = { isRepo: true, branch: 'main', files: ['a.txt', 'b.txt'] };
@@ -68,6 +74,15 @@ describe('ChatMenu', () => {
     expect(within(project).getByRole('button', { name: 'Back to Session' })).toBeTruthy();
     await fireEvent.click(within(project).getByRole('option', { name: 'All projects' }));
     expect(props.onSelectScope).toHaveBeenCalledWith('__all_projects__');
+  });
+
+  it('omits the model row when no context sheet is mounted (a draft)', async () => {
+    mount({ onOpenContext: null, model: '' });
+    await fireEvent.click(screen.getByRole('button', { name: 'Session menu' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Session' });
+    expect(within(sheet).getByRole('button', { name: /New Session/ })).toBeTruthy();
+    expect(within(sheet).queryByRole('button', { name: /context/ })).toBeNull();
+    expect(sheet.textContent).not.toContain('Unknown model');
   });
 
   it('closes on system Back', async () => {

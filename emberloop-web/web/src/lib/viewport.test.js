@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { PHONE_QUERY, trackViewport, viewportMetrics } from './viewport.js';
+import { PHONE_QUERY, isPhone, trackViewport, viewportMetrics } from './viewport.js';
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -58,6 +58,20 @@ describe('viewportMetrics', () => {
 
   it('subtracts the visual viewport offset from the inset', () => {
     expect(viewportMetrics({ windowHeight: 844, height: 500, offsetTop: 44 })).toEqual({ height: 500, inset: 300, keyboard: true });
+  });
+});
+
+describe('isPhone', () => {
+  it('is true at the phone breakpoint and false above it', () => {
+    const win = fakeWindow({ matches: true });
+    expect(isPhone(win)).toBe(true);
+    win.query.set(false);
+    expect(isPhone(win)).toBe(false);
+  });
+
+  it('is false without a media query implementation', () => {
+    expect(isPhone({})).toBe(false);
+    expect(isPhone(null)).toBe(false);
   });
 });
 

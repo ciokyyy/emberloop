@@ -12,6 +12,7 @@
   import { editQueueItem, removeQueueItem } from './api.js';
   import ErrorState from './ui/error-state.svelte';
   import { holdBack } from './overlayBack.js';
+  import { isPhone } from './viewport.js';
 
   let {
     block,
@@ -135,10 +136,10 @@
     return () => window.removeEventListener('keydown', onKey);
   });
 
-  // System Back closes the open action sheet; the entry it holds pops when the
-  // sheet closes from its own controls.
+  // System Back closes the open action sheet on phones; the desktop popover
+  // keeps the router's Back behaviour.
   $effect(() => {
-    if (!open) return;
+    if (!open || !isPhone()) return;
     return holdBack(() => changeOpen(false));
   });
 </script>

@@ -20,7 +20,7 @@
     git = null,
     onNewSession = () => {},
     onOpenGit = null,
-    onOpenContext = () => {},
+    onOpenContext = null,
     onSelectScope = () => {},
   } = $props();
 
@@ -34,12 +34,17 @@
     view = 'session';
     open = true;
   }
-  // Git and the context sheet take over the back entry; New Session and a
-  // Project pick navigate, which closes this sheet through the router.
+  // Git and the context sheet take over the back entry. New Session closes the
+  // sheet itself instead of relying on the navigation newChat happens to do; a
+  // Project pick navigates, which closes it through the router.
   function handOver(run) {
     carryBack();
     open = false;
     run?.();
+  }
+  function startNewSession() {
+    open = false;
+    onNewSession();
   }
 </script>
 
@@ -54,11 +59,13 @@
     <ProjectScopeList {projects} {selectedId} onSelect={(value) => onSelectScope(value)} />
   {:else}
     <div class="-mx-1 flex flex-col gap-0.5">
-      <Row icon={Plus} title="New Session" meta="Start another chat" onclick={() => onNewSession()} />
+      <Row icon={Plus} title="New Session" meta="Start another chat" onclick={startNewSession} />
       {#if onOpenGit}
         <Row icon={icons.git} title="Git" meta={gitMeta} onclick={() => handOver(onOpenGit)} />
       {/if}
-      <Row icon={icons.model} title={model || 'Unknown model'} meta={context} onclick={() => handOver(onOpenContext)} />
+      {#if onOpenContext}
+        <Row icon={icons.model} title={model || 'Unknown model'} meta={context} onclick={() => handOver(onOpenContext)} />
+      {/if}
       <Row icon={icons.project} title={projectName || 'No project'} meta="Switch Project" onclick={() => (view = 'project')} />
     </div>
   {/if}

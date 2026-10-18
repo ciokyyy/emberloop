@@ -241,14 +241,17 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   keyboard and the home-indicator inset drops while the keyboard covers it. The
   phone chat header is the title, the status glyph, the context ring and one
   `ChatMenu` button whose sheet holds New Session, Git, the model/context row
-  and the Project scope (one sheet, a Project view); the drawer keeps the
-  Project switcher, the Session list and the five area tabs. `overlayBack.js`
-  holds the sheets' one transient history entry: system Back closes the top
-  sheet, a UI close pops the entry, `carryBack` hands it to a sheet opening
-  next, `closeBacks` lets a navigation take it over, and App leaves popstate
-  routing alone while a sheet is open. Bottom sheets, the context sheet, the
-  message-action sheet and the Git panel take part; `Transcript`'s Latest jump
-  stays inside the padding it reserves for the composer dock.
+  and the Project scope (one sheet, a Project view); the model row renders only
+  while a context ring is mounted, and a draft picks its model in the composer's
+  `DraftBar`. The drawer keeps the Project switcher, the Session list and the
+  five area tabs. `overlayBack.js` holds the sheets' one transient history
+  entry on phones only (desktop dialogs keep the router's Back): system Back
+  closes the top sheet, a UI close pops the entry, `carryBack` hands it to a
+  sheet opening next, `closeBacks` lets a navigation take it over, and App
+  leaves popstate routing alone while a sheet is open. Bottom sheets, the
+  context sheet, the message-action sheet and the Git panel take part;
+  `Transcript`'s Latest jump stays inside the padding it reserves for the
+  composer dock.
 
 ## Adapter retry
 

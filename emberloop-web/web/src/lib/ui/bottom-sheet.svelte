@@ -7,13 +7,15 @@
   import { icons } from '../icons.js';
   import { cn } from './cn.js';
   import { holdBack } from '../overlayBack.js';
+  import { isPhone } from '../viewport.js';
 
   let { open = $bindable(false), title, description = '', class: className = '', children, footer = null, ...rest } = $props();
 
-  // System Back closes the sheet, and the entry it holds pops again when the
-  // sheet closes from its own UI.
+  // System Back closes the sheet on phones, and the entry it holds pops again
+  // when the sheet closes from its own UI. Desktop dialogs leave Back to the
+  // router.
   $effect(() => {
-    if (!open) return;
+    if (!open || !isPhone()) return;
     return holdBack(() => (open = false));
   });
 </script>

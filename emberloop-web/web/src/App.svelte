@@ -32,7 +32,7 @@
   import MemoryPage from './lib/MemoryPage.svelte';
   import ContextMeter from './lib/ContextMeter.svelte';
   import ChatMenu from './lib/ChatMenu.svelte';
-  import { trackViewport } from './lib/viewport.js';
+  import { isPhone, trackViewport } from './lib/viewport.js';
   import { backOpen, closeBacks, holdBack, selfPopPending } from './lib/overlayBack.js';
   import { scopePath } from './lib/projectScope.js';
   import ChatStatus from './lib/ChatStatus.svelte';
@@ -163,7 +163,7 @@
   // Phones follow the visual viewport: the shell shrinks above the keyboard and
   // sheets read the keyboard inset (lib/viewport.js sets the CSS variables).
   $effect(() => trackViewport());
-  const isPhone = () => !!window.matchMedia?.('(max-width: 767px)').matches;
+
   let menuOpen = $state(false);
   // Every page header (ui/page-header.svelte) renders the phone menu button
   // from this context, so no page repeats the drawer wiring.
@@ -180,10 +180,10 @@
     },
   });
 
-  // The Git panel is a sheet-like overlay: system Back closes it, like every
-  // other open sheet.
+  // The Git panel is a sheet on phones: system Back closes it. On desktop the
+  // side panel leaves Back to the router.
   $effect(() => {
-    if (!gitOpen) return;
+    if (!gitOpen || !isPhone()) return;
     return holdBack(() => (gitOpen = false));
   });
   // Areas where something needs the User: a needs-you dot on the Rail and the
@@ -1274,7 +1274,7 @@
               {git}
               onNewSession={newChat}
               onOpenGit={activeProject ? () => (gitOpen = true) : null}
-              onOpenContext={() => (contextOpen = true)}
+              onOpenContext={currentId && !drafting ? () => (contextOpen = true) : null}
               onSelectScope={(value) => navigate(scopePath(value))}
             />
           {/if}

@@ -13,6 +13,12 @@ export function viewportMetrics({ windowHeight = 0, height = 0, offsetTop = 0 } 
   return { height: visible, inset, keyboard: inset > 0 };
 }
 
+// Whether the viewport is at the phone layout, where overlays are sheets and
+// system Back closes them. Desktop dialogs keep Back for navigation.
+export function isPhone(win = typeof window === 'undefined' ? null : window) {
+  return Boolean(win?.matchMedia?.(PHONE_QUERY)?.matches);
+}
+
 export function trackViewport(win = typeof window === 'undefined' ? null : window) {
   const root = win?.document?.documentElement;
   if (!win || !root) return () => {};

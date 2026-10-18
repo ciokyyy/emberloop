@@ -71,6 +71,7 @@ test('phone chat fits 390 px, keeps the composer above the keyboard and closes s
     if (!scroller) throw new Error('Transcript scroller was not rendered');
     let stable = 0;
     let height = -1;
+    let settled = false;
     for (let attempt = 0; attempt < 60; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, 50));
       if (scroller.scrollHeight === height) stable++;
@@ -78,8 +79,12 @@ test('phone chat fits 390 px, keeps the composer above the keyboard and closes s
         stable = 0;
         height = scroller.scrollHeight;
       }
-      if (stable >= 6) break;
+      if (stable >= 6) {
+        settled = true;
+        break;
+      }
     }
+    if (!settled) throw new Error('Transcript kept growing; the Latest jump would race the glide');
     const port = scroller.getBoundingClientRect();
     return { x: port.left + port.width / 2, y: port.top + port.height / 2 };
   });
@@ -123,7 +128,8 @@ test('phone chat fits 390 px, keeps the composer above the keyboard and closes s
   expect(keyboard.dockBottom).toBeLessThanOrEqual(keyboard.visible);
   expect(keyboard.composerBottom).toBeLessThanOrEqual(keyboard.visible);
 
-  // Session sheet: rows for New Session, Git and Project, and Back closes it.
+  // Session sheet: rows for New Session, Git and Project. The explicit close
+  // icon drops it in place, and system Back closes it too.
   await browser.evaluate(() => {
     for (const [key, value] of Object.entries({ height: window.innerHeight, offsetTop: 0, scale: 1 })) {
       Object.defineProperty(window.visualViewport!, key, { configurable: true, value });
@@ -133,6 +139,12 @@ test('phone chat fits 390 px, keeps the composer above the keyboard and closes s
   await screen.getByRole('button', 'Session menu').click();
   await expect(screen.getByRole('dialog', 'Session')).toBeVisible();
   await expect(screen.getByRole('button', 'New Session Start another chat')).toBeVisible();
+  await screen.getByRole('button', 'Close').click();
+  await browser.evaluate(waitForGone('[role="dialog"]'));
+  expect(await browser.evaluate(() => window.location.pathname)).toBe(`/s/${session.id}`);
+
+  await screen.getByRole('button', 'Session menu').click();
+  await expect(screen.getByRole('dialog', 'Session')).toBeVisible();
   await browser.evaluate(() => window.history.back());
   await browser.evaluate(waitForGone('[role="dialog"]'));
 

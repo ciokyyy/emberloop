@@ -618,7 +618,10 @@ describe('Sidebar collapse', () => {
   const usersBody = [{ id: 'u1', username: 'cioky', admin: true, online: true }];
   const me = { id: 'u1', username: 'cioky', admin: true };
   const projectsBody = [{ id: 'p1', name: 'demo', path: '/tmp/el-e2e/repo' }];
-  afterEach(() => cleanup());
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
   function stubApp() {
     // Each render boots from the URL: reset it, or a leaked /runs from an
     // earlier test opens the Runs view instead of the chat sidebar.
@@ -766,8 +769,9 @@ describe('Sidebar collapse', () => {
     for (const b of header.querySelectorAll('button')) expect(b.textContent.trim(), b.getAttribute('aria-label')).toBe('');
   });
   it('opens the phone Session menu from the chat header and closes it with system Back', async () => {
+    // The phone layout is what puts the sheet on the back stack.
+    vi.stubGlobal('matchMedia', (query) => ({ matches: query === '(max-width: 767px)', media: query, addEventListener() {}, removeEventListener() {} }));
     stubApp();
-    history.replaceState(null, '', '/s/s1');
     vi.stubGlobal('EventSource', class { close() {} });
     vi.stubGlobal(
       'fetch',
@@ -790,7 +794,7 @@ describe('Sidebar collapse', () => {
     await fireEvent.click(within(header).getByRole('button', { name: 'Session menu' }));
     const sheet = await screen.findByRole('dialog', { name: 'Session' });
     expect(sheet.textContent).toContain('New Session');
-    expect(sheet.textContent).toContain('demo');
+    await vi.waitFor(() => expect(sheet.textContent).toContain('demo'));
 
     await fireEvent.click(within(sheet).getByRole('button', { name: /Switch Project/ }));
     expect(await screen.findByRole('dialog', { name: 'Project' })).toBeTruthy();

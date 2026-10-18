@@ -21,11 +21,12 @@ import { SHELL_KEY } from '../shell.js';
 import { icons, statusIcons, statusLabels, providerGlyph } from '../icons.js';
 import { areas } from '../areas.js';
 import { settingsIcons } from '../settingsIcons.js';
-import { resetBackStack } from '../overlayBack.js';
+import { backOpen, resetBackStack } from '../overlayBack.js';
 
 afterEach(() => {
   cleanup();
   resetBackStack();
+  vi.unstubAllGlobals();
 });
 
 const text = (value) => createRawSnippet(() => ({ render: () => `<span>${value}</span>` }));
@@ -310,6 +311,7 @@ describe('BottomSheet', () => {
     expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
   });
   it('closes on system Back and drops the entry it held', async () => {
+    vi.stubGlobal('matchMedia', (query) => ({ matches: query === '(max-width: 767px)', media: query, addEventListener() {}, removeEventListener() {} }));
     const back = vi.spyOn(history, 'back').mockImplementation(() => {});
     let open = true;
     const props = {
@@ -331,7 +333,17 @@ describe('BottomSheet', () => {
     resetBackStack();
     back.mockRestore();
   });
+  it('leaves Back to the router on desktop', async () => {
+    vi.stubGlobal('matchMedia', (query) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} }));
+    // A previous Back test can leave its transient entry in history.
+    history.replaceState(null, '', window.location.href);
+    render(BottomSheet, { props: { open: true, title: 'Palette', children: text('Sheet body') } });
+    await screen.findByRole('dialog', { name: 'Palette' });
+    expect(backOpen()).toBe(false);
+    expect(history.state?.elSheet).toBeUndefined();
+  });
 });
+
 
 describe('Panel and SettingRow', () => {
   it('Panel is one divided card for rows', () => {

@@ -9,14 +9,16 @@
   import EmptyState from './ui/empty-state.svelte';
   import { icons } from './icons.js';
   import { holdBack } from './overlayBack.js';
+  import { isPhone } from './viewport.js';
 
   // onCompress is set for Sessions that can compress. busy disables it. compressNote, when set, disables it too and gives the reason.
   // `open` is bindable so the phone Session menu can open the same sheet.
   let { model = '', usage = null, onCompress = null, busy = false, compressing = false, compressNote = '', open = $bindable(false) } = $props();
 
-  // System Back closes the detail sheet, like every other sheet.
+  // System Back closes the detail sheet on phones; the desktop panel keeps the
+  // router's Back behaviour.
   $effect(() => {
-    if (!open) return;
+    if (!open || !isPhone()) return;
     return holdBack(() => (open = false));
   });
   const R = 7;
