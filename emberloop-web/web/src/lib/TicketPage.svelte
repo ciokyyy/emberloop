@@ -562,7 +562,7 @@
     </section>
 
     {#if phone.value}
-      <Segmented mode="tabs" label="Ticket sections" value={tab} onchange={(next) => (tab = next)} items={[{ value: 'status', label: 'Status' }, { value: 'transcript', label: 'Transcript' }, { value: 'facts', label: 'Facts' }]} />
+      <Segmented mode="tabs" label="Ticket sections" panel="ticket-tabpanel" value={tab} onchange={(next) => (tab = next)} items={[{ value: 'status', label: 'Status' }, { value: 'transcript', label: 'Transcript' }, { value: 'facts', label: 'Facts' }]} />
     {/if}
 
     <!-- State track: the real row states. -->
@@ -593,7 +593,7 @@
       </div>
     {/if}
 
-    <div class="flex min-h-0 flex-col gap-4 lg:flex-row" role={phone.value ? 'tabpanel' : undefined} aria-label={phone.value ? tab : undefined}>
+    <div id={phone.value ? 'ticket-tabpanel' : undefined} class="flex min-h-0 flex-col gap-4 lg:flex-row" role={phone.value ? 'tabpanel' : undefined} aria-label={phone.value ? tab : undefined}>
       <!-- Main column: worker transcript with review rounds woven in. -->
       <div class="flex min-w-0 flex-1 flex-col gap-4">
         {#if show('status') && ticket.body}

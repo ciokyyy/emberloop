@@ -1,10 +1,11 @@
 <!-- Segmented control. `mode="toggle"` is a pressed-button group (a view switch);
-     `mode="tabs"` is a tablist (arrow keys move, Home and End jump). Segments
-     are 44 px under md. Each item is `{ value, label, icon?, count? }`. -->
+     `mode="tabs"` is a tablist (arrow keys move, Home and End jump) that points
+     every tab at its `panel` element. Segments are 44 px under md. Each item is
+     `{ value, label, icon?, count? }`. -->
 <script>
   import { cn } from './cn.js';
 
-  let { items = [], value = '', label = '', mode = 'toggle', onchange = null, class: className = '', ...rest } = $props();
+  let { items = [], value = '', label = '', mode = 'toggle', panel = '', onchange = null, class: className = '', ...rest } = $props();
 
   const tabs = $derived(mode === 'tabs');
 
@@ -44,6 +45,7 @@
       aria-selected={tabs ? active : undefined}
       aria-pressed={tabs ? undefined : active}
       tabindex={tabs && !active ? -1 : undefined}
+      aria-controls={tabs && panel ? panel : undefined}
       data-value={item.value}
       class={cn(
         'motion-standard inline-flex min-h-8 min-w-0 flex-1 items-center justify-center gap-1.5 rounded-full px-3 text-caption font-medium outline-none focus-visible:ring-[3px] focus-visible:ring-ring/40 max-md:min-h-11 max-md:text-body [&_svg]:size-3.5 [&_svg]:shrink-0',

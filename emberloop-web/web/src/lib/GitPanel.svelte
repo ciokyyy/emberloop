@@ -1,7 +1,7 @@
 <!-- Git view of the active Project: branch, changed files with diffs, recent commits.
-     Wide: a side panel with the file list above the open diff. Narrow (under lg) it is a
-     full-screen overlay (full bleed on phone) in two steps: the file list, then the
-     diff with a Back button. The diff is read-only. -->
+     Wide: a side panel with the file list above the open diff. Under lg it floats as
+     an overlay card in two steps (the file list, then the diff with a Back button);
+     under md it goes full bleed with safe-area insets. The diff is read-only. -->
 <script>
   import { ArrowDown, ArrowLeft, ArrowUp, FileDiff } from '@lucide/svelte';
   import IconButton from './ui/icon-button.svelte';

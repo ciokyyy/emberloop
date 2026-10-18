@@ -262,7 +262,9 @@ describe('Segmented', () => {
       { value: 'transcript', label: 'Transcript' },
       { value: 'facts', label: 'Facts' },
     ];
-    render(Segmented, { props: { mode: 'tabs', label: 'Sections', value: 'status', items: tabItems, onchange: (v) => (picked = v) } });
+    render(Segmented, { props: { mode: 'tabs', label: 'Sections', panel: 'sections-panel', value: 'status', items: tabItems, onchange: (v) => (picked = v) } });
+    // Every tab names the panel it drives, so the pair reads to assistive tech.
+    expect(screen.getByRole('tab', { name: 'Facts' }).getAttribute('aria-controls')).toBe('sections-panel');
     expect(screen.getByRole('tablist', { name: 'Sections' })).toBeTruthy();
     expect(screen.getByRole('tab', { name: 'Status' }).getAttribute('aria-selected')).toBe('true');
     await fireEvent.keyDown(screen.getByRole('tab', { name: 'Status' }), { key: 'End' });

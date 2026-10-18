@@ -217,10 +217,12 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   leaves a plain wheel to the page and zooms only on ctrl/cmd+wheel. The Ticket
   page opens with status, the one next step (`nextStep` in `ticketPage.js`) and
   its one control, plus type, blocker, warning and owner chips; on a phone
-  Status, Transcript and Facts are tabs. `GitPanel` is a side panel on desktop
-  and a two-step full-screen overlay (file list, then the read-only diff) under
-  `lg`. `phone.svelte.js` `createPhone()` is the one phone breakpoint flag;
-  `ui/segmented.svelte` is the shared view switch and tablist.
+  Status, Transcript and Facts are tabs, the tablist naming its `panel`.
+  `GitPanel` is a side panel on desktop, a two-step overlay card under `lg`
+  (file list, then the read-only diff with a Back button) and full bleed with
+  safe-area insets under `md`. `phone.svelte.js` `createPhone()` is the phone
+  breakpoint flag (`md`, 767 px) for Runs and Tickets; `ui/segmented.svelte` is
+  the shared view switch and tablist.
 
 ## Adapter retry
 
