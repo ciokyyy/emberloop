@@ -63,10 +63,23 @@ test('phone chat fits 390 px, keeps the composer above the keyboard and closes s
   expect(layout.small).toEqual([]);
   expect(layout.headerLines).toBeLessThanOrEqual(56);
 
-  // The Latest jump sits above the composer dock, never on top of it.
-  const placement = await browser.evaluate(() => {
+  // The Latest jump sits above the composer dock, never on top of it. Wait for
+  // the transcript to stop growing first: a wheel that lands while the last
+  // reply settles would fight the follow-to-bottom glide.
+  const placement = await browser.evaluate(async () => {
     const scroller = document.querySelector<HTMLElement>('[data-testid="transcript-scroll"]');
     if (!scroller) throw new Error('Transcript scroller was not rendered');
+    let stable = 0;
+    let height = -1;
+    for (let attempt = 0; attempt < 60; attempt++) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      if (scroller.scrollHeight === height) stable++;
+      else {
+        stable = 0;
+        height = scroller.scrollHeight;
+      }
+      if (stable >= 6) break;
+    }
     const port = scroller.getBoundingClientRect();
     return { x: port.left + port.width / 2, y: port.top + port.height / 2 };
   });
