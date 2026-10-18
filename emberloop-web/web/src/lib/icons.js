@@ -1,6 +1,7 @@
 // The icon map: each domain concept has exactly one icon, named here once.
 // Import from this file; never pick a lucide icon for a concept by hand.
 import {
+  Ban,
   Bot,
   CircleAlert,
   CircleCheck,
@@ -54,6 +55,8 @@ export const icons = Object.freeze({
   edit: Pencil,
   retry: RotateCcw,
   dismiss: X,
+  // Cancel a queued message: the row's own state glyph, not Dismiss.
+  cancel: Ban,
   // Re-reading live data (quota, status). Retry is re-running a failed action.
   refresh: RefreshCw,
   // The model a Session or action runs on.

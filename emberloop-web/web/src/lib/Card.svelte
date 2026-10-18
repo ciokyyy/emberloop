@@ -5,12 +5,13 @@
   import Markdown from './Markdown.svelte';
   import GroupCard from './GroupCard.svelte';
   import ToolStrip from './ToolStrip.svelte';
-  import { Ban, CheckCircle2, XCircle, Loader, ChevronRight, Brain, Shrink, ShieldAlert, Terminal, CreditCard, Clock } from '@lucide/svelte';
+  import { CheckCircle2, XCircle, Loader, ChevronRight, Brain, Shrink, ShieldAlert, Terminal, CreditCard, Clock } from '@lucide/svelte';
   import { getCurrentUserId, decideSudo, decideProfileQueue, compressSession, imageSrc, promoteSessionRule } from './api.js';
   import Button from './ui/button.svelte';
   import IconButton from './ui/icon-button.svelte';
   import { icons } from './icons.js';
   import ErrorState from './ui/error-state.svelte';
+  import { reportCountsText } from './subagents.js';
   import Input from './ui/input.svelte';
   import VoiceBubble from './VoiceBubble.svelte';
   import { isAudioId, audioMeta } from './voiceMeta.js';
@@ -117,13 +118,7 @@
   }
   // One-line hint of what the tool was asked: first line of the input.
   const firstReply = $derived(String(block.members?.[0]?.reply ?? block.body ?? '').replace(/\s+/g, ' ').slice(0, 110));
-  const reportCounts = $derived(block.report?.counts ?? {});
-  const reportCountLabel = $derived([
-    `${reportCounts.total ?? block.members?.length ?? 0} agent${(reportCounts.total ?? block.members?.length ?? 0) === 1 ? '' : 's'}`,
-    reportCounts.workers ? `${reportCounts.workers} worker${reportCounts.workers === 1 ? '' : 's'}` : '',
-    reportCounts.scouts ? `${reportCounts.scouts} scout${reportCounts.scouts === 1 ? '' : 's'}` : '',
-    reportCounts.failed ? `${reportCounts.failed} failed` : '',
-  ].filter(Boolean).join(' · '));
+  const reportCountLabel = $derived(reportCountsText(block.report ?? { members: block.members }));
   const preview = $derived(String(block.input ?? '').replace(/\s+/g, ' ').trim().slice(0, 120));
   const fmtTokens = (n) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 100000 ? 0 : 1)}k` : String(n ?? 0));
   const compaction = $derived(block.compaction ?? {});
@@ -161,8 +156,9 @@
         {#if block.title}<span class="text-fg-3">· {block.title}</span>{/if}
       </div>
     {:else if cancelled}
+      {@const CancelIcon = icons.cancel}
       <div class="mb-1 flex items-center gap-1.5 pr-1.5 text-caption text-fg-3">
-        <Ban class="size-3.5 shrink-0" aria-hidden="true" />
+        <CancelIcon class="size-3.5 shrink-0" aria-hidden="true" />
         <span data-testid="canceled-message">Canceled</span>
       </div>
     {/if}
@@ -372,6 +368,7 @@
             <span class="mt-0.5 flex min-w-0 flex-col text-caption text-fg-3 sm:flex-row sm:items-center sm:gap-1.5">
               {#if block.report}<span class="min-w-0 truncate sm:shrink-0">Subagents {block.report.groupName} finished</span>{/if}
               {#if firstReply}<span class="hidden shrink-0 text-fg-4 sm:inline" aria-hidden="true">·</span><span class="min-w-0 truncate">{firstReply}</span>{/if}
+              <span class="mt-0.5 shrink-0 text-fg-3 sm:hidden">{reportCountLabel}</span>
             </span>
           </span>
           <Chip tone="outline" class="hidden shrink-0 sm:inline-flex">{reportCountLabel}</Chip>

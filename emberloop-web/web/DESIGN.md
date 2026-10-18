@@ -105,6 +105,7 @@ Reduced motion (`prefers-reduced-motion: reduce`): transitions and one-shot anim
 | Edit | `edit` | `Pencil` |
 | Retry (run a failed action again) | `retry` | `RotateCcw` |
 | Dismiss | `dismiss` | `X` |
+| Cancel (a queued message) | `cancel` | `Ban` |
 | Refresh (re-read live data) | `refresh` | `RefreshCw` |
 | Model | `model` | `Cpu` |
 
@@ -168,9 +169,9 @@ One record, three shapes: the User speaks in a bubble on the right, the agent an
 
 - **User message.** `bg-surface-2`, `rounded-2xl rounded-br-md`, at most `max-w-[85%]` (`sm:max-w-[75%]`), `text-body`. A non-plain mode shows its caption (Steer, Follow-up) in `text-fg-3`; the sender badge appears only on a real User prompt.
 - **Queued.** Dashed `border-status-working/40`, transparent fill, `text-fg-2`, with a `Clock` glyph and `Queued · <mode>` above the bubble. **Canceled** is dashed `border-border`, dimmed, with a `Ban` glyph and the word Canceled. Delivered, queued and canceled read apart by shape and word, not colour alone.
-- **Assistant message.** Full width, no bubble, `text-body`; the `MessageActions` trigger is an `IconButton` (Ellipsis) named `Message actions for <message>`: hidden until the card is hovered or focused on desktop, always visible on phone.
-- **Action surfaces.** Desktop: an anchored icon toolbar (Copy text, Copy Markdown, Share, Edit and resend / Edit, Cancel) with tooltips. Phone: the same group as a bottom sheet with a title row, a Close `IconButton`, a dimmed scrim and 44 px icon-over-label tiles. The card keeps its entrance animation on an inner wrapper so the fixed sheet is placed against the viewport, not a transformed row.
-- **Report notice.** A full-width `surface-1` notice: icon tile, the report title (`Subagent report` / `N subagent reports`), the group line `Subagents <group> finished` with a one-line summary, counts as a `Chip` above `sm`, a chevron for the member detail and a Dismiss `IconButton`. The parsed report rides the transcript block (`report`), so dismissal hides the notice and the App filter can restore it from the tray.
+- **Assistant message.** Full width, no bubble, `text-body`; the `MessageActions` trigger is an `IconButton` (Ellipsis) named `Message actions for <message>`: hidden until the card is hovered or focused on pointer devices that hover, always visible on phone and on a tablet with no hover.
+- **Action surfaces.** Desktop: an anchored icon toolbar (Copy text, Copy Markdown, Share, Edit and resend / Edit, Cancel) with tooltips; Cancel wears the canceled row's `Ban` glyph, not Dismiss. Phone: the same group as a bottom sheet with a title row, a Close `IconButton`, a dimmed scrim and 44 px icon-over-label tiles. The card keeps its entrance animation on an inner wrapper so the fixed sheet is placed against the viewport, not a transformed row. Retry stays the Compress banner action: a message action never re-runs a turn.
+- **Report notice.** A full-width `surface-1` notice: icon tile, the report title (`Subagent report` / `N subagent reports`), the group line `Subagents <group> finished` with a one-line summary, the counts (a `Chip` above `sm`, its own caption line on phone), a chevron for the member detail and a Dismiss `IconButton`. The parsed report rides the transcript block (`report`), so dismissal hides the notice and the App filter can restore it from the tray.
 - **Reports tray.** Sticky above the transcript: one panel with a count `Chip` and `N in transcript`, then rows (group name, counts · summary, Dismissed `Chip`) that open to the body and a Restore button. The list caps at `max-h-[min(60dvh,24rem)]` and scrolls inside, so 1 and 10 reports never grow the page. A Session row keeps `Row`'s unread dot until the Session is opened.
 
 ## Settings, Memory, Providers

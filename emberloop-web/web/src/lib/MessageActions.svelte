@@ -165,7 +165,7 @@
     aria-haspopup="true"
     aria-expanded={open}
     onclick={() => changeOpen(!open)}
-    class="md:opacity-0 md:group-focus-within:opacity-100 md:group-hover:opacity-100 md:focus-visible:opacity-100"
+    class="[@media(hover:hover)]:md:opacity-0 [@media(hover:hover)]:md:group-focus-within:opacity-100 [@media(hover:hover)]:md:group-hover:opacity-100 [@media(hover:hover)]:md:focus-visible:opacity-100"
   />
   {#if open}
     <div class="pointer-events-none fixed inset-0 z-40 bg-black/40 md:hidden" aria-hidden="true"></div>
@@ -193,7 +193,7 @@
         {/if}
         {#if queuedItem}
           {@render action(icons.edit, 'Edit', beginQueueEdit)}
-          {@render action(icons.dismiss, 'Cancel', cancelQueued, true, busy)}
+          {@render action(icons.cancel, 'Cancel', cancelQueued, true, busy)}
         {/if}
       </div>
     </div>

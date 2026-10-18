@@ -36,7 +36,7 @@ describe('cn token merging', () => {
 
 describe('icon map', () => {
   it('names every domain concept from the spec once', () => {
-    for (const key of ['session', 'run', 'ticket', 'subagent', 'steer', 'followUp', 'report', 'memory', 'quota', 'provider', 'project', 'git', 'compress', 'copy', 'share', 'edit', 'retry', 'dismiss']) {
+    for (const key of ['session', 'run', 'ticket', 'subagent', 'steer', 'followUp', 'report', 'memory', 'quota', 'provider', 'project', 'git', 'compress', 'copy', 'share', 'edit', 'retry', 'dismiss', 'cancel']) {
       expect(icons[key], key).toBeTruthy();
     }
   });
