@@ -112,6 +112,21 @@
   --owner-4: #ff9f0a;
   --owner-5: #64d2ff;
   --owner-6: #ff375f;
+  /* Phone chrome: the shell takes the visible height and the phone bottom
+     padding drops the home-indicator inset while the keyboard covers it
+     (lib/viewport.js sets --app-height, --kb-inset and data-keyboard). */
+  --safe-bottom: env(safe-area-inset-bottom);
+  --kb-inset: 0px;
+}
+
+/* The app shell follows the visual viewport on phones, so the composer dock
+   sits above the on-screen keyboard instead of behind it. */
+.app-shell {
+  height: var(--app-height, 100dvh);
+}
+
+html[data-keyboard="open"] {
+  --safe-bottom: 0px;
 }
 
 /* Numeric style: figures are always tabular. */

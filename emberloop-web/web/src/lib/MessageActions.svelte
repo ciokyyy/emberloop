@@ -11,6 +11,7 @@
   import { copyText, dispatchComposerEdit, markdownToPlainText, shareMessage } from './composer.js';
   import { editQueueItem, removeQueueItem } from './api.js';
   import ErrorState from './ui/error-state.svelte';
+  import { holdBack } from './overlayBack.js';
 
   let {
     block,
@@ -133,6 +134,13 @@
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   });
+
+  // System Back closes the open action sheet; the entry it holds pops when the
+  // sheet closes from its own controls.
+  $effect(() => {
+    if (!open) return;
+    return holdBack(() => changeOpen(false));
+  });
 </script>
 
 {#snippet action(icon, label, run, destructive = false, disabled = false)}
@@ -175,7 +183,7 @@
       data-testid="message-action-menu"
       class={cn(
         'z-50 rounded-xl border bg-surface-2 p-1.5 text-fg-1 shadow-elev-2',
-        'max-md:fixed max-md:inset-x-0 max-md:bottom-0 max-md:z-[60] max-md:rounded-b-none max-md:rounded-t-2xl max-md:p-3 max-md:pb-[max(0.75rem,env(safe-area-inset-bottom))] max-md:shadow-elev-3',
+        'max-md:fixed max-md:inset-x-0 max-md:bottom-[var(--kb-inset)] max-md:z-[60] max-md:rounded-b-none max-md:rounded-t-2xl max-md:p-3 max-md:pb-[max(0.75rem,var(--safe-bottom))] max-md:shadow-elev-3',
         'md:absolute md:top-full md:mt-1.5 md:w-max',
         align === 'start' ? 'md:left-0' : 'md:right-0',
       )}

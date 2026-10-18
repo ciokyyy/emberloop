@@ -31,6 +31,10 @@
   import ProvidersPage from './lib/ProvidersPage.svelte';
   import MemoryPage from './lib/MemoryPage.svelte';
   import ContextMeter from './lib/ContextMeter.svelte';
+  import ChatMenu from './lib/ChatMenu.svelte';
+  import { trackViewport } from './lib/viewport.js';
+  import { backOpen, closeBacks, holdBack, selfPopPending } from './lib/overlayBack.js';
+  import { scopePath } from './lib/projectScope.js';
   import ChatStatus from './lib/ChatStatus.svelte';
   import { activeTool } from './lib/toolstrip.js';
   import VersionBadge from './lib/VersionBadge.svelte';
@@ -84,6 +88,8 @@
   let gitOpen = $state(false);
   let compressOpen = $state(false);
   let compressBusy = $state(false);
+  // The context detail sheet is shared by the header ring and the phone menu.
+  let contextOpen = $state(false);
   let compressError = $state('');
   // A Backend that can compress sets compressible: in place (SDK pig) or by Handoff.
   // compressNote gives the reason Compress is off, when it is off.
@@ -154,6 +160,9 @@
     }
     return runsStore.subscribe((value) => { runs = value; });
   });
+  // Phones follow the visual viewport: the shell shrinks above the keyboard and
+  // sheets read the keyboard inset (lib/viewport.js sets the CSS variables).
+  $effect(() => trackViewport());
   const isPhone = () => !!window.matchMedia?.('(max-width: 767px)').matches;
   let menuOpen = $state(false);
   // Every page header (ui/page-header.svelte) renders the phone menu button
@@ -169,6 +178,13 @@
     get menuLabel() {
       return MENU_LABELS[view] ?? 'Sessions';
     },
+  });
+
+  // The Git panel is a sheet-like overlay: system Back closes it, like every
+  // other open sheet.
+  $effect(() => {
+    if (!gitOpen) return;
+    return holdBack(() => (gitOpen = false));
   });
   // Areas where something needs the User: a needs-you dot on the Rail and the
   // drawer tabs. Runs are known only while the Run list is subscribed.
@@ -332,6 +348,17 @@
   // Height of the floating composer stack: the transcript pads by it so the last block never hides.
   let overlayH = $state(176);
 
+  // The phone chat menu: the context label it shows and the scope row that
+  // switches Project without leaving the Session.
+  const menuContext = $derived.by(() => {
+    if (!usage) return 'No context usage yet';
+    const pct = Math.min(100, Math.round((usage.used / usage.size) * 100));
+    return `${pct}% context used`;
+  });
+  const menuProjectName = $derived(
+    activeProject?.name ?? (isProjectScoped ? (scopeProjectId === '' ? 'No project' : 'Project not found') : 'All projects'),
+  );
+
   // Routes: / is the Dashboard; /p/<id> scopes Sessions and Runs, while /s/<id>
   // stays canonical and derives its scope from the Session metadata.
   const TAIL_TURNS = 6;
@@ -359,14 +386,17 @@
 
   function navigate(path, { replace = false } = {}) {
     // Any navigation closes the phone drawer (backdrop taps close it
-    // through the dialog itself).
+    // through the dialog itself) and every open sheet, reusing their history
+    // entry for the destination so Back never replays a closed sheet.
     const fromDrawer = drawerEntry && history.state?.drawer;
     menuOpen = false;
+    const sheets = closeBacks();
     if (fromDrawer) {
       // The drawer's own entry becomes the destination: no dead Back step.
       drawerEntry = false;
       history.replaceState(null, '', path);
-    } else if (replace) history.replaceState(null, '', path);
+    } else if (sheets) history.replaceState(null, '', path);
+    else if (replace) history.replaceState(null, '', path);
     else if (window.location.pathname + window.location.search !== path) history.pushState(null, '', path);
     return applyRoute(path);
   }
@@ -977,12 +1007,15 @@
       ignorePop = false;
       return;
     }
-    // Back with the drawer open only closes it.
+    // Back with the drawer open only closes it; a sheet closes itself in
+    // lib/overlayBack.js, and a sheet's own close pops its entry.
+    if (selfPopPending()) return;
     if (menuOpen) {
       drawerEntry = false;
       menuOpen = false;
       return;
     }
+    if (backOpen()) return;
     // Forward onto a stale drawer entry: stay on the page.
     if (e?.state?.drawer) return;
     applyRoute(window.location.pathname + window.location.search);
@@ -1145,7 +1178,7 @@
   <ChatStatus {connected} {status} />
 {/snippet}
 
-<div class="flex h-dvh">
+<div class="app-shell flex">
   <Rail view={areaView} collapsed={sideCollapsed} {attention} onToggleSidebar={toggleSidebar} onSelect={navigateArea} />
   <aside data-testid="sidebar" inert={sideCollapsed || view === 'memory'} aria-hidden={sideCollapsed || view === 'memory'} class="motion-emphasis flex shrink-0 flex-col overflow-hidden border-r bg-sidebar transition-[width] max-md:hidden {sideCollapsed || view === 'memory' ? 'w-0 border-transparent' : 'w-64'}">
     <div class="flex min-h-0 w-64 flex-1 flex-col gap-3 p-3" aria-hidden={sideCollapsed}>
@@ -1206,11 +1239,18 @@
       >
         {#snippet actions()}
           {#if currentId && !drafting && !sessionMissing}
-            <ContextMeter model={modelLabel(meta?.harness, meta?.model ?? '')} {usage} onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null} busy={status === 'working'} {compressing} {compressNote} />
+            <ContextMeter
+              model={modelLabel(meta?.harness, meta?.model ?? '')}
+              {usage}
+              bind:open={contextOpen}
+              onCompress={canCompress ? () => { compressError = ''; compressOpen = true; } : null}
+              busy={status === 'working'}
+              {compressing}
+              {compressNote}
+            />
           {/if}
-          <IconButton icon={Plus} label="New Session" class="md:hidden" onclick={newChat} />
           {#if activeProject}
-            <span class="relative inline-flex">
+            <span class="relative inline-flex max-md:hidden">
               <IconButton
                 icon={icons.git}
                 label={git?.isRepo ? `Git: ${git.branch}${git.files.length ? `, ${git.files.length} changed` : ''}` : 'Git status'}
@@ -1223,6 +1263,20 @@
                 <span class="pointer-events-none absolute right-0.5 top-0.5 size-2 rounded-full bg-status-needs-you ring-2 ring-background" data-testid="git-dirty" aria-hidden="true"></span>
               {/if}
             </span>
+          {/if}
+          {#if !sessionMissing}
+            <ChatMenu
+              model={meta ? modelLabel(meta.harness, meta.model) : ''}
+              context={menuContext}
+              projectName={menuProjectName}
+              {projects}
+              selectedId={switcherProjectId}
+              {git}
+              onNewSession={newChat}
+              onOpenGit={activeProject ? () => (gitOpen = true) : null}
+              onOpenContext={() => (contextOpen = true)}
+              onSelectScope={(value) => navigate(scopePath(value))}
+            />
           {/if}
         {/snippet}
       </PageHeader>
@@ -1269,7 +1323,7 @@
           onRestoreReport={(seq) => changeReportDismissal(seq, false)}
         />
         {/if}
-        <div bind:clientHeight={overlayH} class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/90 to-transparent px-3 pb-[max(1.25rem,env(safe-area-inset-bottom))] pt-10 sm:px-4">
+        <div bind:clientHeight={overlayH} data-testid="composer-dock" class="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-background via-background/90 to-transparent px-3 pb-[max(1.25rem,var(--safe-bottom))] pt-10 sm:px-4">
           <div class="pointer-events-auto mx-auto flex w-full max-w-3xl flex-col gap-2">
             {#if currentId && meta?.compressBlock}
               {@const bannerFor = currentId}

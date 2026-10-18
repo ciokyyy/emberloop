@@ -523,7 +523,9 @@
     {/each}
   </div>
   {#if !stuck && blocks.length}
-    <div class="sticky bottom-2 flex justify-center">
+    <!-- The transcript reserves the composer dock in its own padding, so the
+         sticky jump stays above it. -->
+    <div class="sticky bottom-2 flex justify-center" data-testid="latest-jump">
       <Button variant="secondary" size="sm" class="shadow-lg" onclick={jumpLatest}>↓ Latest</Button>
     </div>
   {/if}

@@ -93,8 +93,8 @@ function toolStrip(output = 'line one') {
   };
 }
 
-function mountTranscript({ blocks = [message()], hasMore = false, onLoadEarlier = null } = {}) {
-  const rendered = render(Transcript, { props: { blocks, hasMore, onLoadEarlier, bottomPad: 0 } });
+function mountTranscript({ blocks = [message()], hasMore = false, onLoadEarlier = null, bottomPad = 0 } = {}) {
+  const rendered = render(Transcript, { props: { blocks, hasMore, onLoadEarlier, bottomPad } });
   const scroll = rendered.container.querySelector('[data-testid="transcript-scroll"]');
   const metrics = { scrollHeight: 2000, clientHeight: 600 };
   Object.defineProperties(scroll, {

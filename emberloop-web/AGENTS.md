@@ -234,6 +234,21 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   safe-area insets under `md`. `phone.svelte.js` `createPhone()` is the phone
   breakpoint flag (`md`, 767 px) for Runs and Tickets; `ui/segmented.svelte` is
   the shared view switch and tablist.
+- Phone chat shell: `web/src/lib/viewport.js` follows `window.visualViewport`
+  on phones and publishes `--app-height`, `--kb-inset` and
+  `html[data-keyboard]`; `.app-shell` takes the visible height and the composer
+  dock pads with `--safe-bottom`, so the composer sits above the on-screen
+  keyboard and the home-indicator inset drops while the keyboard covers it. The
+  phone chat header is the title, the status glyph, the context ring and one
+  `ChatMenu` button whose sheet holds New Session, Git, the model/context row
+  and the Project scope (one sheet, a Project view); the drawer keeps the
+  Project switcher, the Session list and the five area tabs. `overlayBack.js`
+  holds the sheets' one transient history entry: system Back closes the top
+  sheet, a UI close pops the entry, `carryBack` hands it to a sheet opening
+  next, `closeBacks` lets a navigation take it over, and App leaves popstate
+  routing alone while a sheet is open. Bottom sheets, the context sheet, the
+  message-action sheet and the Git panel take part; `Transcript`'s Latest jump
+  stays inside the padding it reserves for the composer dock.
 
 ## Adapter retry
 

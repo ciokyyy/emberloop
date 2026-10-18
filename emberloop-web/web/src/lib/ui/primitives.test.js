@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/svelte';
 import { createRawSnippet } from 'svelte';
 import { Gauge } from '@lucide/svelte';
@@ -21,8 +21,12 @@ import { SHELL_KEY } from '../shell.js';
 import { icons, statusIcons, statusLabels, providerGlyph } from '../icons.js';
 import { areas } from '../areas.js';
 import { settingsIcons } from '../settingsIcons.js';
+import { resetBackStack } from '../overlayBack.js';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  resetBackStack();
+});
 
 const text = (value) => createRawSnippet(() => ({ render: () => `<span>${value}</span>` }));
 
@@ -304,6 +308,28 @@ describe('BottomSheet', () => {
     // The close control is a named icon button; bits-ui owns Escape and the
     // backdrop, and RunsView covers the bind:open round trip.
     expect(screen.getByRole('button', { name: 'Close' })).toBeTruthy();
+  });
+  it('closes on system Back and drops the entry it held', async () => {
+    const back = vi.spyOn(history, 'back').mockImplementation(() => {});
+    let open = true;
+    const props = {
+      get open() {
+        return open;
+      },
+      set open(value) {
+        open = value;
+      },
+      title: 'Palette',
+      children: text('Sheet body'),
+    };
+    render(BottomSheet, { props });
+    await screen.findByRole('dialog', { name: 'Palette' });
+    expect(history.state?.elSheet).toBe(1);
+
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await vi.waitFor(() => expect(open).toBe(false));
+    resetBackStack();
+    back.mockRestore();
   });
 });
 

@@ -8,10 +8,17 @@
   import Tooltip from './ui/tooltip.svelte';
   import EmptyState from './ui/empty-state.svelte';
   import { icons } from './icons.js';
+  import { holdBack } from './overlayBack.js';
 
   // onCompress is set for Sessions that can compress. busy disables it. compressNote, when set, disables it too and gives the reason.
-  let { model = '', usage = null, onCompress = null, busy = false, compressing = false, compressNote = '' } = $props();
-  let open = $state(false);
+  // `open` is bindable so the phone Session menu can open the same sheet.
+  let { model = '', usage = null, onCompress = null, busy = false, compressing = false, compressNote = '', open = $bindable(false) } = $props();
+
+  // System Back closes the detail sheet, like every other sheet.
+  $effect(() => {
+    if (!open) return;
+    return holdBack(() => (open = false));
+  });
   const R = 7;
   const C = 2 * Math.PI * R;
   const pct = $derived(usage ? Math.min(100, Math.round((usage.used / usage.size) * 100)) : 0);
@@ -48,7 +55,7 @@
     <Dialog.Overlay class="motion-emphasis fixed inset-0 z-50 bg-black/50 backdrop-blur-sm data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 md:bg-transparent md:backdrop-blur-none" />
     <Dialog.Content
       data-testid="context-sheet"
-      class="motion-emphasis fixed z-50 flex flex-col gap-4 border bg-surface-2 p-4 text-fg-1 shadow-elev-3 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 max-md:inset-x-0 max-md:bottom-0 max-md:rounded-t-2xl max-md:pb-[max(1rem,env(safe-area-inset-bottom))] max-md:data-[state=closed]:slide-out-to-bottom max-md:data-[state=open]:slide-in-from-bottom md:right-6 md:top-16 md:w-80 md:rounded-2xl"
+      class="motion-emphasis fixed z-50 flex flex-col gap-4 border bg-surface-2 p-4 text-fg-1 shadow-elev-3 outline-none data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:animate-in data-[state=open]:fade-in-0 max-md:inset-x-0 max-md:bottom-[var(--kb-inset)] max-md:rounded-t-2xl max-md:pb-[max(1rem,var(--safe-bottom))] max-md:data-[state=closed]:slide-out-to-bottom max-md:data-[state=open]:slide-in-from-bottom md:right-6 md:top-16 md:w-80 md:rounded-2xl"
     >
       <div class="flex items-center gap-2">
         <Dialog.Title class="min-w-0 flex-1 truncate text-title">Context window</Dialog.Title>

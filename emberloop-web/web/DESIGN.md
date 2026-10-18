@@ -159,7 +159,9 @@ Rail (desktop) and drawer tabs (phone) carry a needs-you dot on an area that nee
 
 ## Chat chrome
 
-The chat header is `PageHeader size="compact"`: title, one `ChatStatus` glyph (reconnecting alert, pulsing working dot, live dot; the word is the tooltip and accessible name), then icon buttons: the `ContextMeter` ring (percent in its name; tap opens a bottom sheet under `md`, an anchored panel above, with model, tokens and Compress), New Session (phone) and Git (a dot marks changed files). The Project chip hides under `sm`. Everything shows on one line at 360 px.
+The chat header is `PageHeader size="compact"`: title, one `ChatStatus` glyph (reconnecting alert, pulsing working dot, live dot; the word is the tooltip and accessible name), then icon buttons: the `ContextMeter` ring (percent in its name; tap opens a bottom sheet under `md`, an anchored panel above, with model, tokens and Compress) and Git on desktop (a dot marks changed files). The Project chip hides under `sm`. Everything shows on one line at 360 px.
+
+On a phone the header is the title, the status glyph, the context ring and one `ChatMenu` button: its sheet (`Session`) holds New Session, Git, the model with its context line, and the Project row, which switches the same sheet to the Project scope list instead of stacking a second one. New Session and Git leave the header there. The drawer keeps the Project switcher, the Session list and the five area tabs.
 
 The composer is icon controls only. While working, the mode switch is two icon toggles (Steer `icons.steer`, Follow-up `icons.followUp`; the active one is filled) and the send button wears the active mode's glyph (arrow for a plain prompt), so the mode reads without words; Enter sends. Remember is a toggle (`aria-pressed` while the draft carries `/remember`). The Working indicator is the spinner plus the running tool trimmed to 14 characters. The Compress banner is one line with Retry, Change compress model and Dismiss as `IconButton`s. The tool strip is collapsed to one summary line (status, one icon per tool kind, current tool or `N tools · Xs`, timer, chevron); the line toggles the stage and history, and a failed strip starts open.
 
@@ -173,6 +175,7 @@ One record, three shapes: the User speaks in a bubble on the right, the agent an
 - **Action surfaces.** Desktop: an anchored icon toolbar (Copy text, Copy Markdown, Share, Edit and resend / Edit, Cancel) with tooltips; Cancel wears the canceled row's `Ban` glyph, not Dismiss. Phone: the same group as a bottom sheet with a title row, a Close `IconButton`, a dimmed scrim and 44 px icon-over-label tiles. The card keeps its entrance animation on an inner wrapper so the fixed sheet is placed against the viewport, not a transformed row. Retry stays the Compress banner action: a message action never re-runs a turn.
 - **Report notice.** A full-width `surface-1` notice: icon tile, the report title (`Subagent report` / `N subagent reports`), the group line `Subagents <group> finished` with a one-line summary, the counts (a `Chip` above `sm`, its own caption line on phone), a chevron for the member detail and a Dismiss `IconButton`. The parsed report rides the transcript block (`report`), so dismissal hides the notice and the App filter can restore it from the tray.
 - **Reports tray.** Sticky above the transcript: one panel with a count `Chip` and `N in transcript`, then rows (group name, counts · summary, Dismissed `Chip`) that open to the body and a Restore button. The list caps at `max-h-[min(60dvh,24rem)]` and scrolls inside, so 1 and 10 reports never grow the page. A Session row keeps `Row`'s unread dot until the Session is opened.
+- **Scroll to latest.** `↓ Latest` is sticky at the transcript's reserved bottom padding, so it clears the composer dock and never covers it. Its `data-testid` is `latest-jump`.
 
 ## Settings, Memory, Providers
 
@@ -187,6 +190,12 @@ Providers use the Quota card: same article, icon tile, `text-title` name and `Qu
 ## Auth and first run
 
 The Root gate never paints a blank page: while it probes the session it shows `Skeleton` rows under `role="status"`, and when the Daemon does not answer it shows an `ErrorState` with the `Try again` action. The sign-in screen is one centred column of `max-w-sm`: a 56 px brand tile, the `text-headline` question (sign in, create an account, create the admin account on an empty Daemon), one caption line, then the form. Under md the form is bare and full width with the page safe area; from md it sits in a bordered card (`rounded-2xl border bg-card p-6 shadow-elev-1`). The submit button is the only primary action and carries the busy spinner; the mode switch is a ghost button under the form and only appears when signup is open. A failed attempt is the `compact` `ErrorState` in the form, and the password rules stay in the one caption line.
+
+## Phone shell and sheets
+
+The shell (`.app-shell`) takes `--app-height`, published from `window.visualViewport` by `lib/viewport.js` on phones: the on-screen keyboard shrinks the visual viewport without resizing the layout viewport, so the shell follows it and the composer dock stays above the keyboard. `--kb-inset` is the covered height and `html[data-keyboard="open"]` drops `--safe-bottom` to `0px`, because the keyboard covers the home indicator; bottom sheets sit at `bottom: var(--kb-inset)`. Above `md` no variable is set and the shell keeps `100dvh`.
+
+Every sheet shares one transient history entry (`lib/overlayBack.js`): system Back or the swipe-back gesture closes the top sheet, and a sheet closed from its own UI pops the entry it held, so Back never replays a closed sheet. `BottomSheet`, the context sheet, the message-action sheet and the Git panel take part; the phone drawer keeps the entry App already held for it. App leaves popstate routing to the module while a sheet is open, and a navigation takes the entry over. A sheet that opens another hands the entry across (`carryBack`) instead of closing and pushing.
 
 ## Checklist for a new page
 

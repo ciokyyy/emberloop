@@ -734,7 +734,7 @@ describe('Sidebar collapse', () => {
     expect(within(container).queryByLabelText('composer')).toBeNull();
     expect(within(container).queryByTestId('context-meter')).toBeNull();
   });
-  it('keeps the chat header to icon controls: status glyph, context ring, New and Git', async () => {
+  it('keeps the chat header to icon controls: status glyph, context ring, Git and the Session menu', async () => {
     stubApp();
     history.replaceState(null, '', '/s/s1');
     vi.stubGlobal('EventSource', class { close() {} });
@@ -758,11 +758,60 @@ describe('Sidebar collapse', () => {
     });
     expect(within(header).getByRole('status', { name: 'Live' })).toBeTruthy();
     expect(await within(header).findByRole('button', { name: 'Context 15% used' })).toBeTruthy();
-    expect(within(header).getByRole('button', { name: 'New Session' })).toBeTruthy();
+    // New Session lives in the phone Session menu, which stays icon-only too.
+    expect(within(header).getByRole('button', { name: 'Session menu' })).toBeTruthy();
     const git = await within(header).findByRole('button', { name: 'Git: main, 2 changed' });
     expect(git.textContent.trim()).toBe('');
     expect(header.textContent).not.toMatch(/% ctx/);
     for (const b of header.querySelectorAll('button')) expect(b.textContent.trim(), b.getAttribute('aria-label')).toBe('');
+  });
+  it('opens the phone Session menu from the chat header and closes it with system Back', async () => {
+    stubApp();
+    history.replaceState(null, '', '/s/s1');
+    vi.stubGlobal('EventSource', class { close() {} });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (u) => {
+        if (String(u).includes('/queue')) return { ok: true, json: async () => ({ queue: [] }) };
+        if (String(u).includes('/git')) return { ok: true, json: async () => ({ isRepo: true, branch: 'main', files: [] }) };
+        if (String(u).includes('/api/sessions/s1')) return { ok: true, json: async () => ({ session: sessionsBody[0], events: [], resumable: true, hasMore: false, firstSeq: 0 }) };
+        if (String(u).includes('/api/sessions')) return { ok: true, json: async () => sessionsBody };
+        if (String(u).includes('/api/projects')) return { ok: true, json: async () => projectsBody };
+        if (String(u).includes('/api/users')) return { ok: true, json: async () => usersBody };
+        return { ok: true, json: async () => [] };
+      }),
+    );
+    const { container } = render(App, { props: { user: me } });
+    const header = await vi.waitFor(() => {
+      const el = container.querySelector('[data-page-header]');
+      expect(el?.querySelector('[data-testid="chat-menu"]')).toBeTruthy();
+      return el;
+    });
+    await fireEvent.click(within(header).getByRole('button', { name: 'Session menu' }));
+    const sheet = await screen.findByRole('dialog', { name: 'Session' });
+    expect(sheet.textContent).toContain('New Session');
+    expect(sheet.textContent).toContain('demo');
+
+    await fireEvent.click(within(sheet).getByRole('button', { name: /Switch Project/ }));
+    expect(await screen.findByRole('dialog', { name: 'Project' })).toBeTruthy();
+    await fireEvent.click(screen.getByRole('button', { name: 'Back to Session' }));
+    expect(await screen.findByRole('dialog', { name: 'Session' })).toBeTruthy();
+
+    window.dispatchEvent(new PopStateEvent('popstate'));
+    await vi.waitFor(() => expect(screen.queryByRole('dialog', { name: 'Session' })).toBeNull());
+  });
+  it('keeps the composer dock above the keyboard and the home indicator', async () => {
+    stubApp();
+    history.replaceState(null, '', '/s/s1');
+    const { container } = render(App, { props: { user: me } });
+    const dock = await vi.waitFor(() => {
+      const el = container.querySelector('[data-testid="composer-dock"]');
+      expect(el).toBeTruthy();
+      return el;
+    });
+    expect(container.querySelector('.app-shell')).toBeTruthy();
+    expect(dock.className).toContain('var(--safe-bottom)');
+    expect(within(dock).getByLabelText('composer')).toBeTruthy();
   });
   it('closes the Git panel on Escape and returns focus to its toggle', async () => {
     stubApp();
