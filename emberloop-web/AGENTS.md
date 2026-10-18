@@ -252,6 +252,7 @@ frontmatter lowers it for that Run); Sessions and subagents are uncapped.
   context sheet, the message-action sheet and the Git panel take part;
   `Transcript`'s Latest jump stays inside the padding it reserves for the
   composer dock.
+- Final browser component and layout map: `web/README.md` maps routed pages and implementation tests; `web/DESIGN.md` maps the shared primitives and responsive rules. `web/e2e/tests/layout-sweep.e2e.ts` visits every route pattern from `web/src/lib/router.js` at 390 px and 1280 px, checking document/main/page-scroller overflow, one page header and h1, phone primary targets of at least 44 px, and no hover-only control. `quota-layout.e2e.ts` keeps the additional 800 px Quota probe; `npm run test:e2e` runs both.
 
 ## Adapter retry
 

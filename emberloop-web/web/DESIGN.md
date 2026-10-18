@@ -4,6 +4,7 @@
 
 The reference page is Quota (`src/lib/QuotaPage.svelte`): read it for every primitive in use at 390 px and 1280 px.
 Quota provider cards sit in a container-query grid (single column below `@2xl`) and flow up to three usage windows across (`sm:grid-cols-3`) so row-mate cards stay even. `e2e/tests/quota-layout.e2e.ts` probes 390, 800 and 1280 px; 800 px is extra coverage for the rail plus sidebar layout.
+The final page and chat component map is summarized below; `e2e/tests/layout-sweep.e2e.ts` visits every route pattern at 390 px and 1280 px, checking overflow, one page header and h1, 44 px primary controls, and no hover-only control on phone. `e2e/tests/quota-layout.e2e.ts` adds the 800 px rail-plus-sidebar check.
 
 ## Tokens
 
@@ -135,6 +136,13 @@ All in `src/lib/ui/`, built on `button`, `popover` and bits-ui, using only the t
 
 Existing shadcn primitives (`Button`, `Badge`, `Dialog`, `Sheet`, `Select`, `Combobox`, ...) stay; `Chip` is for status and facts, `Badge` for legacy uses.
 
+## Component map
+
+- **Shell and pages:** `App.svelte` routes the shared `PageHeader` and `Rail`/`DrawerNav` through `DashboardPage`, `ProjectSettingsPage`, `RunsView`/`TicketPage`, `SettingsHub`/`SettingsPage`, `QuotaPage`, `ProvidersPage` and `MemoryPage`. `Root.svelte` owns the `AuthScreen` gate.
+- **Chat:** `ChatMenu`, `ChatStatus`, `ContextMeter` and `WorkingIndicator` keep the header and composer compact; `Transcript`, `Card`, `MessageActions`, `ReportsTray`, `GroupCard` and `ToolStrip` own conversation content and reports.
+- **Shared layout and states:** `PageHeader`, `Section`, `Row`, `StatCard`, `Chip`, `IconButton`, `Tooltip`, `EmptyState`, `ErrorState`, `Skeleton`, `InfoHint`, `Panel`, `SettingRow`, `Segmented` and `BottomSheet` are the reusable primitives above.
+- `web/README.md` is the detailed source map and test inventory; the route layout sweep, Quota layout probe, shell layout and phone chat probes live in `e2e/tests/`.
+
 ## Rules
 
 ### Icon rule
@@ -147,7 +155,7 @@ At most one paragraph of help text is visible by default on any page. The rest s
 
 ### Responsive rule
 
-Every design change specifies both layouts and says what phone omits. Phone (`<md`): single column, bottom-anchored primary action, sheets for secondary panels, 44 px touch targets (`max-md:` sizes), safe-area insets (`env(safe-area-inset-*)`), no hover-only controls. Desktop: persistent navigation, side panels, hover affordances with keyboard equivalents. Grids that sit beside the rail and second sidebar switch columns on the content column's width (container queries, `@container` + `@2xl:grid-cols-2`), not the viewport (`md:`), so 768 to 990 px viewports stay single column. Verify at 390 px and 1280 px (and about 800 px for pages with the sidebar): no horizontal scroll, every control reachable by keyboard with a visible focus ring.
+Every design change specifies both layouts and says what phone omits. Phone (`<md`): single column, bottom-anchored primary action, sheets for secondary panels, 44 px touch targets (`max-md:` sizes), safe-area insets (`env(safe-area-inset-*)`), no hover-only controls. Desktop: persistent navigation, side panels, hover affordances with keyboard equivalents. Grids that sit beside the rail and second sidebar switch columns on the content column's width (container queries, `@container` + `@2xl:grid-cols-2`), not the viewport (`md:`), so 768 to 990 px viewports stay single column. `e2e/tests/layout-sweep.e2e.ts` verifies every routed page at 390 px and 1280 px; Quota also gets 800 px coverage. Every control remains keyboard reachable with a visible focus ring.
 
 ### State rule
 
