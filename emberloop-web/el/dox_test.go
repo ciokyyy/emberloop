@@ -8,6 +8,7 @@ package el
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -136,21 +137,25 @@ func doxTreeProblems(root string) []string {
 	return problems
 }
 
-// doxRepoRoot finds the checkout root from a package directory: the first
-// ancestor holding an emberloop-web subdirectory (the one Go module).
+// doxRepoRoot finds the checkout root from this test's source location, not
+// the test process's working directory, which may vary with the caller.
 func doxRepoRoot(t *testing.T) string {
 	t.Helper()
-	dir, err := os.Getwd()
+	_, source, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("cannot locate dox_test.go")
+	}
+	file, err := filepath.Abs(source)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for {
+	for dir := filepath.Dir(file); ; {
 		if _, err := os.Stat(filepath.Join(dir, "emberloop-web")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
-			t.Fatal("no emberloop-web directory found above " + dir)
+			t.Fatal("no emberloop-web directory above " + file)
 		}
 		dir = parent
 	}
@@ -159,6 +164,26 @@ func doxRepoRoot(t *testing.T) string {
 func TestDoxTreeIndexIsComplete(t *testing.T) {
 	if problems := doxTreeProblems(doxRepoRoot(t)); len(problems) > 0 {
 		t.Errorf("DOX tree index is incomplete:\n- %s", strings.Join(problems, "\n- "))
+	}
+}
+
+func TestDoxRepoRootIgnoresWorkingDirectory(t *testing.T) {
+	original, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(t.TempDir()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := os.Chdir(original); err != nil {
+			t.Errorf("restore working directory: %v", err)
+		}
+	}()
+
+	root := doxRepoRoot(t)
+	if _, err := os.Stat(filepath.Join(root, "emberloop-web", "el", "dox_test.go")); err != nil {
+		t.Fatalf("resolved root %q does not contain this test: %v", root, err)
 	}
 }
 
