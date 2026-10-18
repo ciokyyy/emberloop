@@ -608,7 +608,7 @@
                 <div class="flex justify-between gap-3"><dt class="text-fg-3">Extractor + embedder per day</dt><dd class="tabular-nums">${(Number(status.metrics.extractorCostUsd || 0) + Number(status.metrics.embedderCostUsd || 0)).toFixed(4)}</dd></div>
               </dl>
               <p class="text-caption text-fg-3">Forgotten target: under 20%.</p>
-              {#if status.metrics.costAlert}<p role="alert" class="text-caption text-status-failed">Above $0.05/day</p>{/if}
+              {#if status.metrics.costAlert}<ErrorState compact title="Above $0.05/day" class="mt-2" />{/if}
             </Panel>
           {/if}
         </Section>

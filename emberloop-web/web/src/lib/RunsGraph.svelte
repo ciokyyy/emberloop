@@ -58,11 +58,14 @@
   ];
 
   // Pan, wheel and pinch zoom come from @panzoom/panzoom; animate eases
-  // every programmatic move (buttons, keys, reset).
+  // every programmatic move (buttons, keys, reset) at the standard motion step.
   $effect(() => {
     const el = canvas;
     const host = viewport;
     if (!el || !host) return;
+    const styles = getComputedStyle(document.documentElement);
+    const duration = Number.parseFloat(styles.getPropertyValue('--dur-standard')) || 180;
+    const easing = styles.getPropertyValue('--ease-smooth').trim() || 'cubic-bezier(0.22, 1, 0.36, 1)';
     const instance = Panzoom(el, {
       origin: '0 0',
       maxScale: 2.5,
@@ -70,8 +73,8 @@
       step: 0.2,
       cursor: 'grab',
       animate: true,
-      duration: 220,
-      easing: 'cubic-bezier(0.22, 1, 0.36, 1)',
+      duration,
+      easing,
       excludeClass: 'panzoom-exclude',
       // Inline: leave vertical touch drags to the page.
       touchAction: fullscreen ? 'none' : 'pan-y',

@@ -401,9 +401,7 @@
     <span class="mr-2 font-medium">✓ {block.title}</span><span class="text-muted-foreground">{block.body}</span>
   </div>
 {:else if block.card === 'error'}
-  <div class="animate-rise rounded-2xl border border-destructive/40 bg-destructive/10 px-4 py-2.5 text-sm" role="alert" data-card="error">
-    <span class="font-medium">Error: </span>{block.body}
-  </div>
+  <ErrorState compact title={block.body} class="animate-rise" data-card="error" />
 {:else if block.card === 'group'}
   <GroupCard block={block} {sessions} {onOpenSession} />
 {:else if block.card === 'subagent'}
