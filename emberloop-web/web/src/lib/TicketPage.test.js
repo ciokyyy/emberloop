@@ -455,10 +455,14 @@ describe('TicketPage', () => {
     // The tabs follow the lead; the transcript and facts start hidden.
     const tabs = within(page).getByRole('tablist', { name: 'Ticket sections' });
     expect(lead.compareDocumentPosition(tabs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // On phone only the Status panel is up: no transcript, no facts panel.
+    expect(within(page).queryByTestId('worker-transcript')).toBeNull();
+    expect(within(page).queryByTestId('ticket-panel')).toBeNull();
+    expect(within(page).queryByTestId('worker-composer')).toBeNull();
+    expect(within(page).getByTestId('state-track')).toBeTruthy();
     // The tablist and the panel are linked both ways for assistive tech.
     expect(within(tabs).getByRole('tab', { name: 'Status' }).getAttribute('aria-controls')).toBe('ticket-tabpanel');
     expect(within(page).getByRole('tabpanel').getAttribute('id')).toBe('ticket-tabpanel');
-    expect(within(page).getByTestId('state-track')).toBeTruthy();
 
     await fireEvent.click(within(tabs).getByRole('tab', { name: 'Facts' }));
     await within(page).findByTestId('ticket-panel');
