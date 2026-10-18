@@ -505,3 +505,44 @@ func TestCleanTipSHATrimsAppendedProse(t *testing.T) {
 		t.Fatalf("repaired ReviewTips = %q, want %q", got, sha)
 	}
 }
+
+// A paused design Ticket's Worker resumes on the worker-design Chain, not the
+// worker Chain, and the Chain position is stored under worker-design.
+func TestTicketResumeDesignWorkerUsesDesignChain(t *testing.T) {
+	t.Parallel()
+	repo, spec := initRunRepo(t, map[string]string{
+		"01-design.md": "# 01: Design\n\n**Type:** design\n\n**Blocked by:** None\n\n**Status:** open\n\n- [ ] alpha\n",
+	})
+	settingsPath := useSettings(t, `{"chains":{"worker":[{"backend":"pig","model":"code-model","effort":"max"}],"worker-design":[{"backend":"pig","model":"design-model","effort":"high"}]}}`)
+	d := runTestDaemon(t, tempDir(t), NewFakeBackend())
+	d.SetSettingsPath(settingsPath)
+	srv := newRunTestServer(t, d)
+	defer srv.Close()
+
+	run := startRun(t, srv.URL, spec, repo, "fake", "fake-model")
+	r := waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		return ticketByID(r, "01-design").WorkerSession != ""
+	}, "design Worker started")
+	worker := ticketByID(r, "01-design").WorkerSession
+	if got := getSession(t, srv.URL, worker).Meta.Model; got != "design-model" {
+		t.Fatalf("first design Worker model = %q, want design-model", got)
+	}
+	if code, _, errText := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/tickets/01-design/pause", map[string]string{}); code != http.StatusOK {
+		t.Fatalf("Ticket pause = %d (%s), want 200", code, errText)
+	}
+	if code, _, errText := postRunJSON(t, srv.URL, "/api/runs/"+run.ID+"/tickets/01-design/resume", map[string]string{}); code != http.StatusOK {
+		t.Fatalf("Ticket Resume = %d (%s), want 200", code, errText)
+	}
+	r = waitRunCond(t, srv.URL, run.ID, func(r runJSON) bool {
+		next := ticketByID(r, "01-design").WorkerSession
+		return next != "" && next != worker
+	}, "replacement design Worker")
+	next := getSession(t, srv.URL, ticketByID(r, "01-design").WorkerSession)
+	if next.Meta.Harness != "pig" || next.Meta.Model != "design-model" || next.Meta.Effort != "high" {
+		t.Fatalf("resumed design Worker = %s/%s/%s, want pig/design-model/high", next.Meta.Harness, next.Meta.Model, next.Meta.Effort)
+	}
+	if pos := ticketByID(r, "01-design").Chain["worker-design"].Position; pos != 1 {
+		t.Fatalf("worker-design Chain position = %d, want 1", pos)
+	}
+	pauseTestRun(t, srv.URL, run.ID)
+}

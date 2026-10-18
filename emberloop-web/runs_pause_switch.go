@@ -503,11 +503,17 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 	branch, worktree, repo := rs.Branches[ticketID], rs.Worktrees[ticketID], rs.Repo
 	spec, ticketFile, base := rs.Spec, ticketPath(rs, ticketID), rs.Bases[ticketID]
 	owner, noRecall := rs.Owner, rs.RecallOff[ticketID]
-	chain := runRoleChain(rs, ticketID, role)
+	// The paused-role marker stays "worker", but a design Ticket's Worker
+	// runs on the worker-design Chain, position and prompt.
+	chainRole := role
+	if role == "worker" {
+		chainRole = runWorkerRole(rs, ticketID)
+	}
+	chain := runRoleChain(rs, ticketID, chainRole)
 	if len(chain) == 0 {
 		chain = []chainEntry{{Backend: rs.Harness, Model: rs.Model, Effort: rs.Effort}}
 	}
-	position := clampChainPosition(chainPosition(rs, ticketID, role), len(chain))
+	position := clampChainPosition(chainPosition(rs, ticketID, chainRole), len(chain))
 	entry := chain[position]
 	if role == "worker" && branch == "" {
 		// An unstarted Ticket has no branch or Session to hand off; clear its
@@ -544,7 +550,7 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 	if role != "worker" {
 		tip, _ = runGit(repo, "rev-parse", branch)
 	}
-	task := d.runFallbackTaskPrompt(runID, ticketID, role, branch, worktree, repo, spec, ticketFile, base, tip)
+	task := d.runFallbackTaskPrompt(runID, ticketID, chainRole, branch, worktree, repo, spec, ticketFile, base, tip)
 	if task == "" {
 		be.CloseSession(meta.ID)
 		d.removeSession(meta.ID)
@@ -572,7 +578,7 @@ func (d *Daemon) resumePausedRunRole(runID, ticketID, role string) error {
 		d.removeSession(meta.ID)
 		return fmt.Errorf("ticket %s Reviewer changed during Resume", ticketID)
 	}
-	setChainPosition(rs, ticketID, role, position)
+	setChainPosition(rs, ticketID, chainRole, position)
 	if role == "worker" {
 		rs.Sessions[ticketID] = meta.ID
 		if rs.ChainPendingSubmit == nil {
