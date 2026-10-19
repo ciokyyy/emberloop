@@ -129,8 +129,13 @@ type Daemon struct {
 	previewMu       sync.Mutex
 	previewPorts    map[string]int
 	previewReserved map[int]string
-	sessions        map[string]*session
-	backends        map[string]Backend
+	// bgMu guards backgrounds: the commands the Daemon runs for a Session
+	// outside its turn, started by the background tool and shown in the
+	// browser's Processes panel.
+	bgMu        sync.Mutex
+	backgrounds map[string]map[string]*backgroundProcess
+	sessions    map[string]*session
+	backends    map[string]Backend
 	// groups tracks one spawn call each: its parent and members, so the
 	// last member to finish delivers one grouped result as a Steer.
 	groups map[string]*spawnGroup
@@ -366,6 +371,7 @@ func NewDaemon(stateDir string, backend Backend) *Daemon {
 	d.mu.Lock()
 	d.rebuildRunSessionIndexLocked()
 	d.mu.Unlock()
+	d.healStrandedSessions()
 	d.loadProjects()
 	return d
 }
@@ -2258,8 +2264,9 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		start, end := 0, len(events)
 		if hasBefore {
 			start, end = beforeWindow(events, before, turns)
+			start = capWindow(events, start, end)
 		} else if tail >= 0 {
-			start = atStart(events, tailStart(events, tail), at)
+			start = atStart(events, capWindow(events, tailStart(events, tail), len(events)), at)
 		}
 		window, firstSeq, hasMore := snapshotWindow(events, start, end)
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -2399,6 +2406,8 @@ func (d *Daemon) handleSessionSub(w http.ResponseWriter, r *http.Request) {
 		d.handleSessionRecall(w, r, id)
 	case sub == "promote" && r.Method == "POST":
 		d.handleSessionPromote(w, r, id)
+	case sub == "background" || strings.HasPrefix(sub, "background/"):
+		d.handleSessionBackground(w, r, id, strings.TrimPrefix(strings.TrimPrefix(sub, "background"), "/"))
 	default:
 		http.NotFound(w, r)
 	}

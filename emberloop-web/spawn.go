@@ -480,6 +480,9 @@ func (d *Daemon) endSession(id string) (SessionMeta, int) {
 		be.CloseSession(id)
 	}
 	d.stopPreview(id, workDir, designSession)
+	// Background commands die with the Session, whether or not it is a design
+	// Session: a Run worker's watcher or test server must not outlive it.
+	d.stopSessionBackgrounds(id, workDir)
 	d.closeBrowser(id, false)
 	// Attached images die with the Session (see above).
 	_ = os.RemoveAll(d.sessionImagesDir(id))

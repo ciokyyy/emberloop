@@ -42,7 +42,7 @@
   {...rest}
 >
   {#snippet trigger()}
-    <span class="min-w-0 flex-1 break-words max-md:line-clamp-2 md:truncate">{selected?.label ?? placeholder}{#if selected?.detail}<span class="text-muted-foreground"> · {selected.detail}</span>{/if}</span>
+    <span class="min-w-0 flex-1 break-words line-clamp-2" title={selected ? `${selected.value}` : undefined}>{selected?.label ?? placeholder}{#if selected?.detail}<span class="text-muted-foreground"> · {selected.detail}</span>{/if}</span>
     <ChevronDown class="size-4 shrink-0 text-muted-foreground" />
   {/snippet}
   {#key open}

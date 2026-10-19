@@ -2763,6 +2763,30 @@ function Signpost($$renderer, $$props) {
   };
   Icon($$renderer, spread_props([props, { icon: iconData }]));
 }
+function Square_terminal($$renderer, $$props) {
+  let { $$slots, $$events, ...props } = $$props;
+  const iconData = {
+    "name": "square-terminal",
+    "size": 24,
+    "node": [
+      ["path", { "d": "m7 11 2-2-2-2" }],
+      ["path", { "d": "M11 13h4" }],
+      [
+        "rect",
+        {
+          "width": "18",
+          "height": "18",
+          "x": "3",
+          "y": "3",
+          "rx": "2",
+          "ry": "2"
+        }
+      ]
+    ],
+    "aliases": ["terminal-square"]
+  };
+  Icon($$renderer, spread_props([props, { icon: iconData }]));
+}
 function Ticket($$renderer, $$props) {
   let { $$slots, $$events, ...props } = $$props;
   const iconData = {
@@ -17439,7 +17463,9 @@ const icons = Object.freeze({
   // Re-reading live data (quota, status). Retry is re-running a failed action.
   refresh: Refresh_cw,
   // The model a Session or action runs on.
-  model: Cpu
+  model: Cpu,
+  // A command the background tool runs outside the turn.
+  process: Square_terminal
 });
 const statusIcons = Object.freeze({
   working: Loader,

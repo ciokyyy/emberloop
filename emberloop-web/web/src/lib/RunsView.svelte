@@ -23,6 +23,7 @@
   import { people, personFor } from './people.svelte.js';
   import { ticketTypeOf, blockersLabel } from './ticketPage.js';
   import RunsGraph from './RunsGraph.svelte';
+  import TicketPage from './TicketPage.svelte';
   import { startRun, getRun, openRunStream, pauseRun, resumeRun, pauseTicket as pauseRunTicket, resumeTicket as resumeRunTicket, switchRun as switchRunBackend, switchTicket as switchTicketBackend, rebaseRun, abandonRun, setRunTicketType } from './api.js';
   import RunSwitchPicker from './RunSwitchPicker.svelte';
   import { soundPlayer, runTransitions, seedRun } from './sound.js';

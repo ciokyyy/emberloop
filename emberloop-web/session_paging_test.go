@@ -320,3 +320,18 @@ func TestMatchUIRoute(t *testing.T) {
 		}
 	}
 }
+
+func TestCapWindowBoundsOneHugeTurn(t *testing.T) {
+	events := make([]Event, 0, 2000)
+	events = append(events, Event{Seq: 1, Kind: "prompt"})
+	for i := 2; i <= 2000; i++ {
+		events = append(events, Event{Seq: int64(i), Kind: "thinking_chunk"})
+	}
+	events[len(events)-maxWindowEvents] = Event{Seq: int64(len(events) - maxWindowEvents + 1), Kind: "tool_call_updated"}
+	if got := capWindow(events, 0, len(events)); len(events)-got > maxWindowEvents || events[got].Kind == "tool_call_updated" {
+		t.Fatalf("capWindow = %d (%s), window too big or starts on an orphan update", got, events[got].Kind)
+	}
+	if got := capWindow(events[:10], 0, 10); got != 0 {
+		t.Fatalf("capWindow on small log = %d, want 0", got)
+	}
+}

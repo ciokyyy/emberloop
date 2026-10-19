@@ -64,6 +64,27 @@ func beforeWindow(events []Event, before int64, n int) (start, end int) {
 	return tailStart(events[:end], n), end
 }
 
+// maxWindowEvents caps one paged window. A turn can hold thousands of events
+// (a long Run Worker is one prompt plus thousands of thought chunks), and a
+// page that size freezes the browser.
+const maxWindowEvents = 600
+
+// capWindow moves start forward so [start, end) holds at most maxWindowEvents
+// events, never starting on a tool_call_updated whose tool_call_started was cut.
+func capWindow(events []Event, start, end int) int {
+	if end > len(events) {
+		end = len(events)
+	}
+	if end-start <= maxWindowEvents {
+		return start
+	}
+	start = end - maxWindowEvents
+	for start < end && events[start].Kind == "tool_call_updated" {
+		start++
+	}
+	return start
+}
+
 // toolUpdateID reports the tool call id of a tool_call_updated Event.
 func toolUpdateID(e Event) (string, bool) {
 	if e.Kind != "tool_call_updated" {

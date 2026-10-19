@@ -36,6 +36,17 @@ export function splitModel(model) {
   return { provider: text.slice(0, i), name: text.slice(i + 1) };
 }
 
+// A pig picker row. Aggregator ids carry a vendor prefix ("relace/deepseek-ai/
+// DeepSeek-V4.1-Flash"): the label keeps the model name alone so it fits, and
+// the vendor joins the provider on the muted detail line.
+function pigItem(model) {
+  const { provider, name } = splitModel(model);
+  if (!provider) return { value: model, label: model, detail: '' };
+  const cut = name.lastIndexOf('/');
+  if (cut < 0) return { value: model, label: name, detail: provider };
+  return { value: model, label: name.slice(cut + 1), detail: `${provider} · ${name.slice(0, cut)}` };
+}
+
 // Picker items for a harness: [{ value, label, detail }]. Pig rows carry the
 // provider as detail (name on top, provider underneath) and sort by provider
 // then name, so one provider's models read as a group; other harnesses keep
@@ -43,10 +54,7 @@ export function splitModel(model) {
 // Daemon no longer lists it, so a stored choice never vanishes.
 export function modelItems(harness, models, current = '') {
   const items = models.map((m) => {
-    if (harness === 'pig') {
-      const { provider, name } = splitModel(m);
-      return { value: m, label: provider ? name : m, detail: provider };
-    }
+    if (harness === 'pig') return pigItem(m);
     return { value: m, label: modelLabel(harness, m) };
   });
   if (items.some((i) => i.detail)) {
@@ -54,8 +62,7 @@ export function modelItems(harness, models, current = '') {
   }
   if (current && !items.some((i) => i.value === current)) {
     if (harness === 'pig') {
-      const { provider, name } = splitModel(current);
-      items.unshift({ value: current, label: provider ? name : current, detail: provider });
+      items.unshift(pigItem(current));
     } else {
       items.unshift({ value: current, label: modelLabel(harness, current) });
     }

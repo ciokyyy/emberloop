@@ -91,18 +91,18 @@ var WebSubmitEnabled = false
 // workers, scouts and Reviewers get recall only (ticket 18), never profile
 // or remember.
 var webProxyRoles = map[string][]string{
-	"web":        {"spawn", "steer", "check", "cancel", "profile", "remember", "recall"},
-	"web-worker": {"spawn", "submit", "recall"},
+	"web":        {"spawn", "steer", "check", "cancel", "profile", "remember", "recall", "background"},
+	"web-worker": {"spawn", "submit", "recall", "background"},
 	"scout":      {"submit", "recall"},
-	"run-worker": {"spawn", "submit", "recall"},
+	"run-worker": {"spawn", "submit", "recall", "background"},
 }
 
 // withWebProxies serves the Daemon-hosted tools for one web role, but only
 // when the process is bound to a Daemon Session: without EL_WEB_PARENT and
 // EL_WEB_DAEMON_URL the role resolves to the core tools alone, so
 // hand-started servers never see them. A proxy replaces the same-named core
-// tool (check): the role cannot serve both the repo checks and the child
-// peek under one name, and the Daemon tool wins.
+// tool (check, background): the role cannot serve both the repo checks and the
+// child peek under one name, so the Daemon tool wins.
 func withWebProxies(role string, base []tools.Tool) []tools.Tool {
 	names, ok := webProxyRoles[role]
 	if !ok {
@@ -155,8 +155,19 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 			known[t.Name()] = true
 		}
 	}
-	taken := map[string]bool{}
+	// Names are claimed per bucket. The main list is flat and served straight
+	// to the harness, so two tools may never share a name there. Behind
+	// execute an MCP tool is called as tools.<server>.<name>, so its plain
+	// name is script-local: an MCP tool placed behind execute must not take a
+	// name out of the main list (a server exposing "execute" used to drop the
+	// bound execute tool entirely).
+	takenMain := map[string]bool{}
+	takenExecute := map[string]bool{}
 	claim := func(final string, t tools.Tool, placement string, where *[]tools.Tool) {
+		taken := takenExecute
+		if placement == tools.PlacementMain {
+			taken = takenMain
+		}
 		if taken[final] {
 			warnf(warn, "settings rename %q collides with a served tool; keeping the first", final)
 			return
@@ -223,6 +234,16 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 			warnf(warn, "unknown tool %q in settings tools; ignoring", name)
 		}
 	}
+	// Every name the role serves natively is reserved before the MCP listing
+	// is claimed: a main-list MCP tool never shadows a tool el serves. The
+	// bound execute counts too, since it is appended after this loop.
+	reservedMain := map[string]bool{}
+	for name := range takenMain {
+		reservedMain[name] = true
+	}
+	if wantExecute {
+		reservedMain["execute"] = true
+	}
 	servers := make([]string, 0, len(mcp))
 	for name := range mcp {
 		servers = append(servers, name)
@@ -264,6 +285,12 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 					t = tools.Renamed(t, final)
 				}
 			}
+			if placement == tools.PlacementMain && reservedMain[final] {
+				shadowed := final
+				final = server + "_" + final
+				warnf(warn, "mcp server %q tool %q collides with el's %q; serving it as %q", server, original, shadowed, final)
+				t = tools.Renamed(t, final)
+			}
 			if placement == tools.PlacementExecute {
 				claim(final, t, placement, &execute)
 			} else {
@@ -272,7 +299,7 @@ func resolveRoleTools(role string, base []tools.Tool, mcp map[string][]tools.Too
 		}
 	}
 	if wantExecute {
-		main = append(main, boundExecuteTool(role, s, main, execute, taken, warn)...)
+		main = append(main, boundExecuteTool(role, s, main, execute, takenMain, warn)...)
 	}
 	return main, execute
 }

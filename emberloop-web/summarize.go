@@ -84,7 +84,13 @@ func pigOneShot(agentDir, model, system, user string, maxTokens int, timeout tim
 		Messages:     []ai.Message{ai.UserMessage{Content: ai.UserText(user), Timestamp: time.Now().UnixMilli()}},
 	})
 	window := catalogWindow(model)
-	stream, err := m.Provider.Stream(ctx, tc, ai.StreamOptions{MaxTokens: maxTokens, Thinking: ai.ThinkingOff})
+	stream, err := m.Provider.Stream(ctx, tc, ai.StreamOptions{
+		MaxTokens: maxTokens,
+		Thinking:  ai.ThinkingOff,
+		// opencode providers refuse a request without a session id (400
+		// MissingSessionID); pig maps this to x-opencode-session.
+		SessionID: fmt.Sprintf("el-oneshot-%d", time.Now().UnixNano()),
+	})
 	if err != nil {
 		return "", overflowOr(err, window)
 	}
@@ -189,7 +195,7 @@ const handoffRefolds = 2
 func writeHandoff(sum handoffSummarizer, model, instructions string, events []Event, note func(string)) handoffResult {
 	system := summaryPrompt(instructions)
 	f := folder{sum: sum, model: model, instructions: instructions, note: note}
-	blocks := summaryBlocks(events)
+	blocks := pruneBlocks(sum, events, summaryBlocks(events), note)
 	budget := sum.Window(model) - len(system) - len(foldPrompt(instructions))
 	for refolds := 0; ; refolds++ {
 		text, err := f.fit(blocks, budget)

@@ -18,7 +18,7 @@ view that fits still answers inline),
 `overflow.go` (the shared store-or-passthrough helper over
 `overflow.threshold_bytes`, head/tail summary, searchable terms, `intent`
 excerpts, `ctx:` handle parsing), `ctxsearch.go` (the `ctx_search` tool and
-the `ctx:` handle reader), `background.go`, `find.go` (semantic search with
+the `ctx:` handle reader), `background.go` (herdr host), `webproxy_background.go` (Daemon host: `StartBackground` serves `bash(background: true)`; the `background` tool has `list`/`read`/`wait`/`stop`, no `start`), `find.go` (semantic search with
 three tagged sources: the decisions-model cascade as `jev`, the lexical
 fallback as `grep`, and the `codebase-memory` index as `graph` when one
 exists for the project, via `findgraph.go`; exact symbol-name graph hits

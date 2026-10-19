@@ -252,11 +252,11 @@ func TestWebRoleMatrixUnderDaemon(t *testing.T) {
 		main, execute []string
 		proxies       []string
 	}{
-		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "remember", "recall", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile", "remember", "recall"}},
-		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "recall", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "recall"}},
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "remember", "recall", "background", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile", "remember", "recall", "background"}},
+		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "ctx_search", "spawn", "recall", "background", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "recall", "background"}},
 		{"scout", []string{"read", "find", "websearch", "ctx_search", "recall", "execute"}, []string{"grep", "git"}, []string{"recall"}},
 		// Run workers keep submit with the flag off: the Run route needs it.
-		{"run-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "recall", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit", "recall"}},
+		{"run-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "ctx_search", "spawn", "submit", "recall", "background", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit", "recall", "background"}},
 	}
 	// No test in this package runs parallel and no other test enables the
 	// flag, so the default-off read here needs no save/restore.
@@ -338,8 +338,8 @@ func TestWebRoleMatrixWithSubmitEnabled(t *testing.T) {
 		main, execute []string
 		proxies       []string
 	}{
-		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "remember", "recall", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile", "remember", "recall"}},
-		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "background", "ctx_search", "spawn", "submit", "recall", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit", "recall"}},
+		{"web", []string{"read", "edit", "write", "bash", "find", "websearch", "ctx_search", "spawn", "steer", "check", "cancel", "profile", "remember", "recall", "background", "execute"}, []string{"grep", "git"}, []string{"spawn", "steer", "check", "cancel", "profile", "remember", "recall", "background"}},
+		{"web-worker", []string{"read", "edit", "write", "bash", "find", "websearch", "ctx_search", "spawn", "submit", "recall", "background", "execute"}, []string{"check", "grep", "git"}, []string{"spawn", "submit", "recall", "background"}},
 		{"scout", []string{"read", "find", "websearch", "ctx_search", "submit", "recall", "execute"}, []string{"grep", "git"}, []string{"submit", "recall"}},
 	}
 	for _, tc := range cases {

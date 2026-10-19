@@ -21,6 +21,9 @@ type fakeDaemon struct {
 	sessions          map[string]fakeSession
 	order             []string
 	includeSuperseded bool
+	// bgStarts and bgStops record the background commands the fake saw.
+	bgStarts []string
+	bgStops  []string
 }
 
 type fakeSession struct {
@@ -136,6 +139,37 @@ func (d *fakeDaemon) handler() http.Handler {
 		case sub == "" && r.Method == http.MethodDelete:
 			d.ended = append(d.ended, id)
 			d.writeJSON(w, http.StatusOK, map[string]any{})
+		case sub == "background" && r.Method == http.MethodPost:
+			var req struct {
+				Command string `json:"command"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			if strings.TrimSpace(req.Command) == "" {
+				d.writeJSON(w, http.StatusBadRequest, map[string]any{"error": "command is required"})
+				return
+			}
+			d.bgStarts = append(d.bgStarts, req.Command)
+			d.writeJSON(w, http.StatusOK, map[string]any{
+				"process": map[string]any{"id": "aa11", "pid": 4242, "running": true},
+				"output":  "listening on 5173",
+			})
+		case strings.HasPrefix(sub, "background/") && r.Method == http.MethodGet:
+			ref := strings.TrimPrefix(sub, "background/")
+			if ref != "aa11" {
+				http.NotFound(w, r)
+				return
+			}
+			d.writeJSON(w, http.StatusOK, map[string]any{
+				"process": map[string]any{"id": ref, "pid": 4242, "running": false, "exit": "exit 0", "output": "line one\nline two"},
+			})
+		case strings.HasPrefix(sub, "background/") && r.Method == http.MethodDelete:
+			ref := strings.TrimPrefix(sub, "background/")
+			if ref != "aa11" {
+				http.NotFound(w, r)
+				return
+			}
+			d.bgStops = append(d.bgStops, ref)
+			d.writeJSON(w, http.StatusOK, map[string]any{"stopped": 1})
 		default:
 			http.NotFound(w, r)
 		}
@@ -367,6 +401,62 @@ func TestWebProxySubmitPostsReviewerVerdict(t *testing.T) {
 	}
 	if !strings.Contains(out, "stale") || !strings.Contains(out, "current-tip") {
 		t.Fatalf("stale submit = %q, want the stale mark and the current tip", out)
+	}
+}
+
+// The Daemon-hosted background tool starts a command in the Session, reads its
+// output with the exit state, and stops it. A refusal keeps the Daemon's own
+// message, so a broken command is not reported as a healthy server.
+func TestWebProxyBackgroundStartReadStop(t *testing.T) {
+	d := newFakeDaemon(t)
+	srv := httptest.NewServer(d.handler())
+	defer srv.Close()
+	bindProxy(t, srv, "parent")
+
+	out, err := StartBackground(context.Background(), "npm run dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.bgStarts) != 1 || d.bgStarts[0] != "npm run dev" {
+		t.Fatalf("start sent %v", d.bgStarts)
+	}
+	for _, want := range []string{"aa11", "4242", "listening on 5173"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("start = %q, want %q", out, want)
+		}
+	}
+
+	out, err = proxyCall(t, "background", `{"action":"read","pane":"aa11","lines":5}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out, "line two") || !strings.Contains(out, "[exit 0]") {
+		t.Errorf("read = %q, want the tail and its exit state", out)
+	}
+	out, err = proxyCall(t, "background", `{"action":"wait","pane":"aa11","timeout":5}`)
+	if err != nil || !strings.Contains(out, "[exit 0]") {
+		t.Errorf("wait = %q, %v, want the exit state at once", out, err)
+	}
+
+	out, err = proxyCall(t, "background", `{"action":"stop","pane":"aa11"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(d.bgStops) != 1 || d.bgStops[0] != "aa11" || !strings.Contains(out, "closed aa11") {
+		t.Fatalf("stop sent %v, said %q", d.bgStops, out)
+	}
+
+	if _, err := StartBackground(context.Background(), "   "); err == nil || !strings.Contains(err.Error(), "required") {
+		t.Errorf("empty command err = %v", err)
+	}
+	if _, err := proxyCall(t, "background", `{"action":"start","command":"x"}`); err == nil || !strings.Contains(err.Error(), "unknown action") {
+		t.Errorf("start action err = %v, want it gone", err)
+	}
+	if _, err := proxyCall(t, "background", `{"action":"read","pane":"nope"}`); err == nil || !strings.Contains(err.Error(), "no process") {
+		t.Errorf("unknown pane err = %v", err)
+	}
+	if _, err := proxyCall(t, "background", `{"action":"dance"}`); err == nil || !strings.Contains(err.Error(), "unknown action") {
+		t.Errorf("unknown action err = %v", err)
 	}
 }
 

@@ -137,6 +137,41 @@ export const removeQueueItem = (id, itemId) =>
 
 export const clearQueue = (id) => fetch(url(`/api/sessions/${id}/queue`), { method: 'DELETE' }).then(json);
 
+// Background processes of one Session: the commands the background tool runs
+// outside its turn, each with its output tail.
+export const listProcesses = (id) => fetch(url(`/api/sessions/${id}/background?tail=40`)).then(json);
+
+export const startProcess = (id, command) =>
+  fetch(url(`/api/sessions/${id}/background`), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ command }),
+  }).then(json);
+
+export const stopProcess = (id, ref) =>
+  fetch(url(`/api/sessions/${id}/background/${encodeURIComponent(ref)}`), { method: 'DELETE' }).then(json);
+
+// watchProcesses follows one Session's process list: the Daemon sends the whole
+// list on connect and on every start, exit and stop, so the panel never polls.
+export function watchProcesses(id, onList, opts = {}) {
+  const source = new EventSource(url(`/api/sessions/${id}/background?watch=1&tail=40`));
+  source.onmessage = (ev) => {
+    try {
+      onList(JSON.parse(ev.data));
+    } catch {
+      // Malformed line: skip, keep the stream alive.
+    }
+  };
+  source.onerror = (ev) => {
+    try {
+      opts.onError?.(ev);
+    } catch {
+      // Hook must never break the stream.
+    }
+  };
+  return source;
+}
+
 export function openStream(id, since, onEvent, opts = {}) {
   const source = new EventSource(url(`/api/sessions/${id}/events?since=${since}`));
   source.onmessage = (ev) => {

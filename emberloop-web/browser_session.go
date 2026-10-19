@@ -48,7 +48,7 @@ func (d *Daemon) browserSessionEnv(id string) [][2]string {
 func (d *Daemon) sessionToolEnv(id string) [][2]string {
 	env := d.browserSessionEnv(id)
 	if port, ok := d.previewPortFor(id); ok {
-		env = append(env, [2]string{"PORT", strconv.Itoa(port)}, [2]string{"EL_PREVIEW_SESSION", id})
+		env = append(env, [2]string{"PORT", strconv.Itoa(port)}, [2]string{previewSessionEnv, id})
 	}
 	return env
 }

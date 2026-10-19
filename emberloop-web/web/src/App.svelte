@@ -18,6 +18,8 @@
   import AddProjectDialog from './lib/AddProjectDialog.svelte';
   import DraftBar from './lib/DraftBar.svelte';
   import GitPanel from './lib/GitPanel.svelte';
+  import ProcessesPanel from './lib/ProcessesPanel.svelte';
+  import { normalizeProcesses, processesSummary, runningCount } from './lib/processes.js';
   import CompressDialog from './lib/CompressDialog.svelte';
   import CompressBanner from './lib/CompressBanner.svelte';
   import DiskBanner from './lib/DiskBanner.svelte';
@@ -51,7 +53,7 @@
   import { watch, stopLive } from './lib/live.js';
   import { soundPlayer } from './lib/sound.js';
   import { readJSON, writeJSON } from './lib/sidebar.js';
-  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, compressSession, listProjects, suggestProject, addProject, renameProject, removeProject, updateProject, getGit, getDisk } from './lib/api.js';
+  import { listSessions, createSession, uploadAudio, getSession, postPrompt, postSteer, postFollowup, getQueue, clearQueue, interruptSession, openStream, watchProcesses, startProcess, stopProcess, compressSession, listProjects, suggestProject, addProject, renameProject, removeProject, updateProject, getGit, getDisk } from './lib/api.js';
   import { people, refreshPeople, personFor } from './lib/people.svelte.js';
   import { runsStore } from './lib/runsStore.js';
   import { readReportState, writeReportState, rememberReports, receiveReport, setReportDismissed, markReportsRead } from './lib/reportState.js';
@@ -82,6 +84,13 @@
   let draftPick = $state(null);
   let draftPickGeneration = 0;
   let failedDraftPrompt = $state(null);
+  // The Processes panel shows what the background tool runs for the active
+  // Session; its stream stays open with the Session, so the header dot is live.
+  let processes = $state([]);
+  let processesOpen = $state(false);
+  let processError = $state('');
+  let startingProcess = $state(false);
+  const runningProcessCount = $derived(runningCount(processes));
   let addOpen = $state(false);
   let adding = $state(false);
   let addError = $state('');
@@ -186,6 +195,12 @@
     if (!gitOpen || !isPhone()) return;
     return holdBack(() => (gitOpen = false));
   });
+
+  // The Processes panel is a sheet on phones too: system Back closes it.
+  $effect(() => {
+    if (!processesOpen || !isPhone()) return;
+    return holdBack(() => (processesOpen = false));
+  });
   // Areas where something needs the User: a needs-you dot on the Rail and the
   // drawer tabs. Runs are known only while the Run list is subscribed.
   const attention = $derived({
@@ -248,6 +263,7 @@
   let stopSessionWatch = () => {};
   let source = null;
   let retryTimer = null;
+  let processSource = null;
   let backoff = 1;
 
   // Messages the user just sent that the Daemon has not echoed yet. They show
@@ -461,6 +477,7 @@
     view = 'dashboard';
     menuOpen = false;
     gitOpen = false;
+    processesOpen = false;
   }
 
   async function applyRoute(path) {
@@ -673,6 +690,49 @@
     if (source) source.close();
     source = null;
   }
+
+  // The Session's process stream. It carries the whole list on connect and on
+  // every start, exit and stop, so the panel and the header dot stay live
+  // without polling.
+  function subscribeProcesses(id) {
+    closeProcessStream();
+    processes = [];
+    processSource = watchProcesses(id, (payload) => {
+      if (currentId !== id) return;
+      processes = normalizeProcesses(payload);
+    }, {
+      onError: () => {
+        // The Daemon is gone or the Session ended: keep the last list.
+        closeProcessStream();
+      },
+    });
+  }
+  function closeProcessStream() {
+    if (processSource) processSource.close();
+    processSource = null;
+  }
+  async function runProcess(command) {
+    if (!currentId) return;
+    startingProcess = true;
+    processError = '';
+    try {
+      await startProcess(currentId, command);
+    } catch (err) {
+      processError = err?.status === 409 ? 'This Session has ended.' : 'Could not start that command.';
+    } finally {
+      startingProcess = false;
+    }
+  }
+  async function killProcess(ref) {
+    if (!currentId) return;
+    processError = '';
+    try {
+      await stopProcess(currentId, ref);
+    } catch {
+      processError = 'Could not stop that process.';
+    }
+  }
+
   async function openSession(id, { at = 0 } = {}) {
     const token = ++openToken;
     closeStream();
@@ -680,6 +740,7 @@
     pendingSends = [];
     view = 'chat';
     currentId = id;
+
     reportState = readReportState(user?.id, id);
     draftOpen = false;
     draftPickGeneration++;
@@ -719,6 +780,8 @@
       }
       // Tail snapshot first, then the live stream replays since lastSeq.
       subscribe(id);
+      subscribeProcesses(id);
+      processesOpen = false;
       stopSessionWatch();
       stopSessionWatch = watch(`session:${id}`, () => refreshQueue(id));
       await refreshQueue(id);
@@ -1032,6 +1095,11 @@
       document.getElementById('git-toggle')?.focus();
       return;
     }
+    if (e.key === 'Escape' && processesOpen) {
+      processesOpen = false;
+      document.getElementById('processes-toggle')?.focus();
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey && (e.key === 'b' || e.key === 'B')) {
       const t = e.target;
       if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -1264,6 +1332,21 @@
               {/if}
             </span>
           {/if}
+          {#if currentId && !drafting}
+            <span class="relative inline-flex max-md:hidden">
+              <IconButton
+                icon={icons.process}
+                label={processes.length ? `Processes: ${processesSummary(processes)}` : 'Processes'}
+                id="processes-toggle"
+                variant={processesOpen ? 'secondary' : 'ghost'}
+                aria-pressed={processesOpen}
+                onclick={() => (processesOpen = !processesOpen)}
+              />
+              {#if runningProcessCount > 0}
+                <span class="pointer-events-none absolute right-0.5 top-0.5 size-2 rounded-full bg-status-working ring-2 ring-background" data-testid="processes-running" aria-hidden="true"></span>
+              {/if}
+            </span>
+          {/if}
           {#if !sessionMissing}
             <ChatMenu
               model={meta ? modelLabel(meta.harness, meta.model) : ''}
@@ -1275,6 +1358,8 @@
               onNewSession={newChat}
               onOpenGit={activeProject ? () => (gitOpen = true) : null}
               onOpenContext={currentId && !drafting ? () => (contextOpen = true) : null}
+              processesMeta={processesSummary(processes)}
+              onOpenProcesses={currentId && !drafting ? () => (processesOpen = true) : null}
               onSelectScope={(value) => navigate(scopePath(value))}
             />
           {/if}
@@ -1381,6 +1466,16 @@
         {#if gitOpen && activeProject}
           <GitPanel projectId={activeProject.id} {git} onClose={() => (gitOpen = false)} onRefresh={loadGit} />
         {/if}
+        {#if processesOpen && currentId}
+          <ProcessesPanel
+            {processes}
+            error={processError}
+            starting={startingProcess}
+            onStart={runProcess}
+            onStop={killProcess}
+            onClose={() => (processesOpen = false)}
+          />
+        {/if}
       </div>
     </div>
     {/if}
@@ -1412,4 +1507,4 @@
 </Sheet>
 <CompressDialog open={compressOpen} busy={compressBusy} error={compressError} {usage} onClose={() => (compressOpen = false)} onCompress={runCompress} />
 <AddProjectDialog open={addOpen} busy={adding} error={addError} onClose={() => (addOpen = false)} onAdd={add} />
-<VersionBadge panelOpen={gitOpen} connected={connected} />
+<VersionBadge panelOpen={gitOpen || processesOpen} connected={connected} />

@@ -258,7 +258,7 @@ func (d *Daemon) runHandoff(id string, hb handoffBackend, model, instructions st
 	before := lastUsedTokens(events)
 	d.appendEvent(id, "status", "", "working")
 	note := func(reason string) { d.appendEvent(id, "compress_step", reason, "") }
-	rs := &retryingSummarizer{next: d.summarizer, wait: d.backoffWait()}
+	rs := &retryingSummarizer{next: d.summarizer, wait: d.backoffWait(), noPrune: !d.compressSettingsOf().Prune}
 	res := writeHandoff(rs, model, instructions, events, note)
 	res.transient = rs.retries
 	if res.blocked {

@@ -115,6 +115,8 @@ func WebProxyTool(name string) Tool {
 			"reason": map[string]any{"type": "string"},
 			"quote":  map[string]any{"type": "string"},
 		}, "text", "reason"), run: webProxyRemember}
+	case "background":
+		return webProxy{name: "background", desc: backgroundProxyDescription, schema: backgroundProxySchema(), run: webProxyBackground}
 	case "recall":
 		return webProxy{name: "recall", desc: "Search the User's memory bank and Project notes. Returns matching Rules, notes, observations and Memories. Superseded Memories are excluded unless include_superseded is true. Every role searches only the caller's User bank.", schema: webProxySchema(map[string]any{
 			"query":              map[string]any{"type": "string"},

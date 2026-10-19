@@ -319,6 +319,62 @@ func TestResolveRenameCollisionKeepsTheFirst(t *testing.T) {
 	}
 }
 
+// An MCP tool never takes a name away from a tool the role serves itself,
+// whatever bucket it lands in. telnyx-mcp lists a tool called "execute": with
+// one shared name set it claimed the name first and the bound execute tool was
+// dropped for every session.
+func TestResolveMCPToolNeverShadowsANativeName(t *testing.T) {
+	base := tools.Named("read", "bash", "execute")
+	behind := map[string][]tools.Tool{"telnyx": fakeTools("execute", "send_message")}
+	var warns []string
+	main, execute := resolveRoleTools("web", base, behind, tools.Settings{}, func(m string) { warns = append(warns, m) })
+	if !containsName(toolNames(main), "execute") {
+		t.Fatalf("el's own execute must survive an MCP tool of the same name: main=%v execute=%v", toolNames(main), toolNames(execute))
+	}
+	if len(warns) != 0 {
+		t.Fatalf("an MCP tool behind execute shares no namespace with the main list: %v", warns)
+	}
+
+	// Promoted to the main list the collision is real, so the MCP tool is
+	// renamed under its server.
+	s := tools.Settings{MCPServers: map[string]tools.MCPServerSetting{
+		"telnyx": {Roles: map[string]tools.MCPServerRoleOverride{"web": {Placement: tools.PlacementMain}}},
+	}}
+	warns = nil
+	main, execute = resolveRoleTools("web", base, behind, s, func(m string) { warns = append(warns, m) })
+	names := toolNames(main)
+	if !containsName(names, "execute") || !containsName(names, "telnyx_execute") {
+		t.Fatalf("the native name wins and the MCP tool is renamed: main=%v", names)
+	}
+	if !containsName(names, "send_message") || len(toolNames(execute)) != 0 {
+		t.Fatalf("the role override moves the whole server to the main list: main=%v execute=%v", names, toolNames(execute))
+	}
+	if len(warns) == 0 {
+		t.Fatal("renaming a shadowing MCP tool should warn")
+	}
+}
+
+// A native rename that takes the name the resolution itself needs still loses:
+// only the base loop may claim "execute", so exactly one execute is served.
+func TestResolveNativeRenameCannotStealExecute(t *testing.T) {
+	s := tools.Settings{Tools: map[string]tools.ToolSetting{"bash": {Rename: "execute"}}}
+	base := tools.Named("read", "bash", "execute")
+	var warns []string
+	main, _ := resolveRoleTools("web", base, nil, s, func(m string) { warns = append(warns, m) })
+	count := 0
+	for _, n := range toolNames(main) {
+		if n == "execute" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("renaming bash to execute must keep exactly one execute: %v", toolNames(main))
+	}
+	if len(warns) == 0 {
+		t.Fatal("the collision should warn")
+	}
+}
+
 func equalNames(got, want []string) bool {
 	if len(got) != len(want) {
 		return false

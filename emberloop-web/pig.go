@@ -745,6 +745,14 @@ func PigAvailableModels(agentDir string) []string {
 		authed[p] = pigProviderAuthed(ctx, p, creds)
 	}
 	var out []string
+	// A models.json provider the SDK does not list is authed by a stored
+	// credential or by the environment variable named in its apiKey field.
+	for provider, keyEnv := range pigJSONProviderKeys(agentDir) {
+		if _, listed := authed[provider]; listed {
+			continue
+		}
+		authed[provider] = pigCustomProviderAuthed(ctx, provider, keyEnv, creds)
+	}
 	add := func(spec string) {
 		if provider, _, ok := strings.Cut(spec, "/"); ok && authed[provider] {
 			out = append(out, spec)
@@ -766,6 +774,43 @@ func PigAvailableModels(agentDir string) []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// pigJSONProviderKeys maps each custom provider declared in
+// <agentDir>/models.json to the value of its apiKey field (an environment
+// variable name or a literal key). It returns nothing when the file is absent
+// or unparseable.
+func pigJSONProviderKeys(agentDir string) map[string]string {
+	if agentDir == "" {
+		agentDir = coding.DefaultAgentDir()
+	}
+	raw, err := os.ReadFile(filepath.Join(agentDir, "models.json"))
+	if err != nil {
+		return nil
+	}
+	var cfg struct {
+		Providers map[string]struct {
+			APIKey string `json:"apiKey"`
+		} `json:"providers"`
+	}
+	if err := json.Unmarshal(raw, &cfg); err != nil {
+		return nil
+	}
+	out := make(map[string]string, len(cfg.Providers))
+	for provider, p := range cfg.Providers {
+		out[provider] = p.APIKey
+	}
+	return out
+}
+
+// pigCustomProviderAuthed reports whether a models.json provider holds a
+// usable key: a stored credential, or the environment variable its apiKey
+// field names.
+func pigCustomProviderAuthed(ctx context.Context, provider, keyEnv string, creds ai.CredentialStore) bool {
+	if cred, err := creds.Read(ctx, provider); err == nil && cred != nil {
+		return true
+	}
+	return keyEnv != "" && os.Getenv(keyEnv) != ""
 }
 
 // pigJSONModels lists the "provider/id" models declared in

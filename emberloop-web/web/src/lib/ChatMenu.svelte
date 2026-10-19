@@ -20,6 +20,8 @@
     git = null,
     onNewSession = () => {},
     onOpenGit = null,
+    processesMeta = '',
+    onOpenProcesses = null,
     onOpenContext = null,
     onSelectScope = () => {},
   } = $props();
@@ -62,6 +64,9 @@
       <Row icon={Plus} title="New Session" meta="Start another chat" onclick={startNewSession} />
       {#if onOpenGit}
         <Row icon={icons.git} title="Git" meta={gitMeta} onclick={() => handOver(onOpenGit)} />
+      {/if}
+      {#if onOpenProcesses}
+        <Row icon={icons.process} title="Processes" meta={processesMeta} onclick={() => handOver(onOpenProcesses)} />
       {/if}
       {#if onOpenContext}
         <Row icon={icons.model} title={model || 'Unknown model'} meta={context} onclick={() => handOver(onOpenContext)} />

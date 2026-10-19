@@ -131,6 +131,9 @@ type retryingSummarizer struct {
 	next    handoffSummarizer
 	wait    func(time.Duration)
 	retries int
+	// noPrune stops the Handoff writer from pruning the Event log first
+	// (the compress_prune setting).
+	noPrune bool
 }
 
 // Window is the input budget of the next summarizer for model.

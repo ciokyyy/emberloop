@@ -335,6 +335,9 @@ type runState struct {
 	// Worker sits idle while the Daemon checks its tip, so the idle alert
 	// reads a running check as activity. Guarded by d.mu.
 	tipChecking map[string]int `json:"-"`
+	// seatTellFails counts consecutive unreachable-seat repair failures per
+	// ticket, reviewer type and Session (runs_seat_repair.go).
+	seatTellFails map[string]int `json:"-"`
 	// startingWorkers is the in-flight Worker-start guard; always accessed
 	// under d.mu so type overrides serialize with the start decision.
 	startingWorkers map[string]bool `json:"-"`
@@ -2663,7 +2666,8 @@ func (d *Daemon) repairOwedReviewerPrompts(runID, ticketID string) {
 	}
 	d.mu.Unlock()
 	for _, o := range list {
-		_ = d.runTellSession(o.sess, reviewerPromptWithDeclined(ticketID, spec, o.typ, branch, tip, declined))
+		err := d.runTellSession(o.sess, reviewerPromptWithDeclined(ticketID, spec, o.typ, branch, tip, declined))
+		d.noteSeatTell(runID, ticketID, o.typ, o.sess, err)
 	}
 }
 
@@ -2671,10 +2675,10 @@ func (d *Daemon) repairOwedReviewerPrompts(runID, ticketID string) {
 // released. Best effort: a capped or ended Session keeps the caller moving.
 func (d *Daemon) runTellSession(sessionID, text string) error {
 	if code, msg := d.resumeReleased(sessionID); code != 0 {
-		return fmt.Errorf("could not reach session: %s", msg)
+		return &tellError{code: code, msg: "could not reach session: " + msg}
 	}
 	if _, code := d.routeLive(sessionID, "steer", text); code != http.StatusAccepted {
-		return fmt.Errorf("could not reach session")
+		return &tellError{msg: "could not reach session"}
 	}
 	return nil
 }
@@ -5025,6 +5029,7 @@ func (d *Daemon) loadRuns() {
 			rs.ResumeOnRestart = true
 		}
 		repairStoredReviewTips(&rs)
+		dropLostTipClaims(&rs)
 		if rs.Sessions == nil {
 			rs.Sessions = map[string]string{}
 		}

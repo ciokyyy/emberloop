@@ -163,7 +163,7 @@
               style="height: {rowHeight}px; transform: translateY({row.start}px);"
             >
               <span class="flex min-w-0 flex-1 flex-col justify-center leading-tight">
-                <span class="truncate text-sm">{item.label}</span>
+                <span class="truncate text-sm" title={item.value}>{item.label}</span>
                 {#if item.detail}
                   <span class="truncate text-xs text-muted-foreground">{item.detail}</span>
                 {/if}

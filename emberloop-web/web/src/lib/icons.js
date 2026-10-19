@@ -30,6 +30,7 @@ import {
   Shrink,
   Signpost,
   Sparkles,
+  SquareTerminal,
   Terminal,
   Ticket,
   X,
@@ -61,6 +62,8 @@ export const icons = Object.freeze({
   refresh: RefreshCw,
   // The model a Session or action runs on.
   model: Cpu,
+  // A command the background tool runs outside the turn.
+  process: SquareTerminal,
 });
 
 // Status glyphs pair with a status word and the --status-* colour.

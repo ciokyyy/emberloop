@@ -84,9 +84,23 @@ func (d *Daemon) stopPreview(sessionID string, workDir string, design bool) {
 	}
 }
 
-// stopPreviewProcesses uses a cgroup-free /proc scan constrained by Session
-// identity and worktree cwd, so shared-worktree Sessions stay isolated.
+// previewSessionEnv marks the processes a design Session's tools start: the
+// dev server `.emberloop/preview` launches and everything it spawns inherits
+// the marker, so one /proc scan finds the whole tree.
+const previewSessionEnv = "EL_PREVIEW_SESSION"
+
+// stopPreviewProcesses stops every process marked as one design Session's in
+// its worktree.
 func stopPreviewProcesses(sessionID, workDir string) {
+	stopMarkedProcesses([]string{previewSessionEnv}, sessionID, workDir)
+}
+
+// stopMarkedProcesses uses a cgroup-free /proc scan constrained by Session
+// identity, a marker environment and the worktree cwd, so shared-worktree
+// Sessions stay isolated. keys name the markers a process may carry: a preview
+// server and a background command are marked differently and both die with
+// their Session.
+func stopMarkedProcesses(keys []string, sessionID, workDir string) {
 	root, err := filepath.EvalSymlinks(workDir)
 	if err != nil || root == "" {
 		return
@@ -102,7 +116,7 @@ func stopPreviewProcesses(sessionID, workDir string) {
 	var pids []process
 	for _, entry := range entries {
 		pid, err := strconv.Atoi(entry.Name())
-		if err != nil || pid == os.Getpid() || !previewProcessMatches(pid, sessionID, root) {
+		if err != nil || pid == os.Getpid() || !markedProcessMatches(pid, keys, sessionID, root) {
 			continue
 		}
 		started, _, ok := processStartTime(pid)
@@ -130,16 +144,34 @@ func stopPreviewProcesses(sessionID, workDir string) {
 	}
 	for _, p := range pids {
 		started, state, ok := processStartTime(p.pid)
-		if ok && started == p.started && state != "Z" && previewProcessMatches(p.pid, sessionID, root) {
+		if ok && started == p.started && state != "Z" && markedProcessMatches(p.pid, keys, sessionID, root) {
 			_ = syscall.Kill(p.pid, syscall.SIGKILL)
 		}
 	}
 }
 
+// previewProcessMatches reports whether pid carries the preview marker of
+// sessionID and runs under root.
 func previewProcessMatches(pid int, sessionID, root string) bool {
+	return markedProcessMatches(pid, []string{previewSessionEnv}, sessionID, root)
+}
+
+// markedProcessMatches reports whether pid carries any of the marker keys set
+// to sessionID and runs under root.
+func markedProcessMatches(pid int, keys []string, sessionID, root string) bool {
 	base := filepath.Join("/proc", strconv.Itoa(pid))
 	env, err := os.ReadFile(filepath.Join(base, "environ"))
-	if err != nil || !hasEnvValue(env, "EL_PREVIEW_SESSION", sessionID) {
+	if err != nil {
+		return false
+	}
+	marked := false
+	for _, key := range keys {
+		if hasEnvValue(env, key, sessionID) {
+			marked = true
+			break
+		}
+	}
+	if !marked {
 		return false
 	}
 	cwd, err := os.Readlink(filepath.Join(base, "cwd"))

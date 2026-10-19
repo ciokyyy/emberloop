@@ -77,19 +77,21 @@ type bashTool struct{}
 
 func (bashTool) Name() string { return "bash" }
 func (bashTool) Description() string {
-	return "Execute a bash command in the workspace. Returns combined stdout and stderr, and the exit status when it is not 0. Commands are token-compressed via rtk. A server, watcher or anything that does not exit goes to the background tool, never here. Python never runs here: use the execute tool, not python or python3 through bash. Prefer find for locating code and execute for multi-step exploration (loops over grep/read, filtering output) before repeated bash grep."
+	return "Execute a bash command in the workspace. Returns combined stdout and stderr, and the exit status when it is not 0. Commands are token-compressed via rtk. A server, watcher, dev command or anything that does not exit takes background: true: it runs outside this turn and returns a process id; watch it with the background tool, never with sleep. Python never runs here: use the execute tool, not python or python3 through bash. Prefer find for locating code and execute for multi-step exploration (loops over grep/read, filtering output) before repeated bash grep."
 }
 func (bashTool) Schema() map[string]any {
 	return obj(map[string]any{
-		"command": map[string]any{"type": "string", "description": "The shell command to run in bash."},
-		"timeout": map[string]any{"type": "integer", "description": "Timeout in seconds (default 120, maximum 600)."},
+		"command":    map[string]any{"type": "string", "description": "The shell command to run in bash."},
+		"timeout":    map[string]any{"type": "integer", "description": "Timeout in seconds (default 120, maximum 600). Ignored with background."},
+		"background": map[string]any{"type": "boolean", "description": "Run outside this turn and return a process id. For anything that does not exit or runs long."},
 	}, "command")
 }
 
 func (bashTool) Execute(ctx context.Context, root string, args json.RawMessage) (string, error) {
 	var p struct {
-		Command string
-		Timeout int
+		Command    string
+		Timeout    int
+		Background bool
 	}
 	if err := json.Unmarshal(args, &p); err != nil {
 		return "", fmt.Errorf("invalid bash parameters: %w", err)
@@ -101,6 +103,9 @@ func (bashTool) Execute(ctx context.Context, root string, args json.RawMessage) 
 		if msg, taken := gate(ctx, root, p.Command); taken {
 			return msg, nil
 		}
+	}
+	if p.Background {
+		return StartBackground(ctx, p.Command)
 	}
 	timeout := defaultBashTimeout
 	if p.Timeout > 0 {

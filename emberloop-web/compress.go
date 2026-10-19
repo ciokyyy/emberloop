@@ -27,6 +27,10 @@ type compressSettings struct {
 	Cooldown        int    `json:"compress_cooldown"`
 	Instructions    string `json:"compress_instructions"`
 	Model           string `json:"compress_model"`
+	// Prune lets Relace Compact prune an oversize Event log before the
+	// summarizer reads it (summarize_prune.go). On by default; it acts only
+	// with a Relace key, and a failed prune never blocks a compress.
+	Prune bool `json:"compress_prune"`
 }
 
 const (
@@ -46,7 +50,7 @@ const (
 func readCompressSettings() compressSettings {
 	all, err := readSettingsMap()
 	if err != nil {
-		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown}
+		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown, Prune: true}
 	}
 	return parseCompressSettings(all)
 }
@@ -54,7 +58,7 @@ func readCompressSettings() compressSettings {
 // parseCompressSettings decodes the compress knobs: shared by the host
 // reader and the Daemon-scoped test seam so the two never diverge.
 func parseCompressSettings(all map[string]json.RawMessage) compressSettings {
-	s := compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown}
+	s := compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown, Prune: true}
 	if raw, ok := all["auto_compress"]; ok {
 		var b bool
 		if json.Unmarshal(raw, &b) == nil {
@@ -91,6 +95,12 @@ func parseCompressSettings(all map[string]json.RawMessage) compressSettings {
 			s.Model = strings.TrimSpace(str)
 		}
 	}
+	if raw, ok := all["compress_prune"]; ok {
+		var b bool
+		if json.Unmarshal(raw, &b) == nil {
+			s.Prune = b
+		}
+	}
 	return s
 }
 
@@ -99,7 +109,7 @@ func parseCompressSettings(all map[string]json.RawMessage) compressSettings {
 func (d *Daemon) compressSettingsOf() compressSettings {
 	all, err := d.settingsMap()
 	if err != nil {
-		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown}
+		return compressSettings{Auto: true, ThresholdPercent: defaultCompressPercent, ThresholdTokens: defaultCompressTokens, Cooldown: defaultCompressCooldown, Prune: true}
 	}
 	return parseCompressSettings(all)
 }
@@ -507,6 +517,7 @@ type compressPatch struct {
 	Cooldown         *int    `json:"compress_cooldown"`
 	Instructions     *string `json:"compress_instructions"`
 	Model            *string `json:"compress_model"`
+	Prune            *bool   `json:"compress_prune"`
 }
 
 func (p *compressPatch) validate() string {
@@ -557,6 +568,9 @@ func (p *compressPatch) apply(all map[string]json.RawMessage) {
 	}
 	if p.Model != nil {
 		set("compress_model", strings.TrimSpace(*p.Model))
+	}
+	if p.Prune != nil {
+		set("compress_prune", *p.Prune)
 	}
 }
 

@@ -65,6 +65,10 @@ _Avoid_: Queue message, next prompt
 A User's change of Backend and model for a paused Ticket or Run. It replaces the active Chain entry; only a manual Resume starts a new Session with a Handoff on the same branch.
 _Avoid_: Restart, fallback
 
+**Babysitter**:
+A cheap per-Run agent Session, started on the first trouble signal (a stall nudge, a repeated Reviewer finding, a needs-you, a refused final merge) and woken by Follow-up after that. It investigates with read-only tools and acts only through driver-validated actions: Steer, retry, tidy Run-owned worktrees, or raise needs-you with its diagnosis. It never interrupts, pauses, Switches or ends a Session. A Handoff renews it at its token cap. Its model comes from its own role in Agents settings.
+_Avoid_: Watchdog, supervisor, monitor
+
 **Check**:
 A read-only peek by a parent at its own Subagents: one status line each, or one child plus its recent events. Never a poll: the grouped result still arrives on its own.
 _Avoid_: Poll, status query
@@ -72,6 +76,10 @@ _Avoid_: Poll, status query
 **Chain**:
 One Run role's ordered Backend/model entries. A quota, credit, auth or session-limit failure advances to the next entry; the active position is shown on each Ticket.
 _Avoid_: Fallback list
+
+**Ladder**:
+A named virtual model (`ladder/<name>`) whose rungs each name a provider and model and say when they apply (always, inside or outside a UTC schedule). Each request goes to the first rung that applies and whose provider has credit. A Chain entry may name a Ladder.
+_Avoid_: Router, alias
 
 **Cancel**:
 Stopping a parent's own Subagent mid-turn without touching the parent turn; kill also ends the child Session. A stop, not a message, so scouts can be stopped.
@@ -133,6 +141,10 @@ _Avoid_: Compact, summarize, reset
 **Handoff**:
 The document a pig model writes from a Session's Event log, sent as the first prompt of the new harness handle after a Compress. It is shown as a collapsed block, not as user input.
 _Avoid_: Summary, checkpoint
+
+**Prune**:
+The first stage of a Compress for an Event log over about 160,000 characters: Relace Compact keeps the original wording of what matters and drops the rest, and the pruned trace goes on to Fold and the Handoff call. It needs a Relace key, is on by default and is turned off by `compress_prune`. A failed prune keeps the full log and never blocks the Compress.
+_Avoid_: Compact (that is Relace's endpoint name), shrink
 
 **Fold**:
 Part of a Compress for input over the summarizer window: the Event log is summarized in parts, the part summaries are summarized again, and the Handoff call reads what fits. Oversize tool results are cut first.

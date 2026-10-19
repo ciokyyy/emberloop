@@ -33,12 +33,16 @@ func (d *Daemon) Shutdown() {
 	}
 	var all []live
 	var previews []SessionMeta
+	// marked collects every Session's workdir: the marker sweep of the next
+	// Daemon stops a background command this one started but no longer holds.
+	var marked []SessionMeta
 	d.mu.Lock()
 	d.shuttingDown = true
 	for id, s := range d.sessions {
 		if s.meta.DesignSession {
 			previews = append(previews, s.meta)
 		}
+		marked = append(marked, s.meta)
 		if s.live {
 			d.markShutdownInterruptedLocked(id)
 			s.live = false
@@ -53,6 +57,9 @@ func (d *Daemon) Shutdown() {
 	}
 	for _, meta := range previews {
 		d.stopPreview(meta.ID, meta.WorkDir, true)
+	}
+	for _, meta := range marked {
+		d.stopSessionBackgrounds(meta.ID, meta.WorkDir)
 	}
 	d.closeBrowser("", true)
 }

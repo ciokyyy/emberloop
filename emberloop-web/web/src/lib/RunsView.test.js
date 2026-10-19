@@ -865,3 +865,12 @@ describe('RunsView preview and live run', () => {
     expect(within(full).getByTestId('runs-graph').getAttribute('data-fullscreen')).toBe('');
   });
 });
+
+describe('RunsView ticket route', () => {
+  it('mounts the ticket page for a runId and ticketId', async () => {
+    vi.stubGlobal('EventSource', class { close() {} });
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ run: { id: 'run-1', repo: '/repo', status: 'running', tickets: [{ id: '01-first', num: 1, title: 'First', blockers: [], state: 'merged' }] } }) })));
+    const { container } = render(RunsView, { props: { runId: 'run-1', ticketId: '01-first', projectId: null, onNavigate: () => {} } });
+    expect(await within(container).findByTestId('ticket-page')).toBeTruthy();
+  });
+});

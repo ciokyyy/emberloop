@@ -1,0 +1,172 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Connection banner mock</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --surface-0:#212121; --surface-1:#2a2a2a; --surface-2:#2f2f2f; --surface-3:#383838;
+    --fg-1:#ececec; --fg-2:#c7c7cc; --fg-3:#9b9ba1; --fg-4:#6e6e73;
+    --working:#5aa9ff; --needs:#ffb340; --done:#3fd070; --failed:#ff6b63;
+    --border:#3a3a3c; --ring:#0a84ff;
+    --ease: cubic-bezier(.2,.8,.2,1);
+    --font: -apple-system,BlinkMacSystemFont,"SF Pro Text","Inter","Segoe UI",system-ui,sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  body { background:#121212; color:var(--fg-1); font-family:var(--font); font-size:15px; line-height:1.5; padding:32px; }
+  h1 { font-size:1.75rem; letter-spacing:-.02em; font-weight:600; }
+  h2 { font-size:1.0625rem; letter-spacing:-.01em; font-weight:600; margin-bottom:4px; }
+  .lede { color:var(--fg-3); max-width:60ch; margin:6px 0 28px; }
+  .note { color:var(--fg-3); font-size:.75rem; line-height:1.35; margin-top:8px; max-width:34ch; }
+  .row { display:flex; flex-wrap:wrap; gap:36px; align-items:flex-start; margin-bottom:40px; }
+  .col { display:flex; flex-direction:column; }
+  .label { font-size:.75rem; color:var(--fg-4); text-transform:uppercase; letter-spacing:.08em; margin-bottom:10px; }
+
+  /* ---- Phone frame ---- */
+  .phone { width:300px; height:560px; background:var(--surface-0); border-radius:34px; border:1px solid var(--border);
+    box-shadow:0 20px 48px -8px rgb(0 0 0 / .6); overflow:hidden; position:relative; display:flex; flex-direction:column; }
+  .phone .status { height:22px; flex:none; }
+  .hdr { height:44px; flex:none; display:flex; align-items:center; gap:10px; padding:0 14px; background:rgb(33 33 33 / .8);
+    backdrop-filter:blur(14px); border-bottom:1px solid var(--border); font-weight:600; letter-spacing:-.01em; }
+  .hdr .dot { margin-left:auto; width:6px; height:6px; border-radius:50%; background:var(--done); }
+  .feed { flex:1; min-height:0; overflow:hidden; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .msg { background:var(--surface-1); border-radius:16px; padding:10px 12px; font-size:.8125rem; color:var(--fg-2); max-width:85%; }
+  .msg.me { align-self:flex-end; background:var(--surface-3); color:var(--fg-1); }
+  .composer { flex:none; margin:8px 10px 14px; background:var(--surface-1); border:1px solid var(--border); border-radius:22px;
+    padding:10px 14px; color:var(--fg-4); font-size:.875rem; }
+  .keyboard { flex:none; height:210px; background:#2c2c2e; border-top:1px solid var(--border);
+    display:grid; place-items:center; color:var(--fg-4); font-size:.75rem; letter-spacing:.08em; text-transform:uppercase; }
+  .phone.kb .composer { margin-bottom:8px; }
+
+  /* ---- THE BANNER ---- */
+  .conn {
+    display:flex; align-items:center; gap:8px; height:28px; padding:0 14px; flex:none;
+    background:rgb(42 42 42 / .78); backdrop-filter:blur(14px) saturate(1.4);
+    border-bottom:1px solid rgb(255 255 255 / .06);
+    font-size:.75rem; line-height:1.35; color:var(--fg-3); white-space:nowrap;
+    transform-origin:top; animation:conn-in 320ms var(--ease) both;
+  }
+  .conn .led { width:6px; height:6px; border-radius:50%; flex:none; background:var(--needs); animation:pulse 1.6s ease-in-out infinite; }
+  .conn.unreachable .led { background:var(--failed); animation:none; box-shadow:0 0 0 3px rgb(255 107 99 / .16); }
+  .conn.ok .led { background:var(--done); animation:none; box-shadow:0 0 0 3px rgb(63 208 112 / .16); }
+  .conn .txt { color:var(--fg-2); }
+  .conn .sub { color:var(--fg-4); overflow:hidden; text-overflow:ellipsis; }
+  .conn button { margin-left:auto; flex:none; font:inherit; font-size:.75rem; font-weight:600; color:var(--fg-1); background:rgb(255 255 255 / .08);
+    border:0; border-radius:999px; padding:2px 10px; height:20px; cursor:pointer; transition:background 180ms var(--ease); }
+  .conn button:hover { background:rgb(255 255 255 / .14); }
+  .conn.reconnecting button { background:transparent; color:var(--fg-3); font-weight:500; }
+  .conn.ok button { display:none; }
+
+  @keyframes conn-in { from { opacity:0; transform:translateY(-8px) scaleY(.6); } to { opacity:1; transform:none; } }
+  @keyframes pulse { 50% { opacity:.35; } }
+  @media (prefers-reduced-motion: reduce) { .conn, .conn .led { animation:none; } }
+
+  /* ---- Lifecycle demo: reconnecting -> unreachable -> back online -> gone ---- */
+  .demo { height:28px; overflow:hidden; }
+  .demo .conn { animation:none; }
+  .demo .stack { display:grid; }
+  .demo .stack > * { grid-area:1/1; opacity:0; }
+  .demo .s1 { animation:cyc1 12s linear infinite; }
+  .demo .s2 { animation:cyc2 12s linear infinite; }
+  .demo .s3 { animation:cyc3 12s linear infinite; }
+  @keyframes cyc1 { 0%{opacity:0;transform:translateY(-8px)} 3%,30%{opacity:1;transform:none} 33%,100%{opacity:0} }
+  @keyframes cyc2 { 0%,32%{opacity:0} 35%,63%{opacity:1} 66%,100%{opacity:0} }
+  @keyframes cyc3 { 0%,65%{opacity:0;transform:none} 68%,80%{opacity:1;transform:none} 86%{opacity:0;transform:translateY(-8px)} 100%{opacity:0} }
+
+  /* ---- Today, for comparison ---- */
+  .today { width:300px; margin:10px 10px 0; display:flex; align-items:center; gap:10px; padding:10px 12px;
+    border:1px solid rgb(255 107 99 / .3); background:rgb(255 107 99 / .08); border-radius:12px; }
+  .today .ic { width:28px; height:28px; border-radius:50%; background:rgb(255 107 99 / .12); color:var(--failed); display:grid; place-items:center; flex:none; }
+  .today p { font-size:.9375rem; color:var(--fg-1); }
+
+  .wide { width:760px; max-width:100%; background:var(--surface-0); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
+  .wide .hdr { height:48px; }
+  .wide .body { height:120px; padding:14px; display:flex; flex-direction:column; gap:10px; }
+  .pwa { font-size:.75rem; color:var(--fg-3); max-width:60ch; }
+</style>
+</head>
+<body>
+<h1>Connection banner</h1>
+<p class="lede">One global strip under the header. 28&nbsp;px, caption text, icon dot, one small action. No box, no dismiss. It appears when the Daemon stops answering and hides by itself on recovery.</p>
+
+<div class="row">
+  <div class="col">
+    <div class="label">Today (one of five)</div>
+    <div class="phone" style="height:200px">
+      <div class="status"></div>
+      <div class="hdr">Session <span class="dot" style="background:var(--failed)"></span></div>
+      <div class="today"><span class="ic">!</span><p>Daemon unreachable. Start it and reload.</p></div>
+      <p class="note" style="padding:0 14px">Stays after the Daemon recovers. No way to refresh in an installed PWA.</p>
+    </div>
+  </div>
+
+  <div class="col">
+    <div class="label">Reconnecting</div>
+    <div class="phone">
+      <div class="status"></div>
+      <div class="hdr">Session <span class="dot" style="background:var(--needs)"></span></div>
+      <div class="conn reconnecting" role="status"><span class="led"></span><span class="txt">Reconnecting…</span><button>Refresh</button></div>
+      <div class="feed"><div class="msg me">Run the check</div><div class="msg">Running <code>.emberloop/check</code>…</div></div>
+      <div class="composer">Message</div>
+    </div>
+    <p class="note">Amber pulsing dot. Refresh is a quiet text action. Auto-retry keeps running.</p>
+  </div>
+
+  <div class="col">
+    <div class="label">Unreachable (&gt; 15 s)</div>
+    <div class="phone">
+      <div class="status"></div>
+      <div class="hdr">Session <span class="dot" style="background:var(--failed)"></span></div>
+      <div class="conn unreachable" role="status"><span class="led"></span><span class="txt">Daemon unreachable</span><button>Refresh</button></div>
+      <div class="feed"><div class="msg me">Run the check</div><div class="msg">Running <code>.emberloop/check</code>…</div></div>
+      <div class="composer">Message</div>
+    </div>
+    <p class="note">Red dot, no pulse. Refresh becomes a soft filled pill so the next step is obvious.</p>
+  </div>
+
+  <div class="col">
+    <div class="label">Phone, keyboard open</div>
+    <div class="phone kb">
+      <div class="status"></div>
+      <div class="hdr">Session <span class="dot" style="background:var(--needs)"></span></div>
+      <div class="conn reconnecting" role="status"><span class="led"></span><span class="txt">Reconnecting…</span><button>Refresh</button></div>
+      <div class="feed"><div class="msg me">Run the check</div></div>
+      <div class="composer">Message</div>
+      <div class="keyboard">Keyboard</div>
+    </div>
+    <p class="note">Strip stays under the header. The composer rides above the keyboard as today. The strip never covers either.</p>
+  </div>
+</div>
+
+<div class="row">
+  <div class="col">
+    <div class="label">Lifecycle (loops)</div>
+    <div class="phone" style="height:200px">
+      <div class="status"></div>
+      <div class="hdr">Session</div>
+      <div class="demo"><div class="stack">
+        <div class="conn s1 reconnecting"><span class="led"></span><span class="txt">Reconnecting…</span><button>Refresh</button></div>
+        <div class="conn s2 unreachable"><span class="led"></span><span class="txt">Daemon unreachable</span><button>Refresh</button></div>
+        <div class="conn s3 ok"><span class="led"></span><span class="txt">Back online</span></div>
+      </div></div>
+      <div class="feed"><div class="msg">Transcript holds its place; the strip slides in and out without moving it.</div></div>
+    </div>
+    <p class="note">Reconnecting, then unreachable, then a green “Back online” for about 1.5 s, then the strip slides away. Reduced motion: no slide, no pulse.</p>
+  </div>
+
+  <div class="col">
+    <div class="label">Desktop</div>
+    <div class="wide">
+      <div class="hdr">Runs</div>
+      <div class="conn unreachable" role="status"><span class="led"></span><span class="txt">Daemon unreachable</span><span class="sub">Retrying in the background</span><button>Refresh</button></div>
+      <div class="body"><div class="msg">Content stays visible beneath. Same strip, same copy.</div></div>
+    </div>
+    <p class="note">The Root offline page reuses the same copy and Refresh action, centred, because the app shell is not mounted there.</p>
+  </div>
+</div>
+
+<p class="pwa"><strong>Refresh</strong> asks the service worker to check for a new version, then reloads the page. It also picks up a new Daemon build.</p>
+</body>
+</html>
